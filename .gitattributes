@@ -1,0 +1,16 @@
+# 统一行尾：文本文件一律 LF（含 Windows 检出），与全局编码规范一致
+* text=auto eol=lf
+
+# Windows 脚本必须 CRLF（保留例外）
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件不做任何转换
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.db binary

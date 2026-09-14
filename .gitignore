@@ -1,0 +1,23 @@
+# 依赖与构建产物
+node_modules/
+dist/
+out/
+build/
+release/
+
+# 测试与覆盖率
+coverage/
+playwright-report/
+test-results/
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# 本地环境与编辑器
+.env
+.env.local
+.idea/
+.vscode/
