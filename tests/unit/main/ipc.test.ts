@@ -14,7 +14,7 @@ import { IPC } from '../../../src/shared/ipc';
 import { E_IPC_BAD_PAYLOAD, E_IPC_FORBIDDEN_ORIGIN } from '../../../src/shared/errors';
 import { registerIpcHandlers } from '../../../src/main/ipc';
 
-function fakeEvent(origin: string): { senderFrame: { origin: string } | null } {
+function fakeEvent(origin: string | null): { senderFrame: { origin: string | null } | null } {
   return origin === '__null__' ? { senderFrame: null } : { senderFrame: { origin } };
 }
 
@@ -49,5 +49,23 @@ describe('system:ping 入口校验', () => {
     };
     expect(r.ok).toBe(false);
     expect(r.error.code).toBe(E_IPC_BAD_PAYLOAD);
+  });
+
+  it('senderFrame.origin 为 null → E_IPC_FORBIDDEN_ORIGIN', () => {
+    const r = handlers.get(IPC.systemPing)?.(fakeEvent(null), null) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(r.ok).toBe(false);
+    expect(r.error.code).toBe(E_IPC_FORBIDDEN_ORIGIN);
+  });
+
+  it('origin 为空字符串 → E_IPC_FORBIDDEN_ORIGIN', () => {
+    const r = handlers.get(IPC.systemPing)?.(fakeEvent(''), null) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(r.ok).toBe(false);
+    expect(r.error.code).toBe(E_IPC_FORBIDDEN_ORIGIN);
   });
 });

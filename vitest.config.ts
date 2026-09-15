@@ -3,6 +3,22 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // 宪法 A.6-3：覆盖率门禁与 projects 平级，对 unit + integration 合并计量
+    coverage: {
+      provider: 'v8',
+      // 宪法 A.6-3：显式 include，漏测文件必须计入
+      include: ['src/**/*.{ts,tsx}'],
+      thresholds: {
+        lines: 80,
+        functions: 80,
+        branches: 80,
+        statements: 80,
+        // 核心链路 100%（IPC 接口 / 契约 / 协议路径解析 / 存储原语）
+        'src/main/**': { lines: 100, functions: 100, branches: 100, statements: 100 },
+        'src/shared/**': { lines: 100, functions: 100, branches: 100, statements: 100 },
+        'src/preload/**': { lines: 100, functions: 100, branches: 100, statements: 100 },
+      },
+    },
     projects: [
       {
         test: {
