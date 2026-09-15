@@ -1,0 +1,95 @@
+# CI 门禁：方案 A 三平台全量严格矩阵（宪法 C.5；细则依据 docs/agmds-research/2026-09-14-CI链与生产落地.md §三）
+# 触发面：main 为生产分支（项目完整落地后合入，届时叠加 release 工作流），dev 为日常开发主干
+name: CI
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+
+# 旧跑立即取消；权限最小化（只读，无发布）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      # CI 内禁用 husky 钩子（宪法 C.6-2）
+      HUSKY: 0
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # 缓存 Electron 二进制与 electron-builder 下载（key 含 OS，路径不存在时自动跳过）
+      - uses: actions/cache@v6
+        with:
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 静态质量门禁（格式 / lint / 类型）
+        run: |
+          npm run format:check
+          npm run lint
+          npm run typecheck
+
+      - name: 单元 + 集成测试与覆盖率门禁
+        run: npm run test:coverage
+
+      - name: 原生模块 ABI 重编译（最高风险点，三平台全验）
+        run: npm run rebuild
+
+      - name: 完整构建（主进程 + 渲染层）
+        run: npm run build
+
+      # Linux runner 无显示服务，E2E 需 Xvfb；系统依赖按官方 install-deps 安装
+      - name: 安装 E2E 系统依赖（仅 Linux）
+        if: runner.os == 'Linux'
+        run: npx playwright install-deps
+
+      - name: E2E（_electron 生产形态）
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run --auto-servernum npx playwright test
+          else
+            npx playwright test
+          fi
+        shell: bash
+
+      - name: 打包冒烟（--dir 不签名不发布）
+        run: npx electron-builder --dir --publish never
+
+      - name: 上传 E2E 报告（失败排查用，不拦截门禁）
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-report-${{ matrix.os }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
