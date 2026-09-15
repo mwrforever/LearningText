@@ -1,0 +1,19 @@
+// Vitest 5：projects 拆 unit/integration（宪法 A.6-1/2），禁用已废弃的 workspace 文件
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    projects: [
+      {
+        test: { name: 'unit', include: ['tests/unit/**/*.test.ts'], environment: 'node' },
+      },
+      {
+        test: {
+          name: 'integration',
+          include: ['tests/integration/**/*.test.ts'],
+          environment: 'node',
+        },
+      },
+    ],
+  },
+});

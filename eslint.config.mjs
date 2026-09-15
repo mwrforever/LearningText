@@ -12,6 +12,8 @@ export default tseslint.config(
       'node_modules/**',
       'playwright-report/**',
       'test-results/**',
+      // vitest 缓存产物目录，与其他测试产物目录一并排除
+      '.vitest/**',
     ],
   },
   js.configs.recommended,

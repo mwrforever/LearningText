@@ -1,6 +1,8 @@
 dist/
 release/
 coverage/
+# vitest 缓存产物目录，不参与格式化
+.vitest/
 node_modules/
 playwright-report/
 test-results/
