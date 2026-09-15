@@ -5,7 +5,12 @@
     "lib": ["ES2022", "DOM"],
     "module": "nodenext",
     "moduleResolution": "nodenext",
-    "types": ["node"],
+    // 渲染层测试（tests/unit/renderer/*.test.tsx）含 JSX，走 react-jsx 自动运行时
+    "jsx": "react-jsx",
+    // nodenext 下动态 import() 强制显式扩展名；noEmit 允许直接以 .tsx 结尾引用源码
+    "allowImportingTsExtensions": true,
+    // node：测试运行环境；vite/client：测试程序纳入渲染层源码后，为其 CSS 副作用导入提供模块声明
+    "types": ["node", "vite/client"],
     "noEmit": true
   },
   "include": [
