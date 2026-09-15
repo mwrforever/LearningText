@@ -198,7 +198,7 @@ Electron 桌面端 HTML 文档管理与实时预览工具：VFS + SQLite 单库�
 | --- | --- | --- |
 | 运行时 | Node LTS（`.nvmrc` + `engines` 双写） | 24 LTS |
 | 桌面框架 | Electron | 44.3.x |
-| 语言 | TypeScript（strict） | 7.0.x |
+| 语言 | TypeScript（strict） | 6.0.x |
 | UI | React | 19.3.x |
 | 构建渲染层 | Vite | 8.3.x |
 | 编辑器 | CodeMirror 6 | 6.0.x |

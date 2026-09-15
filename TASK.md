@@ -7,10 +7,9 @@
 
 | 事项 | 涉及段落 | 原因 | 状态 |
 | --- | --- | --- | --- |
-| package.json / package-lock.json 锁定精确版本 | AGENTS.md C.2 | C.2 为 2026-09-14 立项实查基线 | 待办 |
-| C.3 已并入 B.1：目录结构（B.1）与命令（C.4）在 M0 后与实际代码对齐核对 | AGENTS.md B.1 / C.4 | 目录与命令为 M0 目标态 | 待办 |
-| `.nvmrc` + `engines` 双写落地（Node 24 LTS） | AGENTS.md C.6-1 | M0 落地 | 待办 |
+| package.json / package-lock.json 锁定精确版本（M0-Task 2 触发 TS 版线修正 7.0.x→6.0.3） | AGENTS.md C.2 | 版本已锁定；版线修正已记 CHANGELOG（2026-09-15）并回填 C.2 正文 | 完成（M0） |
 | 同步事务阻塞毫秒预算（压测后回填 A.5-4） | AGENTS.md A.5-4 | 官方无量化数值，须项目实测 | 待办 |
+| `dist/` 内 `main`/`preload` 子目录形态与宪法 B.1 树的差异 | AGENTS.md B.1 | B.1 对齐回填（M1 评审时随迁移条目一并处理） | 待办 |
 
 ## 待决策
 
@@ -20,6 +19,8 @@
 | macOS 签名 / 公证证书 | 无证书期发未签名包；证书就绪后填 secrets 并开启 `forceCodeSigning` 硬门禁（跟踪见「执行项登记」release 行） | 待定 |
 | better-sqlite3 13.x（N-API）可否免 electron-rebuild | 调研 P-2：官方未给 Electron 场景操作指引，保守保留 rebuild 兜底 | 待定 |
 | 开源许可证（README 暂标注待定：MIT） | 影响打包与发布 | 待定 |
+| package.json 缺 `author` 字段 | M6 electron-builder NSIS 打包需要，打包前必须补齐 | 待定 |
+| electron-builder 以 `postinstall: electron-builder install-app-deps` 替代直调 @electron/rebuild | 打包日志建议项（依赖编排更贴近 electron-builder 语义） | 待定 |
 
 ## 待调研项（源自 docs/agmds-research/ 四份报告，注明触发时机）
 
@@ -58,7 +59,9 @@
 
 | 事项 | 依据 | 触发时机 | 状态 |
 | --- | --- | --- | --- |
-| 落地 `.github/workflows/ci.yml`（触发面 [main, dev]）：三平台矩阵（fail-fast: false + 每作业 timeout）、六阶段流水线（npm ci → 静态质量 → Vitest+覆盖率 → electron-rebuild → E2E → --dir 打包冒烟）、concurrency 取消旧跑 / permissions 只读 / 禁 paths 过滤、缓存（npm + Electron 二进制 zip + electron-builder；Playwright 浏览器不缓存）、产物仅短期 artifact 不发布。**实施计划：docs/superpowers/plans/2026-09-15-M0-脚手架与CI.md（SDD 执行）** | docs/agmds-research/2026-09-14-CI链与生产落地.md §三方案 A | M0 | 计划已定稿，待 SDD 执行 |
-| 配置分支保护（**dev=日常开发主干；main=生产分支，项目完整落地后一次性合入并触发完整 CI/CD 打包发布**）：dev 与 main 必需检查 = 三平台检查名 + 要求分支同步，无人工绕过通道 | 同上；分支模型经用户 2026-09-15 指定 | M0 首个 PR 前 | 计划已定稿，待 SDD 执行 |
+| 落地 `.github/workflows/ci.yml`（触发面 [main, dev]）：三平台矩阵（fail-fast: false + 每作业 timeout）、六阶段流水线（npm ci → 静态质量 → Vitest+覆盖率 → electron-rebuild → E2E → --dir 打包冒烟）、concurrency 取消旧跑 / permissions 只读 / 禁 paths 过滤、缓存（npm + Electron 二进制 zip + electron-builder；Playwright 浏览器不缓存）、产物仅短期 artifact 不发布。**实施计划：docs/superpowers/plans/2026-09-15-M0-脚手架与CI.md（SDD 执行）** | docs/agmds-research/2026-09-14-CI链与生产落地.md §三方案 A | M0 | 完成（M0） |
+| 配置分支保护（**dev=日常开发主干；main=生产分支，项目完整落地后一次性合入并触发完整 CI/CD 打包发布**）：dev 与 main 必需检查 = 三平台检查名 + 要求分支同步，无人工绕过通道 | 同上；分支模型经用户 2026-09-15 指定 | M0 首个 PR 前 | 完成（M0） |
+| 【M1 前置】补齐 B.5-4/5 窗口安全基线缺口：`will-navigate` origin 白名单拦截（URL 解析器比较）、`setWindowOpenHandler` 一律 deny、`setPermissionRequestHandler` 默认拒绝 | 宪法 B.5-4/5 强制条款，M0 未落地 | M1 窗口 / 预览工作时优先补齐 | 待办 |
+| 【M1】preload 从 tsconfig.main 拆出独立构建：现 dev watch 与单独 `npm run build:main` 会用 tsc 多文件产物覆盖 rolldown 单文件 preload（sandbox 下坏产物、dev 形态 IPC 断），重构构建编排 | M0-Task 8/11 实测遗留 | M1 | 待办 |
 | release 发布工作流：tag 触发、draft release 人工发布闸门、签名 / 公证 secrets 占位、`forceCodeSigning` 证书就绪后开启为硬门禁 | 同上 §三方案 C | M6 | 待办 |
 | electron-builder v27 `electronGet` 更名复核 | 同上 §三（C.6-11） | v27 发布后 |
