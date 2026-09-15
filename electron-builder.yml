@@ -1,0 +1,20 @@
+# 打包配置（宪法 B.1 裁决：输出 release/；A.5-2：原生 .node 必须 asar unpack）
+appId: com.mwrforever.learningtext
+productName: LearningText
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/main/**/*
+  - dist/preload/**/*
+  - dist/renderer/**/*
+  - package.json
+asarUnpack:
+  - '**/node_modules/better-sqlite3/**/*.node'
+npmRebuild: true
+win:
+  target: nsis
+mac:
+  target: dmg
+linux:
+  target: AppImage

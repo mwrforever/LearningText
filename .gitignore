@@ -2,7 +2,9 @@
 node_modules/
 dist/
 out/
-build/
+# build/ 为 electron-builder buildResources 目录：内容不入库，仅保留 .gitkeep 占位（宪法 B.1）
+build/*
+!build/.gitkeep
 release/
 
 # 测试与覆盖率产物（宪法 C.6-5）
