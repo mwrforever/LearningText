@@ -57,7 +57,7 @@
 
 | 事项 | 依据 | 触发时机 | 状态 |
 | --- | --- | --- | --- |
-| 落地 `.github/workflows/ci.yml`：三平台矩阵（fail-fast: false + 每作业 timeout）、六阶段流水线（npm ci → 静态质量 → Vitest+覆盖率 → electron-rebuild → E2E → --dir 打包冒烟）、concurrency 取消旧跑 / permissions 只读 / 禁 paths 过滤、缓存（npm + Electron 二进制 zip + electron-builder；Playwright 浏览器不缓存）、产物仅短期 artifact 不发布 | docs/agmds-research/2026-09-14-CI链与生产落地.md §三方案 A | M0 | 待办 |
-| 配置 main 分支保护：必需检查 = 三平台检查名（平台前缀命名保证唯一）+ 要求分支同步，无人工绕过通道 | 同上 | M0 首个 PR 前 | 待办 |
+| 落地 `.github/workflows/ci.yml`（触发面 [main, dev]）：三平台矩阵（fail-fast: false + 每作业 timeout）、六阶段流水线（npm ci → 静态质量 → Vitest+覆盖率 → electron-rebuild → E2E → --dir 打包冒烟）、concurrency 取消旧跑 / permissions 只读 / 禁 paths 过滤、缓存（npm + Electron 二进制 zip + electron-builder；Playwright 浏览器不缓存）、产物仅短期 artifact 不发布。**实施计划：docs/superpowers/plans/2026-09-15-M0-脚手架与CI.md（SDD 执行）** | docs/agmds-research/2026-09-14-CI链与生产落地.md §三方案 A | M0 | 计划已定稿，待 SDD 执行 |
+| 配置分支保护（**dev=日常开发主干；main=生产分支，项目完整落地后一次性合入并触发完整 CI/CD 打包发布**）：dev 与 main 必需检查 = 三平台检查名 + 要求分支同步，无人工绕过通道 | 同上；分支模型经用户 2026-09-15 指定 | M0 首个 PR 前 | 计划已定稿，待 SDD 执行 |
 | release 发布工作流：tag 触发、draft release 人工发布闸门、签名 / 公证 secrets 占位、`forceCodeSigning` 证书就绪后开启为硬门禁 | 同上 §三方案 C | M6 | 待办 |
 | electron-builder v27 `electronGet` 更名复核 | 同上 §三（C.6-11） | v27 发布后 |
