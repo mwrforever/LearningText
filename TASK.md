@@ -16,6 +16,7 @@
 
 | 事项 | 背景 | 状态 |
 | --- | --- | --- |
+| TypeScript 升级回 7.x（C.2 基线 7.0.x，当前锁 6.0.3） | M0-Task 2 锁版预检：typescript-eslint 8.70.0 的 typescript peer 范围 `>=4.8.4 <6.1.0` 不含 7.x，暂取范围内最高版 6.0.3（已记 CHANGELOG 2026-09-15）；待 typescript-eslint 声明 7.x 支持后评估升级 | 待定 |
 | macOS 签名 / 公证证书 | 无证书期发未签名包；证书就绪后填 secrets 并开启 `forceCodeSigning` 硬门禁（跟踪见「执行项登记」release 行） | 待定 |
 | better-sqlite3 13.x（N-API）可否免 electron-rebuild | 调研 P-2：官方未给 Electron 场景操作指引，保守保留 rebuild 兜底 | 待定 |
 | 开源许可证（README 暂标注待定：MIT） | 影响打包与发布 | 待定 |
