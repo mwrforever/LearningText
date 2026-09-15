@@ -8,5 +8,10 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["tests/**/*", "src/shared/**/*", "src/main/protocol/appPaths.ts", "src/main/store/db.ts"]
+  "include": [
+    "tests/**/*",
+    "src/shared/**/*",
+    "src/main/protocol/appPaths.ts",
+    "src/main/store/db.ts"
+  ]
 }

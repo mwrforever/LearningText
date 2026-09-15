@@ -5,3 +5,12 @@ node_modules/
 playwright-report/
 test-results/
 package-lock.json
+# 手写中文文档的格式由 .editorconfig / .gitattributes 承载，Prettier 只管工程文件，
+# 避免其对 markdown 表格列宽对齐重排破坏人工排版
+docs/
+.superpowers/
+AGENTS.md
+CLAUDE.md
+README.md
+TASK.md
+CHANGELOG.md
