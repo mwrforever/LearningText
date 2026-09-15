@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-/** 扩展名 → Content-Type 映射；未命中返回 octet-stream 由浏览器按下载处理 */
+/** 扩展名 → Content-Type 映射；未命中返回 null，由协议层转 404 */
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
