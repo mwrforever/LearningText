@@ -25,3 +25,4 @@
   - B.1 目录职责边界与 C.3 目录结构**合并**为 B.1 注释式目录规范（C.3 槽位省略，编号不重排）；
   - C.5 由「CI 生产落地方案」细则全文**精简**为工具、选定方案与门禁语义的精简描述——工作流文件、矩阵、阶段、缓存、产物策略及 M6 发布链均属后续执行项，不入宪法，移登记至 `TASK.md`「执行项登记」。
 - **M0-Task 15 收尾**：dev / main 分支保护经 GitHub API 配置生效（必需检查 = Task 14 三平台检查名 + 要求分支同步，禁强推 / 禁删除；main 不豁免管理员）；`rolldown@1.2.8` 由 vite 传递依赖显式化为直接 devDependency（`build:preload` 直调 CLI 不再是幻影依赖，版本与 vite 依赖树严格一致）；`TASK.md` 执行 M0 回填（精确版本锁定、目录 / 命令对齐、.nvmrc 双写三项销账，ci.yml 与分支保护执行项标记完成，新增 B.1 对齐回填待办与 M1 / M6 待办登记）。
+- **M0 最终评审修复**：electron-builder `files` 补 `dist/shared/**/*`（tsconfig.main rootDir=src 将 shared 编译到 dist/shared，dist/main 产物 require `../shared/*`，此前打包产物缺该目录必崩）；`playwright.config.ts` 新增 `globalSetup`（`tests/e2e/global-setup.ts` 执行完整生产构建），干净检出下 `npm test` 无需手动 build，本地与 CI 语义一致；`TASK.md` 两处调整（B.1 + C.4 对齐回填差异点补注、preload 拆出条目提升 M1 前置）并新增 Vitest configLoader 'native' 待决策项。

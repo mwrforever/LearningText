@@ -7,6 +7,8 @@ directories:
 files:
   - dist/main/**/*
   - dist/preload/**/*
+  # shared 由 tsconfig.main（rootDir=src）编译进 dist/shared，dist/main 下产物 require ../shared/*，遗漏即打包产物启动崩溃
+  - dist/shared/**/*
   - dist/renderer/**/*
   - package.json
 asarUnpack:
