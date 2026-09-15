@@ -5,8 +5,9 @@ out/
 build/
 release/
 
-# 测试与覆盖率
+# 测试与覆盖率产物（宪法 C.6-5）
 coverage/
+.vitest/
 playwright-report/
 test-results/
 
@@ -21,3 +22,6 @@ Thumbs.db
 .env.local
 .idea/
 .vscode/
+
+# SDD 技能工作区（评审包/报告/ledger，不入库）
+.superpowers/

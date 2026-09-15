@@ -1,0 +1,33 @@
+{
+  "name": "learningtext",
+  "version": "0.1.0",
+  "private": true,
+  "description": "跨平台桌面端 HTML 文档管理与实时预览工具",
+  "main": "dist/main/app.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "dev": "concurrently -k -n renderer,main \"vite\" \"tsc -p tsconfig.main.json --watch\"",
+    "start": "electron .",
+    "start:dev": "cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "build": "npm run build:main && vite build",
+    "build:main": "tsc -p tsconfig.main.json",
+    "preview": "vite preview",
+    "test": "npm run test:unit && npm run test:integration && npm run test:e2e",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "playwright test",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "package": "electron-builder",
+    "package:dir": "electron-builder --dir",
+    "release": "electron-builder -mwl --publish always"
+  }
+}
