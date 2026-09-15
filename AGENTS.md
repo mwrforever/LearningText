@@ -16,7 +16,7 @@
 | `docs/agmds-research/` | 宪法调研报告（条款来源证据，正文不逐条标注） |
 
 **三段结构**：Part A Electron + TypeScript 全栈通用 / Part B 架构分层（Electron 进程模型）/ Part C LearningText 实际。
-（槽位说明：A.3 API 设计省略——本项目无对外 HTTP API，IPC 契约约束见 A.7 与 B.2；B.4 外部能力网关省略——无外部网关；省略槽位编号不重排。）
+（槽位说明：A.3 API 设计省略——本项目无对外 HTTP API，IPC 契约约束见 A.7 与 B.2；B.4 外部能力网关省略——无外部网关；C.3 目录结构省略——并入 B.1 注释式目录规范；省略槽位编号不重排。宪法只存工程原则与约束，**实现类工作一律登记 `TASK.md` 执行项，不入宪法**。）
 
 ## 1. 项目定位与仓库地图
 
@@ -29,8 +29,8 @@ LearningText/
 ├── CHANGELOG.md            # 变更记录（先记再改）
 ├── README.md               # 项目导览
 ├── docs/                   # 设计文档与调研报告（见「配套文件职责」）
-├── .github/workflows/      # CI 工作流（ci.yml，方案见 C.5）          [M0]
-├── src/main|preload|renderer|shared/  # 主进程 / 桥 / 渲染层 / 共享契约 [M0]
+├── .github/workflows/      # CI 工作流（ci.yml，门禁基线见 C.5）      [M0]
+├── src/main|preload|renderer|shared/  # 主进程 / 桥 / 渲染层 / 共享契约（内部结构见 B.1）[M0]
 ├── tests/                  # unit / integration / e2e               [M0]
 └── .nvmrc / eslint.config.* / electron-builder.yml / playwright.config.ts / vitest 配置 [M0]
 ```
@@ -48,7 +48,7 @@ LearningText/
 
 - **文档同步**：需求变更先改 `docs/03` 再动代码；宪法修订先记 `CHANGELOG.md`；文档与代码不一致视为缺陷。
 - **编码基线**：全仓 UTF-8 无 BOM、LF 行尾、中文注释，由 `.gitattributes` / `.editorconfig` 强制承载，修改这两个文件视同修宪。
-- **CI 链总则**：主分支受分支保护硬门禁约束，任何检查失败阻断合入、禁止人工绕过；工具、矩阵与阶段细则全文见 C.5（整仓单应用不另设总则层）。
+- **CI 链总则**：主分支受分支保护硬门禁约束，任何检查失败阻断合入、禁止人工绕过；工具与门禁基线的精简描述见 C.5，落地方案属执行项（登记 `TASK.md`，不入宪法）。
 
 ---
 
@@ -124,15 +124,31 @@ LearningText/
 
 # Part B — 架构分层（Electron 进程模型）
 
-## B.1 目录职责边界
+## B.1 目录职责边界与结构规范（C.3 并入本节，全仓唯一目录权威）
 
-| 目录 | 边界 |
-| --- | --- |
-| `src/main` | 主进程：唯一持有 Node / SQLite / 文件系统能力的进程；窗口、生命周期、原生 API、存储 / 搜索 / 导入导出 / `vfs://` 协议服务 |
-| `src/preload` | 桥层：仅 `contextBridge` 暴露类型化 API，禁业务逻辑、禁暴露 `ipcRenderer` 本体 |
-| `src/renderer` | 渲染进程：React UI，只写 Web 标准代码，无 `require` / Node，禁直接做文件 / 系统访问 |
-| `src/shared` | 三端共享契约（通道常量、类型、zod schema、错误码），纯类型与常量，无运行时副作用、禁 import 任何进程专属模块 |
-| `tests` | `unit` / `integration`（Vitest）与 `e2e`（Playwright `_electron`） |
+```text
+src/
+├── main/                      # 主进程：唯一持有 Node / SQLite / 文件系统能力；窗口、生命周期、原生 API
+│   ├── app.ts                 #   装配入口：开库 → 迁移 → 协议 → 窗口（fail-fast，见 B.3-1）
+│   ├── store/                 #   存储层：连接单例、迁移、备份——事务边界唯一归属地（A.4）
+│   ├── vfs/                   #   虚拟文件系统服务：节点树、路径解析、软删除
+│   ├── search/                #   搜索服务：FTS5 索引维护与查询
+│   ├── io/                    #   导入导出服务
+│   └── protocol/              #   vfs:// 自定义协议：只读资源出口（B.5-2）
+├── preload/                   # 桥层：仅 contextBridge 暴露类型化 API；禁业务逻辑、禁暴露 ipcRenderer 本体
+├── renderer/                  # 渲染进程：React UI，只写 Web 标准代码；无 require / Node，禁文件与系统直接访问
+│   ├── features/              #   界面域按功能分目录：tree/ editor/ preview/ search/ settings/（M0 可细化）
+│   └── vite-env.d.ts          #   渲染端 env 类型扩展（A.2-4），禁写 import
+└── shared/                    # 三端共享契约：通道常量、请求/响应类型、zod schema、错误码
+                               #   纯类型与常量，无运行时副作用，禁 import 任何进程专属模块
+tests/
+├── unit/  integration/        # Vitest：*.test.ts，test.projects 拆分（A.6-1）
+└── e2e/                       # Playwright _electron：*.spec.ts
+dist/renderer/                 # Vite 输出（裁决：显式 outDir）——构建产物，gitignore 禁提交
+release/                       # electron-builder 输出（裁决：output=release/）——构建产物，gitignore 禁提交
+```
+
+注：`features/` 内部组织允许 M0 落地时细化，但 main / preload / renderer / shared 四大目录的职责边界不得调整（B.2 依赖方向以此为锚）。
 
 ## B.2 层级依赖（强制）
 
@@ -195,55 +211,32 @@ Electron 桌面端 HTML 文档管理与实时预览工具：VFS + SQLite 单库�
 | 本地门禁 | husky + lint-staged | 9.1.x / 17.5.x |
 | 开发编排 | concurrently | 10.x |
 
-## C.3 目录结构（M0 落地目标，落地后回填核对）
-
-```text
-src/
-├── main/        # 装配入口 app.ts；store/（连接、迁移、备份）vfs/ search/ io/ protocol/
-├── preload/     # contextBridge 桥（每通道一个具名函数）
-├── renderer/    # React：资源树 / 编辑器 / 预览 / 搜索 / 设置；vite-env.d.ts
-└── shared/      # ipc 契约（通道常量 + 类型 + zod schema）、错误码、类型
-tests/           # unit/ integration/ e2e/
-dist/renderer/   # Vite 输出（裁决：显式 outDir，避免与 electron-builder 默认 dist/ 冲突）
-release/         # electron-builder 输出（裁决：output=release/）；两者均 gitignore
-```
-
 ## C.4 常用命令（M0 落地后 package.json 必须与之对齐）
 
-| 命令 | 用途 |
-| --- | --- |
-| `npm run dev` | 并行启动渲染层 dev server 与主进程编译（concurrently，任一退出即全部退出） |
-| `npm start` | 开发形态启动应用（`electron .`） |
-| `npm run build` | 完整生产构建：主进程编译 + `vite build` |
-| `npm run preview` | 本地预览渲染层构建产物（`vite preview`），禁作生产服务器 |
-| `npm test` | 全量测试门禁：unit + integration + e2e 串行，CI 与本地同一入口 |
-| `npm run test:unit` / `test:integration` | Vitest 按 project 运行 |
-| `npm run test:e2e` | Playwright `_electron` E2E |
-| `npm run test:coverage` | 带覆盖率门禁的测试（A.6-3 阈值生效） |
-| `npm run lint` / `lint:fix` | ESLint 检查 / 自动修复 |
-| `npm run format` / `format:check` | Prettier 格式化 / 校验（CI 用 check） |
-| `npm run typecheck` | `tsc --noEmit` 类型门禁 |
-| `npm run rebuild` | `electron-rebuild -f -w better-sqlite3`（Electron ABI 对齐，install 后必跑） |
-| `npm run package` / `package:dir` | 三平台安装包 / `--dir` 未打包目录冒烟（CI 打包冒烟步骤） |
-| `npm run release` | 三平台构建并发布（M6 启用，见 C.5 演进项） |
+```bash
+npm run dev              # 并行启动渲染层 dev server 与主进程编译（concurrently，任一退出即全部退出）
+npm start                # 开发形态启动应用（electron .）
+npm run build            # 完整生产构建：主进程编译 + vite build
+npm run preview          # 本地预览渲染层构建产物，禁作生产服务器
+npm test                 # 全量测试门禁：unit + integration + e2e 串行，CI 与本地同一入口
+npm run test:unit        # Vitest 单元（--project unit）
+npm run test:integration # Vitest 集成（--project integration）
+npm run test:e2e         # Playwright _electron E2E
+npm run test:coverage    # 带覆盖率门禁的测试（A.6-3 阈值生效）
+npm run lint             # ESLint 检查；lint:fix 为自动修复
+npm run format           # Prettier 格式化；format:check 供 CI 校验
+npm run typecheck        # tsc --noEmit 类型门禁
+npm run rebuild          # electron-rebuild -f -w better-sqlite3（install 后必跑，A.5-2）
+npm run package          # 三平台安装包；package:dir 为 --dir 未打包目录冒烟
+npm run release          # 三平台构建并发布（M6 执行项，登记于 TASK.md）
+```
 
-## C.5 CI 生产落地方案（必含）
+## C.5 CI 链（精简描述；落地方案属执行项，不入宪法）
 
-工具：GitHub Actions。**方案 A「三平台全量严格矩阵」，2026-09-14 经用户选定**（调研与落选方案 B/C 见 `docs/agmds-research/2026-09-14-CI链与生产落地.md`；方案 C 发布链为 M6 演进项）。
+工具为 GitHub Actions，门禁基线为**方案 A「三平台全量严格矩阵」**（2026-09-14 经用户选定，调研与落选方案见 `docs/agmds-research/2026-09-14-CI链与生产落地.md`）。
 
-1. **工具与触发**：单一工作流 `.github/workflows/ci.yml`；`pull_request`（目标 main）+ `push` 到 main 触发（`v*` tag 触发随 M6 发布链启用——此为对方案 A 触发面的有意裁剪，门禁语义不变）；**禁用 paths 过滤**（必需检查停留 Pending 会自锁）；`concurrency` 按工作流名 + ref 分组并 `cancel-in-progress`；顶层 `permissions` 最小化（只读）。
-2. **门禁语义（宪法级）**：main 分支保护开启，必需检查 = 三平台作业检查名（平台前缀命名保证唯一），并要求分支与主干同步；任何一项未通过 GitHub 层面禁止合并，**无人工绕过通道**（不豁免管理员）。
-3. **矩阵**：`ubuntu-latest` / `windows-latest` / `macos-latest`，`fail-fast: false`（一次收集全部平台结果），每作业显式 `timeout-minutes`。
-4. **流水线阶段与硬门禁**（每矩阵作业顺序执行，任一步非零退出即失败并阻断合入）：
-   ① 安装：setup-node（`node-version-file` 读 `.nvmrc`）→ `npm ci`（锁文件不一致即失败）；
-   ② 静态质量：`format:check` → `lint` → `typecheck`；
-   ③ 测试：Vitest unit + integration（Node 侧预编译二进制）+ 覆盖率阈值门禁（A.6-3）；
-   ④ 原生模块：`electron-rebuild -f -w better-sqlite3`（Electron ABI 匹配，本项目最高风险点，三平台全验）；
-   ⑤ E2E：Playwright `_electron` 启动真实应用全链路验证（Linux 前置系统依赖安装；workers=1 + retries）；
-   ⑥ 打包冒烟：electron-builder `--dir --publish never` 验证三平台可出包。
-5. **缓存与加速**：setup-node `cache: npm`；actions/cache 缓存 Electron 二进制 zip 与 `~/.cache/electron-builder`（key 含 runner OS + Electron 版本）；Playwright 浏览器按官方建议不缓存。
-6. **产物处理**：安装包与 E2E 报告仅上传短期保留 artifact，不发布、无部署环境（本条为「无部署」边界声明）。
-7. **演进项（M6）**：新增 release 工作流（tag 触发、draft release 人工发布闸门、签名 / 公证 secrets 占位）；证书就绪后开启 `forceCodeSigning`，将「无签名不得发布」升级为硬门禁。
+1. **门禁语义（宪法级）**：main 分支保护开启必需检查，任何检查失败阻断合入，**禁止人工绕过**；本地 pre-commit 门禁（C.6-2）是前置减速带，不可与 CI 互相替代。
+2. 工作流文件、触发面、矩阵、流水线阶段、缓存与产物策略等均为**执行项，不入宪法**：M0 按 `docs/agmds-research/2026-09-14-CI链与生产落地.md` §三方案 A 落地，跟踪见 `TASK.md`「执行项登记」。
 
 ## C.6 永久环境约束
 
