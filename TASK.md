@@ -63,7 +63,7 @@
 | --- | --- | --- | --- |
 | 落地 `.github/workflows/ci.yml`（触发面 [main, dev]）：三平台矩阵（fail-fast: false + 每作业 timeout）、六阶段流水线（npm ci → 静态质量 → Vitest+覆盖率 → electron-rebuild → E2E → --dir 打包冒烟）、concurrency 取消旧跑 / permissions 只读 / 禁 paths 过滤、缓存（npm + Electron 二进制 zip + electron-builder；Playwright 浏览器不缓存）、产物仅短期 artifact 不发布。**实施计划：docs/superpowers/plans/2026-09-15-M0-脚手架与CI.md（SDD 执行）** | docs/agmds-research/2026-09-14-CI链与生产落地.md §三方案 A | M0 | 完成（M0） |
 | 配置分支保护（**dev=日常开发主干；main=生产分支，项目完整落地后一次性合入并触发完整 CI/CD 打包发布**）：dev 与 main 必需检查 = 三平台检查名 + 要求分支同步，无人工绕过通道 | 同上；分支模型经用户 2026-09-15 指定 | M0 首个 PR 前 | 完成（M0） |
-| 【M1 前置】补齐 B.5-4/5 窗口安全基线缺口：`will-navigate` origin 白名单拦截（URL 解析器比较）、`setWindowOpenHandler` 一律 deny、`setPermissionRequestHandler` 默认拒绝 | 宪法 B.5-4/5 强制条款，M0 未落地 | M1 窗口 / 预览工作时优先补齐 | 待办 |
-| 【M1 前置】preload 从 tsconfig.main 拆出独立构建：现 dev watch 与单独 `npm run build:main` 会用 tsc 多文件产物覆盖 rolldown 单文件 preload（sandbox 下坏产物、dev 形态 IPC 断），重构构建编排——dev 主开发循环即受影响，M1 开工首日即撞上 | M0-Task 8/11 实测遗留 | M1 前置（M1 开工首日） | 待办 |
+| 【M1 前置】补齐 B.5-4/5 窗口安全基线缺口：`will-navigate` origin 白名单拦截（URL 解析器比较）、`setWindowOpenHandler` 一律 deny、`setPermissionRequestHandler` 默认拒绝 | 宪法 B.5-4/5 强制条款，M0 未落地 | M1 窗口 / 预览工作时优先补齐 | 待 SDD 执行（实施计划 Task 2：docs/superpowers/plans/2026-09-16-M1-存储与VFS.md） |
+| 【M1 前置】preload 从 tsconfig.main 拆出独立构建：现 dev watch 与单独 `npm run build:main` 会用 tsc 多文件产物覆盖 rolldown 单文件 preload（sandbox 下坏产物、dev 形态 IPC 断），重构构建编排——dev 主开发循环即受影响，M1 开工首日即撞上 | M0-Task 8/11 实测遗留 | M1 前置（M1 开工首日） | 待 SDD 执行（实施计划 Task 1：docs/superpowers/plans/2026-09-16-M1-存储与VFS.md） |
 | release 发布工作流：tag 触发、draft release 人工发布闸门、签名 / 公证 secrets 占位、`forceCodeSigning` 证书就绪后开启为硬门禁 | 同上 §三方案 C | M6 | 待办 |
 | electron-builder v27 `electronGet` 更名复核 | 同上 §三（C.6-11） | v27 发布后 |
