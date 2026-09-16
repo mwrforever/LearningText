@@ -1,5 +1,10 @@
 // 主进程装配单元测试：以 vi.mock('electron') 驱动 bootstrapMain（宪法 A.5-1 / B.3-1），
 // 断言 scheme 注册、协议挂载、IPC origin 白名单、窗口安全默认值与 fail-fast 退出路径。
+// 数据目录/开库/迁移接线：electron getPath 返回真实临时目录（dataDir 布局走真实现），
+// db/migrate 以桩替换（单元测试不触原生 SQLite，真实行为由集成测试与 E2E 覆盖）。
+import { existsSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
@@ -12,6 +17,9 @@ const mocks = vi.hoisted(() => {
     appExit: vi.fn<(code?: number) => void>(),
     appQuit: vi.fn<() => void>(),
     getAppPath: vi.fn<() => string>(),
+    getPath: vi.fn<(name: string) => string>(),
+    openDatabase: vi.fn<(options: { readonly file: string }) => { readonly file: string }>(),
+    runMigrations: vi.fn<(db: unknown) => void>(),
     BrowserWindow: vi.fn<(options: unknown) => { loadURL: (url: string) => Promise<void> }>(),
     loadURL: vi.fn<(url: string) => Promise<void>>(),
     wcOn: vi.fn<(event: string, listener: (...args: unknown[]) => void) => void>(),
@@ -27,6 +35,10 @@ const mocks = vi.hoisted(() => {
   // app.ts 模块加载即执行 bootstrapMain，此时须保证 whenReady / getAppPath 立即可用
   m.whenReady.mockResolvedValue(undefined);
   m.getAppPath.mockImplementation(() => '/mock-app-path');
+  // userData 指向真实临时目录：dataDir 的 ensureDataDir 递归建目录可安全落盘（测试结束后由系统回收）
+  m.getPath.mockImplementation(() => mkdtempSync(path.join(tmpdir(), 'lt-app-userdata-')));
+  // 开库桩：原样返回选项对象充当句柄，供 runMigrations 调用参数断言
+  m.openDatabase.mockImplementation((options) => options);
   // BrowserWindow 以 new 调用，桩实现必须用 function 声明（箭头函数不可构造）
   m.BrowserWindow.mockImplementation(function () {
     return {
@@ -52,10 +64,13 @@ vi.mock('electron', () => ({
     exit: mocks.appExit,
     quit: mocks.appQuit,
     getAppPath: mocks.getAppPath,
+    getPath: mocks.getPath,
   },
   BrowserWindow: mocks.BrowserWindow,
 }));
 vi.mock('../../../src/main/ipc', () => ({ registerIpcHandlers: mocks.registerIpcHandlers }));
+vi.mock('../../../src/main/store/db', () => ({ openDatabase: mocks.openDatabase }));
+vi.mock('../../../src/main/store/migrate', () => ({ runMigrations: mocks.runMigrations }));
 
 import { bootstrapMain } from '../../../src/main/app';
 import { handleAppResource } from '../../../src/main/protocol/appProtocol';
@@ -115,6 +130,15 @@ describe('主进程装配 bootstrapMain', () => {
     expect(mocks.protocolHandle).toHaveBeenCalledWith('app', handleAppResource);
     // 生产环境 origin 白名单仅含 app 协议（B.5-6）
     expect(mocks.registerIpcHandlers).toHaveBeenCalledWith({ allowedOrigins: ['app://bundle'] });
+    // 数据目录与开库迁移接线（spec §2.1/§3）：备份目录真实落盘，库文件收敛在 userData/LearningText 布局内
+    expect(mocks.getPath).toHaveBeenCalledWith('userData');
+    const userDataDir = mocks.getPath.mock.results[0]?.value;
+    expect(userDataDir).toBeDefined();
+    expect(existsSync(path.join(userDataDir ?? '', 'LearningText', 'backups'))).toBe(true);
+    expect(mocks.openDatabase).toHaveBeenCalledWith({
+      file: path.join(userDataDir ?? '', 'LearningText', 'learningtext.db'),
+    });
+    expect(mocks.runMigrations).toHaveBeenCalledTimes(1);
     // 窗口安全默认值显式断言，防 B.5-1 回归
     const options = mocks.BrowserWindow.mock.calls[0]?.[0];
     expect(options).toMatchObject({

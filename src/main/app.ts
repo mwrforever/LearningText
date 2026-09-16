@@ -10,6 +10,9 @@ import { app, BrowserWindow, protocol } from 'electron';
 import { handleAppResource } from './protocol/appProtocol';
 import { registerIpcHandlers } from './ipc';
 import { isOriginAllowed } from './security';
+import { openDatabase } from './store/db';
+import { runMigrations } from './store/migrate';
+import { ensureDataDir, resolveDataDir } from './store/dataDir';
 
 const APP_ORIGIN = 'app://bundle';
 
@@ -70,6 +73,13 @@ export function bootstrapMain(): void {
   app
     .whenReady()
     .then(() => {
+      // 数据目录解析与开库迁移（spec §2.1/§3）：本 then 块即 try 域，任一步抛错
+      // 都落入下方 catch 分支 app.exit(1)（fail-fast，B.3-1 禁带伤运行）
+      const layout = resolveDataDir(app.getPath('userData'));
+      ensureDataDir(layout);
+      const db = openDatabase({ file: layout.dbFile });
+      // 迁移失败抛错 → catch 分支 app.exit(1)（fail-fast，B.3-1）
+      runMigrations(db);
       protocol.handle('app', handleAppResource);
       // origin 白名单：开发 = dev server + app 协议；生产 = 仅 app 协议（B.5-6）
       const allowed =
