@@ -7,6 +7,7 @@ import {
   E_STORE_INTERNAL,
   E_VFS_DUPLICATE_NAME,
   E_VFS_FILE_TOO_LARGE,
+  E_VFS_INVALID_MOVE,
   E_VFS_NOT_FOUND,
   E_VFS_TYPE_MISMATCH,
 } from '../../shared/errors';
@@ -101,6 +102,27 @@ export function createVfsService(db: Database.Database) {
     `UPDATE node SET content = @content, size = @size, content_hash = @hash, updated_at = @now WHERE id = @id`,
   );
   const stmtUpdateFtsBody = db.prepare('UPDATE node_fts SET body = @body WHERE rowid = @id');
+
+  // —— 重构类操作语句（FR-VFS-04/05，spec §7.4/§7.5）：rename 与 move 共用级联改写 ——
+  // 子树定位（含根自身）：substr 前缀比较，禁 LIKE（免通配符转义退化，spec §7.4）
+  const stmtSubtreeIds = db.prepare<{ rootPath: string; rootPrefix: string }, { id: number }>(
+    `SELECT id FROM node
+     WHERE virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix`,
+  );
+  // 级联路径改写：自身整路径替换 + 后代按旧路径前缀拼接新路径（rename/move 共用）
+  const stmtCascadePath = db.prepare(
+    `UPDATE node SET virtual_path = @newPath || substr(virtual_path, length(@oldPath) + 1)
+     WHERE virtual_path = @oldPath OR substr(virtual_path, 1, length(@oldPath) + 1) = @oldPath || '/'`,
+  );
+  const stmtRenameSelf = db.prepare(
+    'UPDATE node SET name = @name, updated_at = @now WHERE id = @id',
+  );
+  // FTS 仅根级 name 联动：路径级联不触碰任何 FTS 列值，子树行零写入（spec §7.7）
+  const stmtRenameFtsName = db.prepare('UPDATE node_fts SET name = @name WHERE rowid = @id');
+  // 移动的父指针更新：与级联路径写同事务，保证树结构与路径物化原子一致（宪法 A.4-4）
+  const stmtMoveParent = db.prepare(
+    'UPDATE node SET parent_id = @parentId, updated_at = @now WHERE id = @id',
+  );
 
   return {
     /** 列直接子节点（FR-VFS-02/08）：目录在前、名称升序 */
@@ -213,17 +235,85 @@ export function createVfsService(db: Database.Database) {
       });
     },
 
-    // —— 以下占位桩由 Task 9/10 逐个替换（过渡桩不跨任务存续）——
-    // 占位桩仅保留签名形态（供 IPC 装配按契约引用），参数留待实现时消费，
-    // 逐个排除未用参数告警（随桩替换一并移除，nodeName.ts 先例）
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    renameNode(_request: RenameNodeRequest): AffectedResponse {
-      throw new AppError(E_STORE_INTERNAL, '该方法由后续任务实现');
+    /**
+     * 重命名（FR-VFS-04）：名称校验 → 同名短路 → 重名预查 → 单事务改名 + 子树路径级联 + FTS name 联动。
+     * 根节点不可操作（E_VFS_NOT_FOUND）；级联仅改 virtual_path，子树 FTS 列零写入（spec §7.7）。
+     * 参数 newName 为用户输入的新名称（入库前经 NFC 规范化校验）；返回 affectedCount 为含自身的子树受影响节点数。
+     * 异常：E_VFS_NOT_FOUND（节点缺失/已在回收站/根节点）、E_VFS_INVALID_NAME（非法名称）、
+     * E_VFS_DUPLICATE_NAME（同级重名）；全部经 runWriteTransaction 映射后抛出，调用方按 AppError.code 分支处理。
+     */
+    renameNode(request: RenameNodeRequest): AffectedResponse {
+      const row = requireRow(request.nodeId);
+      // 根节点是全树唯一 parent_id 为 null 的节点，以空父指针识别根（同时收窄类型供重名预查绑定）
+      if (row.parent_id === null) throw new AppError(E_VFS_NOT_FOUND, '根节点不可操作');
+      const newName = validateNodeName(request.newName);
+      // 同名重命名视为无操作：先短路再重名预查，避免预查命中自身误报重名
+      if (newName === row.name) return { affectedCount: 0 };
+      const dup = stmtDupIdByParentName.get(row.parent_id, newName);
+      if (dup !== undefined) throw new AppError(E_VFS_DUPLICATE_NAME, '同级已存在同名文件或文件夹');
+      return runWriteTransaction(db, () => {
+        const now = toLocalIsoTime(new Date());
+        const oldPath = row.virtual_path;
+        // 新路径 = 旧路径去掉末级旧名 + 新名（JS 侧按 UTF-16 切片，SQLite 侧 substr/length 自洽，拼接结果一致）
+        const newPath = oldPath.slice(0, oldPath.length - row.name.length) + newName;
+        stmtRenameSelf.run({ id: row.id, name: newName, now });
+        stmtCascadePath.run({ oldPath, newPath });
+        // FTS 仅根级 name 联动；子树节点 name/body 不变，不产生 FTS 写（spec §7.7）
+        stmtRenameFtsName.run({ id: row.id, name: newName });
+        // 子树计数在级联提交后统计：stmtSubtreeIds 谓词含根自身，length 即含自身的子树总数（勿再 +1）
+        const affected = stmtSubtreeIds.all({
+          rootPath: newPath,
+          rootPrefix: newPath + '/',
+        }).length;
+        return { affectedCount: affected };
+      });
     },
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    moveNode(_request: MoveNodeRequest): AffectedResponse {
-      throw new AppError(E_STORE_INTERNAL, '该方法由后续任务实现');
+
+    /**
+     * 移动（FR-VFS-05）：环检测（O(1) 前缀比较）→ 目标校验与重名预查 → 单事务级联迁移子树路径并更新父指针。
+     * 目标必须是文件夹；根节点不可被移动；移到自身或自身后代一律拒绝（防子树成环）。
+     * 参数 targetDirId 为目标文件夹节点 id；返回 affectedCount 为含自身的子树受影响节点数。
+     * 异常：E_VFS_NOT_FOUND（源/目标缺失或已在回收站、根节点）、E_VFS_INVALID_MOVE（目标非文件夹/环/根）、
+     * E_VFS_DUPLICATE_NAME（目标目录下已有同名节点）；调用方按 AppError.code 分支处理。
+     */
+    moveNode(request: MoveNodeRequest): AffectedResponse {
+      const row = requireRow(request.nodeId);
+      if (row.id === 1) throw new AppError(E_VFS_NOT_FOUND, '根节点不可操作');
+      if (row.parent_id === null) throw new AppError(E_VFS_INVALID_MOVE, '根节点不可移动');
+      const target = requireRow(request.targetDirId);
+      if (target.node_type !== 'dir') throw new AppError(E_VFS_INVALID_MOVE, '目标必须是文件夹');
+      // 环检测 O(1)：目标路径等于被移节点路径或落在其子树内（含移到自身）即拒绝（spec §7.5）
+      if (
+        target.virtual_path === row.virtual_path ||
+        target.virtual_path.startsWith(row.virtual_path + '/')
+      ) {
+        throw new AppError(E_VFS_INVALID_MOVE, '不能移动到自身或其子文件夹');
+      }
+      const newName = row.name;
+      // 目标目录重名预查（spec §5）：与 create/rename 共用闭包级语句，禁方法体内联 prepare（宪法 A.4-5）
+      const dup = stmtDupIdByParentName.get(target.id, newName);
+      if (dup !== undefined) {
+        throw new AppError(E_VFS_DUPLICATE_NAME, '目标文件夹已存在同名文件或文件夹');
+      }
+      return runWriteTransaction(db, () => {
+        const now = toLocalIsoTime(new Date());
+        const oldPath = row.virtual_path;
+        // 目标为根（'/'）时不产生双斜杠：直接以斜杠拼接新名
+        const newPath =
+          target.virtual_path === '/' ? '/' + newName : target.virtual_path + '/' + newName;
+        // 先级联改写子树全部路径（含被移节点自身），再更新被移节点父指针，两写同事务（宪法 A.4-4）
+        stmtCascadePath.run({ oldPath, newPath });
+        stmtMoveParent.run({ parentId: target.id, now, id: row.id });
+        // 子树计数在级联提交后统计：stmtSubtreeIds 谓词含被移节点自身，length 即含自身的子树总数（勿再 +1）
+        const affected = stmtSubtreeIds.all({
+          rootPath: newPath,
+          rootPrefix: newPath + '/',
+        }).length;
+        return { affectedCount: affected };
+      });
     },
+    // —— 以下占位桩由 Task 10 替换（过渡桩不跨任务存续）：仅保留签名形态供 IPC 装配按契约引用，
+    // 参数留待实现时消费，逐个排除未用参数告警（随桩替换一并移除，nodeName.ts 先例）
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     trashNode(_request: NodeIdRequest): AffectedResponse {
       throw new AppError(E_STORE_INTERNAL, '该方法由后续任务实现');
