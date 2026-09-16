@@ -28,5 +28,16 @@ export default tseslint.config(
       '@typescript-eslint/no-non-null-assertion': 'error',
     },
   },
+  {
+    // scripts/ 下为 Node 运行环境的构建守卫脚本（.mjs），需补充 Node 全局，
+    // 否则 js.configs.recommended 的 no-undef 会误报 console / process
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+      },
+    },
+  },
   prettier,
 );

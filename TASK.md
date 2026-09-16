@@ -21,7 +21,7 @@
 | 开源许可证（README 暂标注待定：MIT） | 影响打包与发布 | 待定 |
 | package.json 缺 `author` 字段 | M6 electron-builder NSIS 打包需要，打包前必须补齐 | 待定 |
 | electron-builder 以 `postinstall: electron-builder install-app-deps` 替代直调 @electron/rebuild | 打包日志建议项（依赖编排更贴近 electron-builder 语义） | 待定 |
-| Vite/Vitest configLoader 'native' 迁移警告（config 文件含 ESM 语法但以 CJS 加载，native 计划成为默认） | 根治需切 `"type":"module"`（CJS/ESM 跨任务决策，影响构建产物形态），随 M1 构建编排重构一并评估 | 待定 |
+| Vite/Vitest configLoader 'native' 迁移警告（config 文件含 ESM 语法但以 CJS 加载，native 计划成为默认） | 根治需切 `"type":"module"`（CJS/ESM 跨任务决策，影响构建产物形态），随 M1 构建编排重构一并评估 | 已裁决（2026-09-16）：M1 暂不切 "type":"module"——收益仅消除构建警告，代价是主进程 CJS 产物加载链与 preload 捆绑输出的连锁重构；待 Vite 将 native loader 设为默认（大版本升级预警）时随迁移条目再评估 |
 
 ## 待调研项（源自 docs/agmds-research/ 四份报告，注明触发时机）
 
