@@ -26,9 +26,18 @@ describe('validateNodeName', () => {
     expect(validateNodeName(nfd)).toBe('caf\u00e9.html');
   });
 
+  it('长度按 Unicode 码点计：128 个增补平面 emoji（128 码点）合法通过', () => {
+    // '😀' 为增补平面字符（U+1F600）：1 个码点、2 个 UTF-16 码元，按码点计应通过
+    const emoji = '😀'.repeat(128);
+    expect(emoji.length).toBe(256); // 前置确认：UTF-16 码元为 256，若按码元计数会误拒本用例
+    expect(validateNodeName(emoji)).toBe(emoji);
+  });
+
   it('拒绝：空串、超 255 码点、非法字符、控制字符', () => {
     invalid('');
     invalid('a'.repeat(256));
+    invalid('a'.repeat(255) + '😀'); // 256 码点（ASCII 与增补平面混合）
+    invalid('😀'.repeat(256)); // 256 码点
     for (const ch of ['/', '\\', ':', '*', '?', '"', '<', '>', '|']) invalid(`a${ch}b`);
     invalid('a\u0000b');
     invalid('a\u0007b');

@@ -24,7 +24,10 @@ export function validateNodeName(raw: string): string {
   if (typeof raw !== 'string') fail();
   // spec §6.1：统一 NFC（macOS APFS 为 NFD 分解形态，统一后同名判定唯一）
   const name = raw.normalize('NFC');
-  if (name.length < 1 || name.length > 255) fail(); // Unicode 码点数
+  // 长度按 Unicode 码点计（spec §6.2 规则①）：String.length 数的是 UTF-16 码元，
+  // 增补平面字符（emoji 等）单个占 2 个码元会被双计误拒，须用展开迭代取码点数
+  const codePointCount = [...name].length;
+  if (codePointCount < 1 || codePointCount > 255) fail();
   if (FORBIDDEN_CHARS.test(name)) fail();
   if (name === '.' || name === '..') fail();
   if (name !== name.trimEnd() || name.endsWith('.')) fail(); // 尾随空格/点（Windows 剥离语义）
