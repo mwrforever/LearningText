@@ -28,9 +28,22 @@ const bridgeName = registration[0];
 const exposedApi = registration[1];
 
 describe('preload 桥注册', () => {
-  it('仅以具名 api 暴露 ping 能力（禁暴露 ipcRenderer 本体与多余通道）', () => {
+  it('以具名 api 暴露契约全量成员（禁暴露 ipcRenderer 本体与多余通道）', () => {
     expect(bridgeName).toBe('api');
-    expect(Object.keys(exposedApi)).toEqual(['ping']);
+    expect(Object.keys(exposedApi)).toEqual([
+      'ping',
+      'listChildren',
+      'createNode',
+      'readFile',
+      'writeFile',
+      'renameNode',
+      'moveNode',
+      'trashNode',
+      'restoreNode',
+      'purgeNode',
+      'resolvePath',
+      'onVfsChanged',
+    ]);
   });
 
   it('ping 经 system:ping 通道调用主进程且载荷为 null，结果原样回传', async () => {
