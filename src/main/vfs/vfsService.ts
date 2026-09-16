@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { AppError } from '../../shared/result';
 import {
-  E_STORE_INTERNAL,
   E_VFS_DUPLICATE_NAME,
   E_VFS_FILE_TOO_LARGE,
   E_VFS_INVALID_MOVE,
@@ -23,7 +22,6 @@ import type {
   MoveNodeRequest,
   NodeIdRequest,
   NodeMeta,
-  NodeResponse,
   ReadFileRequest,
   ReadFileResponse,
   RenameNodeRequest,
@@ -122,6 +120,39 @@ export function createVfsService(db: Database.Database) {
   // 移动的父指针更新：与级联路径写同事务，保证树结构与路径物化原子一致（宪法 A.4-4）
   const stmtMoveParent = db.prepare(
     'UPDATE node SET parent_id = @parentId, updated_at = @now WHERE id = @id',
+  );
+
+  // —— 软删除域语句（FR-VFS-06，spec §7.5）：与重构段同区闭包级预编译，禁方法体内联 prepare（宪法 A.4-5）——
+  // 回收站行获取：仅命中 deleted_at 非空行，作为还原入口的回收站判定（未删除/不存在统一拒绝）
+  const stmtRowInTrash = db.prepare<number, NodeRow>(
+    'SELECT * FROM node WHERE id = ? AND deleted_at IS NOT NULL',
+  );
+  // 还原时按行重建 FTS：需 content 列按 MIME 判定文本类（SELECT * 行结构兼容 NodeRow 消费字段）
+  const stmtSubtreeRows = db.prepare<
+    { rootPath: string; rootPrefix: string },
+    NodeRow & { content: Buffer | null }
+  >(
+    `SELECT id, parent_id, node_type, name, virtual_path, mime_type, size, created_at, updated_at, content
+     FROM node WHERE virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix`,
+  );
+  // 子树 FTS 删除（trash 前置步，宪法 A.4-10：先删索引行后改业务行）
+  const stmtDeleteFtsBySubtree = db.prepare(
+    `DELETE FROM node_fts WHERE rowid IN (
+       SELECT id FROM node
+       WHERE virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix)`,
+  );
+  const stmtSoftDeleteSubtree = db.prepare(
+    `UPDATE node SET deleted_at = @now, updated_at = @now
+     WHERE virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix`,
+  );
+  const stmtRestoreSubtree = db.prepare(
+    `UPDATE node SET deleted_at = NULL, updated_at = @now
+     WHERE virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix`,
+  );
+  // 物理移除（purge）：软删行的 virtual_path 未被改写，前缀定位对回收站子树同样成立
+  const stmtPurgeSubtree = db.prepare(
+    `DELETE FROM node
+     WHERE virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix`,
   );
 
   return {
@@ -312,19 +343,67 @@ export function createVfsService(db: Database.Database) {
         return { affectedCount: affected };
       });
     },
-    // —— 以下占位桩由 Task 10 替换（过渡桩不跨任务存续）：仅保留签名形态供 IPC 装配按契约引用，
-    // 参数留待实现时消费，逐个排除未用参数告警（随桩替换一并移除，nodeName.ts 先例）
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    trashNode(_request: NodeIdRequest): AffectedResponse {
-      throw new AppError(E_STORE_INTERNAL, '该方法由后续任务实现');
+    /** 软删除（FR-VFS-06）：先删 FTS 行（宪法 A.4-10 顺序）后置 deleted_at；partial unique 随即让名 */
+    trashNode(request: NodeIdRequest): AffectedResponse {
+      const row = requireRow(request.nodeId);
+      if (row.id === 1) throw new AppError(E_VFS_NOT_FOUND, '根节点不可操作');
+      return runWriteTransaction(db, () => {
+        const now = toLocalIsoTime(new Date());
+        const params = { rootPath: row.virtual_path, rootPrefix: row.virtual_path + '/' };
+        stmtDeleteFtsBySubtree.run(params);
+        const info = stmtSoftDeleteSubtree.run({ ...params, now });
+        return { affectedCount: info.changes };
+      });
     },
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    restoreNode(_request: NodeIdRequest): NodeResponse['node'] {
-      throw new AppError(E_STORE_INTERNAL, '该方法由后续任务实现');
+
+    /** 还原（FR-VFS-06）：须在回收站且父链未删；整棵子树恢复 + FTS 重建；撞名由约束映射 */
+    restoreNode(request: NodeIdRequest): NodeMeta {
+      const row = stmtRowInTrash.get(request.nodeId);
+      if (row === undefined || row.id === 1) {
+        throw new AppError(E_VFS_NOT_FOUND, '节点不在回收站');
+      }
+      if (row.parent_id !== null) {
+        // 不变式：trash 以子树为单位，父在回收站则子不可单独还原（spec §7.5）
+        const parent = stmtRowById.get(row.parent_id);
+        if (parent === undefined || parent.deleted_at !== null) {
+          throw new AppError(E_VFS_NOT_FOUND, '父文件夹仍在回收站，请先还原上级');
+        }
+      }
+      return runWriteTransaction(db, () => {
+        const now = toLocalIsoTime(new Date());
+        const params = { rootPath: row.virtual_path, rootPrefix: row.virtual_path + '/' };
+        stmtRestoreSubtree.run({ ...params, now });
+        // 重建子树 FTS：预编译全行语句按行取内容判定文本
+        const rows = stmtSubtreeRows.all(params);
+        for (const r of rows) {
+          const body =
+            r.mime_type !== null && isTextualMime(r.mime_type)
+              ? (r.content?.toString('utf8') ?? '')
+              : '';
+          stmtInsertFts.run({ id: r.id, name: r.name, body });
+        }
+        return toNodeMeta(row);
+      });
     },
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    purgeNode(_request: NodeIdRequest): AffectedResponse {
-      throw new AppError(E_STORE_INTERNAL, '该方法由后续任务实现');
+
+    /** 彻底删除（FR-VFS-06）：物理移除子树；不变式——回收站节点无 FTS 行，无需再动 FTS */
+    purgeNode(request: NodeIdRequest): AffectedResponse {
+      const row = stmtRowById.get(request.nodeId); // 不过滤删除态：回收站内节点也可彻底删除
+      if (row === undefined) throw new AppError(E_VFS_NOT_FOUND, '节点不存在');
+      if (row.id === 1) throw new AppError(E_VFS_NOT_FOUND, '根节点不可操作');
+      return runWriteTransaction(db, () => {
+        // 简报代码适配：FK ON DELETE CASCADE 的级联删除不计入 changes（实测 sqlite3_changes
+        // 仅统计语句直接删除行），故先以子树定位语句计数（与 rename/move 同一口径）再物理移除
+        const affected = stmtSubtreeIds.all({
+          rootPath: row.virtual_path,
+          rootPrefix: row.virtual_path + '/',
+        }).length;
+        stmtPurgeSubtree.run({
+          rootPath: row.virtual_path,
+          rootPrefix: row.virtual_path + '/',
+        });
+        return { affectedCount: affected };
+      });
     },
   };
 }

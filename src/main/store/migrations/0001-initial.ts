@@ -13,7 +13,7 @@ export const initialMigration: Migration = {
         parent_id     INTEGER REFERENCES node(id) ON DELETE CASCADE,
         node_type     TEXT    NOT NULL CHECK (node_type IN ('dir','file')),
         name          TEXT    NOT NULL,
-        virtual_path  TEXT    NOT NULL UNIQUE,
+        virtual_path  TEXT    NOT NULL,    -- 物化完整路径（唯一性由下方部分唯一索引约束，软删行让出路径 FR-VFS-06）
         mime_type     TEXT,
         size          INTEGER NOT NULL DEFAULT 0,
         content       BLOB,
@@ -25,6 +25,8 @@ export const initialMigration: Migration = {
       CREATE UNIQUE INDEX idx_node_parent_name ON node(parent_id, name) WHERE deleted_at IS NULL;
       CREATE INDEX idx_node_parent ON node(parent_id) WHERE deleted_at IS NULL;
       CREATE INDEX idx_node_deleted ON node(deleted_at) WHERE deleted_at IS NOT NULL;
+      -- 路径唯一约束（仅约束未删除行：软删行让出路径，支撑回收站让名与还原撞名语义 FR-VFS-06）
+      CREATE UNIQUE INDEX idx_node_virtual_path ON node(virtual_path) WHERE deleted_at IS NULL;
       CREATE VIRTUAL TABLE node_fts USING fts5(name, body);
     `);
     // 根节点种子：id=1、无父、路径 '/'（spec §3.3；name 空串满足 NOT NULL，展示层特殊处理）
