@@ -130,7 +130,9 @@ LearningText/
 src/
 ├── main/                      # 主进程：唯一持有 Node / SQLite / 文件系统能力；窗口、生命周期、原生 API
 │   ├── app.ts                 #   装配入口：开库 → 迁移 → 协议 → 窗口（fail-fast，见 B.3-1）
-│   ├── store/                 #   存储层：连接单例、迁移、备份——事务边界唯一归属地（A.4）
+│   ├── ipc.ts                 #   IPC handler 集中注册：origin+zod 两道校验、Result 转换、变更广播
+│   ├── security.ts            #   origin 白名单判断（B.5-4，纯函数）
+│   ├── store/                 #   存储层：连接单例、迁移（migrations/）、事务、备份——事务边界唯一归属地（A.4）
 │   ├── vfs/                   #   虚拟文件系统服务：节点树、路径解析、软删除
 │   ├── search/                #   搜索服务：FTS5 索引维护与查询
 │   ├── io/                    #   导入导出服务
@@ -214,9 +216,11 @@ Electron 桌面端 HTML 文档管理与实时预览工具：VFS + SQLite 单库�
 ## C.4 常用命令（M0 落地后 package.json 必须与之对齐）
 
 ```bash
-npm run dev              # 并行启动渲染层 dev server 与主进程编译（concurrently，任一退出即全部退出）
+npm run dev              # 并行启动渲染层 dev server、preload rolldown watch 与主进程编译（concurrently，任一退出即全部退出）
+npm run dev:preload      # preload rolldown watch（dev 三路编排之一，sandbox 单文件捆绑）
 npm start                # 开发形态启动应用（electron .）
 npm run build            # 完整生产构建：主进程编译 + vite build
+npm run check:preload    # preload 产物守卫：断言 dist/preload/index.js 为 rolldown 单文件捆绑（sandbox 回归防护）
 npm run preview          # 本地预览渲染层构建产物，禁作生产服务器
 npm test                 # 全量测试门禁：unit + integration + e2e 串行，CI 与本地同一入口
 npm run test:unit        # Vitest 单元（--project unit）
