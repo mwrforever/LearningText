@@ -12,6 +12,8 @@ export function runMigrations(
   const current = typeof rawVersion === 'number' ? rawVersion : 0;
   const pending = migrations.filter((m) => m.version > current);
   for (const migration of pending) {
+    // 迁移属数据库写操作与核心状态变更（全局日志规范 §二）：info 记录版本号与迁移名，便于故障定位
+    console.info(`[store] 执行迁移 v${migration.version}: ${migration.name}`);
     // 每个迁移独立事务：up 的全部 DDL/DML 与 user_version 写入一起提交或回滚
     db.transaction(() => {
       migration.up(db);
