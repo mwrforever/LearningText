@@ -14,6 +14,14 @@ const mocks = vi.hoisted(() => {
     getAppPath: vi.fn<() => string>(),
     BrowserWindow: vi.fn<(options: unknown) => { loadURL: (url: string) => Promise<void> }>(),
     loadURL: vi.fn<(url: string) => Promise<void>>(),
+    wcOn: vi.fn<(event: string, listener: (...args: unknown[]) => void) => void>(),
+    setWindowOpenHandler: vi.fn<(handler: () => { action: string }) => void>(),
+    setPermissionRequestHandler:
+      vi.fn<
+        (
+          handler: (wc: unknown, permission: string, callback: (allow: boolean) => void) => void,
+        ) => void
+      >(),
     registerIpcHandlers: vi.fn<(deps: { allowedOrigins: readonly string[] }) => void>(),
   };
   // app.ts 模块加载即执行 bootstrapMain，此时须保证 whenReady / getAppPath 立即可用
@@ -21,7 +29,14 @@ const mocks = vi.hoisted(() => {
   m.getAppPath.mockImplementation(() => '/mock-app-path');
   // BrowserWindow 以 new 调用，桩实现必须用 function 声明（箭头函数不可构造）
   m.BrowserWindow.mockImplementation(function () {
-    return { loadURL: m.loadURL };
+    return {
+      loadURL: m.loadURL,
+      webContents: {
+        on: m.wcOn,
+        setWindowOpenHandler: m.setWindowOpenHandler,
+        session: { setPermissionRequestHandler: m.setPermissionRequestHandler },
+      },
+    };
   });
   return m;
 });
@@ -77,7 +92,14 @@ describe('主进程装配 bootstrapMain', () => {
     mocks.whenReady.mockResolvedValue(undefined);
     // BrowserWindow 以 new 调用，桩实现必须用 function 声明（箭头函数不可构造）
     mocks.BrowserWindow.mockImplementation(function () {
-      return { loadURL: mocks.loadURL };
+      return {
+        loadURL: mocks.loadURL,
+        webContents: {
+          on: mocks.wcOn,
+          setWindowOpenHandler: mocks.setWindowOpenHandler,
+          session: { setPermissionRequestHandler: mocks.setPermissionRequestHandler },
+        },
+      };
     });
   });
 
@@ -139,5 +161,37 @@ describe('主进程装配 bootstrapMain', () => {
     bootstrapMain();
     withPlatform('darwin', windowAllClosedHandler());
     expect(mocks.appQuit).not.toHaveBeenCalled();
+  });
+
+  it('窗口装配注册 B.5-4/5 安全基线三件套', async () => {
+    bootstrapMain();
+    await flushReadyChain();
+
+    // 三件套必须全部注册（宪法 B.5-4/5）
+    expect(mocks.wcOn).toHaveBeenCalledWith('will-navigate', expect.any(Function));
+    expect(mocks.setWindowOpenHandler).toHaveBeenCalledWith(expect.any(Function));
+    expect(mocks.setPermissionRequestHandler).toHaveBeenCalledWith(expect.any(Function));
+
+    // window.open 回调必须返回 deny
+    const openCall = mocks.setWindowOpenHandler.mock.calls.at(-1);
+    if (openCall === undefined) {
+      throw new Error('setWindowOpenHandler 未注册回调');
+    }
+    const openHandler = openCall[0] as () => { action: string };
+    expect(openHandler()).toEqual({ action: 'deny' });
+
+    // 权限请求回调必须拒绝（按 Electron 三参签名注入 callback，断言默认拒权）
+    const permCall = mocks.setPermissionRequestHandler.mock.calls.at(-1);
+    if (permCall === undefined) {
+      throw new Error('setPermissionRequestHandler 未注册回调');
+    }
+    const permHandler = permCall[0] as (
+      wc: unknown,
+      permission: string,
+      callback: (allow: boolean) => void,
+    ) => void;
+    const spy = vi.fn();
+    permHandler(undefined, 'media', spy);
+    expect(spy).toHaveBeenCalledWith(false);
   });
 });

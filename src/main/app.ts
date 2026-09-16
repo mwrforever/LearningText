@@ -9,15 +9,21 @@ import path from 'node:path';
 import { app, BrowserWindow, protocol } from 'electron';
 import { handleAppResource } from './protocol/appProtocol';
 import { registerIpcHandlers } from './ipc';
+import { isOriginAllowed } from './security';
 
 const APP_ORIGIN = 'app://bundle';
 
 /**
- * 创建主窗口并按运行模式加载页面。
+ * 创建主窗口并按运行模式加载页面，同时装配窗口安全基线三件套（宪法 B.5-4/5）。
  * @param devServerUrl Vite dev server 地址（来源：主进程环境变量 VITE_DEV_SERVER_URL，
  *   仅主进程读取，A.2-2）；undefined 表示生产模式，加载 app:// 产物页。
+ * @param allowedOrigins 导航放行的 origin 白名单（与 IPC 校验同一份，来源：
+ *   whenReady 内按运行模式计算的 allowed，B.5-6）。
  */
-function createMainWindow(devServerUrl: string | undefined): void {
+function createMainWindow(
+  devServerUrl: string | undefined,
+  allowedOrigins: readonly string[],
+): void {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -29,6 +35,18 @@ function createMainWindow(devServerUrl: string | undefined): void {
       nodeIntegration: false,
       preload: path.join(__dirname, '../preload/index.js'),
     },
+  });
+  // 宪法 B.5-4：导航按 origin 白名单拦截（isOriginAllowed 内部用 URL 解析器）
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!isOriginAllowed(url, allowedOrigins)) {
+      event.preventDefault();
+    }
+  });
+  // 宪法 B.5-4：一律 deny window.open
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // 宪法 B.5-5：权限请求默认全部拒绝
+  win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => {
+    callback(false);
   });
   // 开发模式加载 dev server，生产加载 app:// 自定义协议（禁 loadURL 任意外部 URL）
   if (devServerUrl !== undefined) {
@@ -57,7 +75,7 @@ export function bootstrapMain(): void {
       const allowed =
         devServerUrl !== undefined ? [new URL(devServerUrl).origin, APP_ORIGIN] : [APP_ORIGIN];
       registerIpcHandlers({ allowedOrigins: allowed });
-      createMainWindow(devServerUrl);
+      createMainWindow(devServerUrl, allowed);
     })
     .catch((e: unknown) => {
       // 装配失败禁止带伤运行（B.3-1）
