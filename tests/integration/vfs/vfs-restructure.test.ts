@@ -166,3 +166,23 @@ describe('moveNode', () => {
     expect(() => vfs.moveNode({ nodeId: webId, targetDirId: 9999 })).toThrow(AppError);
   });
 });
+
+describe('同路径回收站孪生树隔离', () => {
+  // 孪生场景：trash /web 后 partial unique 允许同路径重建；级联谓词按删除状态锚定，
+  // 活树 rename/move 不得改写回收站孪生行的 virtual_path（其为还原定位的唯一凭据）
+  it('rename/move 活子树时级联只作用于活树：孪生行路径保持原样、计数不被污染', () => {
+    const { webId, indexId, mainId, docsId } = seedTree();
+    vfs.trashNode({ nodeId: webId });
+    const newWebId = vfs.createNode({ parentId: 1, name: 'web', nodeType: 'dir' }).id;
+    const renamed = vfs.renameNode({ nodeId: newWebId, newName: 'site' });
+    expect(renamed.affectedCount).toBe(1); // 只计活树自身，孪生行不污染计数
+    expect(pathOf(indexId)).toBe('/web/index.html');
+    expect(pathOf(mainId)).toBe('/web/css/main.css');
+    expect(pathOf(webId)).toBe('/web');
+    // 再建 /web 并移动到 /docs：move 级联同样不得触碰孪生行
+    const web2Id = vfs.createNode({ parentId: 1, name: 'web', nodeType: 'dir' }).id;
+    const moved = vfs.moveNode({ nodeId: web2Id, targetDirId: docsId });
+    expect(moved.affectedCount).toBe(1);
+    expect(pathOf(indexId)).toBe('/web/index.html');
+  });
+});

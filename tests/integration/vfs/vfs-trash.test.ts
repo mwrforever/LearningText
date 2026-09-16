@@ -140,6 +140,34 @@ describe('purgeNode', () => {
     ).toBe(0);
   });
 
+  it('purge 回收站旧树不误伤同路径存活树：仅旧树物理消失（孪生互斥）', () => {
+    const { webId, indexId } = seedScenario();
+    vfs.trashNode({ nodeId: webId });
+    // partial unique 让名后同路径重建存活树（带内容文件），与回收站旧树构成同路径孪生
+    const newWebId = vfs.createNode({ parentId: 1, name: 'web', nodeType: 'dir' }).id;
+    const newIndexId = vfs.createNode({
+      parentId: newWebId,
+      name: 'index.html',
+      nodeType: 'file',
+      content: new Uint8Array(Buffer.from('<p>new</p>')),
+    }).id;
+    const result = vfs.purgeNode({ nodeId: webId });
+    // 计数只含回收站旧树（web + index），不得计入同路径存活树
+    expect(result.affectedCount).toBe(2);
+    expect(
+      db
+        .prepare<[number, number], { c: number }>(
+          'SELECT COUNT(*) AS c FROM node WHERE id IN (?, ?)',
+        )
+        .get(webId, indexId)?.c,
+    ).toBe(0);
+    // 存活孪生树完好：可解析且 FTS 行在
+    expect(vfs.resolvePath({ virtualPath: '/web' }).nodeId).toBe(newWebId);
+    expect(vfs.resolvePath({ virtualPath: '/web/index.html' }).nodeId).toBe(newIndexId);
+    expect(ftsCount(newWebId)).toBe(1);
+    expect(ftsCount(newIndexId)).toBe(1);
+  });
+
   it('根不可彻底删除', () => {
     try {
       vfs.purgeNode({ nodeId: 1 });
