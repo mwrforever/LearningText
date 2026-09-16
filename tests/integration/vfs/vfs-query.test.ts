@@ -66,6 +66,15 @@ describe('listChildren', () => {
     expect(children).toHaveLength(0);
   });
 
+  it('虚拟路径不存在 → E_VFS_NOT_FOUND', () => {
+    try {
+      vfs.listChildren({ virtualPath: '/nope' });
+      expect.unreachable('应拒绝');
+    } catch (e) {
+      expect((e as AppError).code).toBe(E_VFS_NOT_FOUND);
+    }
+  });
+
   it('不存在/已在回收站 → E_VFS_NOT_FOUND', () => {
     expect(() => vfs.listChildren({ parentId: 9999 })).toThrow(AppError);
     try {
@@ -91,6 +100,15 @@ describe('resolvePath', () => {
     );
     expect(() => vfs.resolvePath({ virtualPath: '/gone.html' })).toThrow(AppError);
   });
+
+  it('不存在的路径 → E_VFS_NOT_FOUND', () => {
+    try {
+      vfs.resolvePath({ virtualPath: '/nope.html' });
+      expect.unreachable('应拒绝');
+    } catch (e) {
+      expect((e as AppError).code).toBe(E_VFS_NOT_FOUND);
+    }
+  });
 });
 
 describe('readFile', () => {
@@ -111,5 +129,15 @@ describe('readFile', () => {
       expect((e as AppError).code).toBe(E_VFS_TYPE_MISMATCH);
     }
     expect(() => vfs.readFile({ nodeId: 9999 })).toThrow(AppError);
+  });
+
+  it('内容列被置空（损坏态）→ 读出空内容兜底不抛错', () => {
+    const id = seed(1, 'broken.html', 'file', Buffer.from('<p>x</p>'));
+    // 文件行的 content 列由服务层恒写入 Buffer，正常流不为 NULL；
+    // 直改库构造损坏行，锁定「按空内容兜底」的防御分支
+    db.prepare('UPDATE node SET content = NULL WHERE id = ?').run(id);
+    const { content, meta } = vfs.readFile({ nodeId: id });
+    expect(content).toHaveLength(0);
+    expect(meta).toMatchObject({ id, name: 'broken.html' });
   });
 });

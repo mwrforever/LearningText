@@ -152,6 +152,39 @@ describe('moveNode', () => {
     expect(parentId).toBe(docsId);
   });
 
+  it('移动到根目录：路径按根拼接不产生双斜杠，父指针回到根', () => {
+    const { cssId, mainId } = seedTree();
+    // 目标为根（'/'）时新路径直接以斜杠拼名，走与普通目标不同的拼接分支
+    const result = vfs.moveNode({ nodeId: cssId, targetDirId: 1 });
+    expect(result.affectedCount).toBe(2); // css + main
+    expect(pathOf(cssId)).toBe('/css');
+    expect(pathOf(mainId)).toBe('/css/main.css');
+  });
+
+  it('根节点不可移动 → E_VFS_NOT_FOUND', () => {
+    seedTree();
+    try {
+      // 根节点为迁移种子固定 id=1；根不可操作检查先于目标校验
+      vfs.moveNode({ nodeId: 1, targetDirId: 1 });
+      expect.unreachable('根不可移动');
+    } catch (e) {
+      expect((e as AppError).code).toBe(E_VFS_NOT_FOUND);
+    }
+  });
+
+  it('父指针被置空的活节点（不变式破缺）→ E_VFS_INVALID_MOVE', () => {
+    const { webId, docsId } = seedTree();
+    // partial unique 仅约束未删除行的 (parent_id, name)：置空父指针与根（NULL,''）不同名不冲突，
+    // 可构造「id≠1 但无父」的不变式破缺行，锁定 moveNode 的防御分支
+    db.prepare('UPDATE node SET parent_id = NULL WHERE id = ?').run(webId);
+    try {
+      vfs.moveNode({ nodeId: webId, targetDirId: docsId });
+      expect.unreachable('应拒绝');
+    } catch (e) {
+      expect((e as AppError).code).toBe(E_VFS_INVALID_MOVE);
+    }
+  });
+
   it('目标目录已有同名 → E_VFS_DUPLICATE_NAME；目标不存在 → E_VFS_NOT_FOUND', () => {
     const { webId } = seedTree();
     // 目标目录名不可与场景树既有顶级目录（web/docs）重名，否则建目录阶段即被重名拒绝

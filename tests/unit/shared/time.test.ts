@@ -17,4 +17,17 @@ describe('toLocalIsoTime', () => {
     expect(m).not.toBeNull();
     expect(Number(m?.[2])).toBeLessThan(60);
   });
+
+  it('西半球偏移（getTimezoneOffset 为正）输出负偏移形态', () => {
+    // 以 Date 子类覆写 getTimezoneOffset 模拟 UTC-5（西半球为正偏移输入），
+    // 不依赖宿主机时区，保证三平台 CI 上符号分支均可覆盖
+    class UtcMinusFive extends Date {
+      override getTimezoneOffset(): number {
+        return 300; // 西半球 getTimezoneOffset 为正，ISO 形态应为 -05:00
+      }
+    }
+    const text = toLocalIsoTime(new UtcMinusFive(2026, 0, 15, 10, 30, 5, 0));
+    expect(text.startsWith('2026-01-15T10:30:05.000')).toBe(true);
+    expect(text.endsWith('-05:00')).toBe(true);
+  });
 });

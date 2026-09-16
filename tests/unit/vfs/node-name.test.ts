@@ -69,4 +69,8 @@ describe('validateNodeName', () => {
     invalid('a.');
     invalid('. '); // 尾随空格优先命中
   });
+
+  it('拒绝：非字符串输入（运行时防御边界，绕过 TS 契约的调用同样拒绝）', () => {
+    invalid(42 as unknown as string);
+  });
 });

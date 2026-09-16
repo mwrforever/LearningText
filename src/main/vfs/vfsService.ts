@@ -213,7 +213,10 @@ export function createVfsService(db: Database.Database) {
     /** 虚拟路径 → 节点 id（FR-VFS-07），含未删除校验 */
     resolvePath(request: ResolvePathRequest): { nodeId: number } {
       const row = stmtIdByPath.get(request.virtualPath);
-      if (row === undefined) throw new AppError(E_VFS_NOT_FOUND, '路径不存在或已在回收站');
+      // 块语句形式为 v8 块级覆盖提供独立范围（单行 if+throw 的真值分支无法被覆盖工具归因）
+      if (row === undefined) {
+        throw new AppError(E_VFS_NOT_FOUND, '路径不存在或已在回收站');
+      }
       return { nodeId: row.id };
     },
 

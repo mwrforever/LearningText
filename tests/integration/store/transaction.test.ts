@@ -1,9 +1,16 @@
 // 事务封装（spec §4）：IMMEDIATE 写事务、异常回滚、SQLite 错误码映射（spec §5 表）
 import { describe, expect, it } from 'vitest';
+import type Database from 'better-sqlite3';
 import { openDatabase } from '../../../src/main/store/db';
 import { runMigrations } from '../../../src/main/store/migrate';
 import { runWriteTransaction } from '../../../src/main/store/transaction';
-import { E_VFS_DUPLICATE_NAME, E_STORE_INTERNAL } from '../../../src/shared/errors';
+import {
+  E_VFS_DUPLICATE_NAME,
+  E_STORE_BUSY,
+  E_STORE_DB_DAMAGED,
+  E_STORE_DISK_FULL,
+  E_STORE_INTERNAL,
+} from '../../../src/shared/errors';
 import { AppError } from '../../../src/shared/result';
 import { mapSqliteError } from '../../../src/main/store/errorMapping';
 
@@ -55,6 +62,20 @@ describe('runWriteTransaction', () => {
     }
     db.close();
   });
+
+  it('未知异常（非 AppError 且无 SQLite code）原样上抛，不被错误映射改写', () => {
+    // 以桩库句柄注入普通 TypeError：既非业务 AppError 也非 SqliteError，
+    // 必须走「原样上抛」兜底分支，保留原始异常供上层日志定位
+    const original = new TypeError('非数据库异常');
+    const fakeDb = {
+      transaction: () => ({
+        immediate: () => {
+          throw original;
+        },
+      }),
+    } as unknown as Database.Database;
+    expect(() => runWriteTransaction(fakeDb, () => 'x')).toThrow(original);
+  });
 });
 
 describe('mapSqliteError', () => {
@@ -69,5 +90,32 @@ describe('mapSqliteError', () => {
       code: 'SQLITE_CORRUPT',
     });
     expect(mapSqliteError(sqliteLike).code).toBe('E_STORE_DB_DAMAGED');
+  });
+
+  it('SQLITE_NOTADB 同归 E_STORE_DB_DAMAGED（损坏类双码）', () => {
+    const notadb = Object.assign(new Error('file is not a database'), { code: 'SQLITE_NOTADB' });
+    expect(mapSqliteError(notadb).code).toBe(E_STORE_DB_DAMAGED);
+  });
+
+  it('SQLITE_BUSY 映射 E_STORE_BUSY（WAL 边缘事件走用户提示路径）', () => {
+    const busy = Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+    expect(mapSqliteError(busy).code).toBe(E_STORE_BUSY);
+  });
+
+  it('SQLITE_FULL 映射 E_STORE_DISK_FULL', () => {
+    const full = Object.assign(new Error('database or disk is full'), { code: 'SQLITE_FULL' });
+    expect(mapSqliteError(full).code).toBe(E_STORE_DISK_FULL);
+  });
+
+  it('SQLITE_CONSTRAINT_UNIQUE 映射 E_VFS_DUPLICATE_NAME', () => {
+    const dup = Object.assign(new Error('UNIQUE constraint failed'), {
+      code: 'SQLITE_CONSTRAINT_UNIQUE',
+    });
+    expect(mapSqliteError(dup).code).toBe(E_VFS_DUPLICATE_NAME);
+  });
+
+  it('未识别 SQLite 码兜底 E_STORE_INTERNAL', () => {
+    const unknownCode = Object.assign(new Error('未知 SQLite 错误'), { code: 'SQLITE_WEIRD' });
+    expect(mapSqliteError(unknownCode).code).toBe(E_STORE_INTERNAL);
   });
 });

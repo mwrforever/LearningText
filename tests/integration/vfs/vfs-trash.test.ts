@@ -109,6 +109,33 @@ describe('restoreNode', () => {
       expect((e as AppError).code).toBe(E_VFS_NOT_FOUND);
     }
   });
+
+  it('回收站行父指针被置空（不变式破缺）→ 跳过父链校验整树还原', () => {
+    const { webId, indexId } = seedScenario();
+    vfs.trashNode({ nodeId: webId });
+    // partial unique 仅约束未删除行，软删行可被置空父指针，构造「在回收站但无父」的破缺行，
+    // 锁定 restoreNode 跳过父链校验的防御路径（还原锚定仍按路径，子树完整性不受影响）
+    db.prepare('UPDATE node SET parent_id = NULL WHERE id = ?').run(webId);
+    const restored = vfs.restoreNode({ nodeId: webId });
+    expect(restored.virtualPath).toBe('/web');
+    expect(
+      db
+        .prepare<number, { deleted_at: string | null }>('SELECT deleted_at FROM node WHERE id = ?')
+        .get(indexId)?.deleted_at,
+    ).toBeNull();
+  });
+
+  it('还原时文本行内容列被置空（损坏态）→ FTS body 兜底空串不抛错', () => {
+    const { webId, indexId } = seedScenario();
+    vfs.trashNode({ nodeId: webId });
+    db.prepare('UPDATE node SET content = NULL WHERE id = ?').run(indexId);
+    vfs.restoreNode({ nodeId: webId });
+    // 重建 FTS 时内容缺失按空串兜底，不得让还原事务失败
+    expect(
+      db.prepare<number, { body: string }>('SELECT body FROM node_fts WHERE rowid = ?').get(indexId)
+        ?.body,
+    ).toBe('');
+  });
 });
 
 describe('purgeNode', () => {
@@ -172,6 +199,15 @@ describe('purgeNode', () => {
     try {
       vfs.purgeNode({ nodeId: 1 });
       expect.unreachable('根不可删');
+    } catch (e) {
+      expect((e as AppError).code).toBe(E_VFS_NOT_FOUND);
+    }
+  });
+
+  it('彻底删除不存在的节点 → E_VFS_NOT_FOUND', () => {
+    try {
+      vfs.purgeNode({ nodeId: 9999 });
+      expect.unreachable('应拒绝');
     } catch (e) {
       expect((e as AppError).code).toBe(E_VFS_NOT_FOUND);
     }

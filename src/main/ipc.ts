@@ -1,38 +1,187 @@
 /**
- * IPC handler 集中注册（宪法 B.3-2）：
- * 每通道两道校验——senderFrame origin 白名单（B.5-6）→ zod safeParse（A.7-5），
- * 校验失败与业务结果统一以 Result DTO 返回（A.7-3），禁止抛异常透传。
+ * IPC handler 集中注册（宪法 B.3-2）：每通道两道校验——
+ * origin 白名单（B.5-6）→ zod safeParse（A.7-5）；服务层 AppError 统一转 Result（A.7-3）。
+ * vfs 通道在服务调用成功（= 事务已提交）后广播 vfs:changed（宪法 B.3-4）。
  */
-import { ipcMain } from 'electron';
-import { z } from 'zod';
+import { ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { z, type ZodType } from 'zod';
 import { IPC } from '../shared/ipc';
-import { err, ok, type Result } from '../shared/result';
-import { E_IPC_BAD_PAYLOAD, E_IPC_FORBIDDEN_ORIGIN } from '../shared/errors';
-
-/** system:ping 请求载荷：探针通道固定为 null，其余一律拒绝 */
-const PingPayloadSchema = z.null();
+import { AppError, err, ok, type Result } from '../shared/result';
+import { E_IPC_BAD_PAYLOAD, E_IPC_FORBIDDEN_ORIGIN, E_STORE_INTERNAL } from '../shared/errors';
+import type { VfsService } from './vfs/vfsService';
+import {
+  CreateNodeRequestSchema,
+  ListChildrenRequestSchema,
+  MoveNodeRequestSchema,
+  NodeIdRequestSchema,
+  ReadFileRequestSchema,
+  RenameNodeRequestSchema,
+  ResolvePathRequestSchema,
+  WriteFileRequestSchema,
+} from '../shared/vfs-contract';
+import type {
+  AffectedResponse,
+  CreateNodeRequest,
+  ListChildrenRequest,
+  MoveNodeRequest,
+  NodeIdRequest,
+  NodeMeta,
+  ReadFileRequest,
+  RenameNodeRequest,
+  ResolvePathRequest,
+  VfsChangedEvent,
+  WriteFileRequest,
+} from '../shared/vfs-contract';
 
 export interface IpcHandlerDeps {
   /** 允许发起 IPC 的 origin 白名单（用 origin 不用 URL，B.5-6） */
-  allowedOrigins: readonly string[];
+  readonly allowedOrigins: readonly string[];
+  /** VFS 服务（事务边界唯一归属存储层，handler 仅做转发与 Result 转换） */
+  readonly vfs: VfsService;
+  /** 主→渲染广播（app.ts 提供：遍历窗口 webContents.send）；必须在事务提交后调用 */
+  readonly broadcast: (event: VfsChangedEvent) => void;
+}
+
+/** origin 白名单判定（B.5-6）：senderFrame 可能为 null，null/空串/非白名单一律拒绝 */
+function isOriginPermitted(deps: IpcHandlerDeps, event: IpcMainInvokeEvent): boolean {
+  const origin = event.senderFrame?.origin;
+  return (
+    origin !== undefined && origin !== null && origin !== '' && deps.allowedOrigins.includes(origin)
+  );
+}
+
+/** 通用包装：origin 校验 → zod 校验 → 服务调用（AppError 转 Result）→ 广播钩子 */
+function handleWith<TReq, TRes>(
+  deps: IpcHandlerDeps,
+  schema: ZodType<TReq>,
+  fn: (request: TReq) => { result: TRes; event?: VfsChangedEvent },
+): (event: IpcMainInvokeEvent, payload: unknown) => Result<TRes> {
+  return (event, payload) => {
+    if (!isOriginPermitted(deps, event)) {
+      return err(E_IPC_FORBIDDEN_ORIGIN, '拒绝来自未授权来源的调用');
+    }
+    const parsed = schema.safeParse(payload);
+    if (!parsed.success) {
+      return err(E_IPC_BAD_PAYLOAD, '请求载荷不合法');
+    }
+    try {
+      const { result, event: changed } = fn(parsed.data);
+      // 服务方法内部事务已提交成功，此刻广播满足宪法 B.3-4（事务提交后）
+      if (changed !== undefined) deps.broadcast(changed);
+      return ok(result);
+    } catch (error: unknown) {
+      // 业务错误码保真透传；非业务异常收敛为 E_STORE_INTERNAL，禁异常跨进程透传（A.7-3）
+      if (error instanceof AppError) return err(error.code, error.message);
+      return err(E_STORE_INTERNAL, '操作失败');
+    }
+  };
 }
 
 export function registerIpcHandlers(deps: IpcHandlerDeps): void {
+  // M0 通道保持不变（system:ping 载荷固定为 null）
   ipcMain.handle(IPC.systemPing, (event, payload: unknown): Result<{ pong: true }> => {
-    // senderFrame 可能为 null（B.5-6），null 与非白名单 origin 一律拒绝
-    const origin = event.senderFrame?.origin;
-    if (
-      origin === undefined ||
-      origin === null ||
-      origin === '' ||
-      !deps.allowedOrigins.includes(origin)
-    ) {
+    if (!isOriginPermitted(deps, event)) {
       return err(E_IPC_FORBIDDEN_ORIGIN, '拒绝来自未授权来源的调用');
     }
-    const parsed = PingPayloadSchema.safeParse(payload);
-    if (!parsed.success) {
+    if (z.null().safeParse(payload).success === false) {
       return err(E_IPC_BAD_PAYLOAD, '请求载荷不合法');
     }
     return ok({ pong: true });
   });
+
+  ipcMain.handle(
+    IPC.vfsList,
+    handleWith(deps, ListChildrenRequestSchema, (q: ListChildrenRequest) => ({
+      result: deps.vfs.listChildren(q),
+    })),
+  );
+  ipcMain.handle(
+    IPC.vfsCreate,
+    handleWith(deps, CreateNodeRequestSchema, (q: CreateNodeRequest) => {
+      const node = deps.vfs.createNode(q);
+      return { result: node, event: { type: 'created', node } satisfies VfsChangedEvent };
+    }),
+  );
+  ipcMain.handle(
+    IPC.vfsRead,
+    handleWith(deps, ReadFileRequestSchema, (q: ReadFileRequest) => ({
+      result: deps.vfs.readFile(q),
+    })),
+  );
+  ipcMain.handle(
+    IPC.vfsWrite,
+    handleWith(deps, WriteFileRequestSchema, (q: WriteFileRequest) => {
+      const node = deps.vfs.writeFile(q);
+      return { result: node, event: { type: 'written', node } satisfies VfsChangedEvent };
+    }),
+  );
+  ipcMain.handle(
+    IPC.vfsRename,
+    handleWith(deps, RenameNodeRequestSchema, (q: RenameNodeRequest) => {
+      const result: AffectedResponse = deps.vfs.renameNode(q);
+      return {
+        result,
+        event: {
+          type: 'renamed',
+          nodeId: q.nodeId,
+          affectedCount: result.affectedCount,
+        } satisfies VfsChangedEvent,
+      };
+    }),
+  );
+  ipcMain.handle(
+    IPC.vfsMove,
+    handleWith(deps, MoveNodeRequestSchema, (q: MoveNodeRequest) => {
+      const result: AffectedResponse = deps.vfs.moveNode(q);
+      return {
+        result,
+        event: {
+          type: 'moved',
+          nodeId: q.nodeId,
+          affectedCount: result.affectedCount,
+        } satisfies VfsChangedEvent,
+      };
+    }),
+  );
+  ipcMain.handle(
+    IPC.vfsTrash,
+    handleWith(deps, NodeIdRequestSchema, (q: NodeIdRequest) => {
+      const result: AffectedResponse = deps.vfs.trashNode(q);
+      return {
+        result,
+        event: {
+          type: 'trashed',
+          nodeId: q.nodeId,
+          affectedCount: result.affectedCount,
+        } satisfies VfsChangedEvent,
+      };
+    }),
+  );
+  ipcMain.handle(
+    IPC.vfsRestore,
+    handleWith(deps, NodeIdRequestSchema, (q: NodeIdRequest) => {
+      const node: NodeMeta = deps.vfs.restoreNode(q);
+      return { result: node, event: { type: 'restored', node } satisfies VfsChangedEvent };
+    }),
+  );
+  ipcMain.handle(
+    IPC.vfsPurge,
+    handleWith(deps, NodeIdRequestSchema, (q: NodeIdRequest) => {
+      const result: AffectedResponse = deps.vfs.purgeNode(q);
+      return {
+        result,
+        event: {
+          type: 'purged',
+          nodeId: q.nodeId,
+          purgedCount: result.affectedCount,
+        } satisfies VfsChangedEvent,
+      };
+    }),
+  );
+  ipcMain.handle(
+    IPC.vfsResolve,
+    handleWith(deps, ResolvePathRequestSchema, (q: ResolvePathRequest) => ({
+      result: deps.vfs.resolvePath(q),
+    })),
+  );
 }

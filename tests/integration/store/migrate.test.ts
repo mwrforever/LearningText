@@ -1,5 +1,6 @@
 // 迁移执行器语义（spec §3.2）：版本判断幂等、单迁移单事务原子、user_version 同事务生效
 import { describe, expect, it, vi } from 'vitest';
+import type Database from 'better-sqlite3';
 import { openDatabase } from '../../../src/main/store/db';
 import { runMigrations } from '../../../src/main/store/migrate';
 import { ALL_MIGRATIONS } from '../../../src/main/store/migrations';
@@ -75,5 +76,27 @@ describe('runMigrations', () => {
     for (let i = 1; i < ALL_MIGRATIONS.length; i += 1) {
       expect(ALL_MIGRATIONS[i]?.version).toBe((ALL_MIGRATIONS[i - 1]?.version ?? 0) + 1);
     }
+  });
+
+  it('pragma 返回非数字（防御边界）按 0 处理：全部迁移重放', () => {
+    // user_version 读取异常（undefined 等非常规返回）时按 0 兜底——安全方向是
+    // 全量重放迁移而非跳过；以桩库句柄驱动，不依赖真实 SQLite 的 pragma 行为
+    const up = vi.fn<(db: Database.Database) => void>();
+    const pragmaSql: string[] = [];
+    const fakeDb = {
+      pragma: (sql: string): unknown => {
+        pragmaSql.push(sql);
+        return undefined; // 模拟 pragma 异常返回
+      },
+      transaction:
+        <T>(fn: () => T): (() => T) =>
+        () =>
+          fn(),
+    } as unknown as Database.Database;
+    runMigrations(fakeDb, [{ version: 1, name: 'stub-v1', up }]);
+    expect(up).toHaveBeenCalledTimes(1);
+    expect(up).toHaveBeenCalledWith(fakeDb);
+    // 版本写入仍在迁移事务内执行
+    expect(pragmaSql).toContain('user_version = 1');
   });
 });

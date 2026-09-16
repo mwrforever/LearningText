@@ -31,7 +31,11 @@ export function validateNodeName(raw: string): string {
   if (FORBIDDEN_CHARS.test(name)) fail();
   if (name === '.' || name === '..') fail();
   if (name !== name.trimEnd() || name.endsWith('.')) fail(); // 尾随空格/点（Windows 剥离语义）
-  const stem = name.includes('.') ? (name.split('.')[0] ?? '') : name;
+  // 保留名取主名（首个 '.' 之前的前缀段）：语义与 split('.')[0] 一致，但 split 恒返回
+  // 非空数组，其下标空值兜底属运行时不可达分支（无法被测试覆盖）；改用 indexOf/slice
+  // 切片免除下标判空（A.1-1），两个分支（含点/不含点）均可被测试覆盖
+  const dotIndex = name.indexOf('.');
+  const stem = dotIndex === -1 ? name : name.slice(0, dotIndex);
   if (stem !== '' && RESERVED_NAMES.has(stem.toUpperCase())) fail();
   return name;
 }

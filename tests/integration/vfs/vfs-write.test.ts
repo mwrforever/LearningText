@@ -172,4 +172,15 @@ describe('writeFile', () => {
       expect((e as AppError).code).toBe(E_VFS_NOT_FOUND);
     }
   });
+
+  it('超过 50MB → E_VFS_FILE_TOO_LARGE（50MB+1 字节）', () => {
+    const file = vfs.createNode({ parentId: 1, name: 'big2.bin', nodeType: 'file' });
+    const big = new Uint8Array(50 * 1024 * 1024 + 1);
+    try {
+      vfs.writeFile({ nodeId: file.id, content: big });
+      expect.unreachable('应拒绝');
+    } catch (e) {
+      expect((e as AppError).code).toBe(E_VFS_FILE_TOO_LARGE);
+    }
+  });
 });

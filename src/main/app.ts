@@ -13,6 +13,9 @@ import { isOriginAllowed } from './security';
 import { openDatabase } from './store/db';
 import { runMigrations } from './store/migrate';
 import { ensureDataDir, resolveDataDir } from './store/dataDir';
+import { createVfsService } from './vfs/vfsService';
+import { IPC } from '../shared/ipc';
+import type { VfsChangedEvent } from '../shared/vfs-contract';
 
 const APP_ORIGIN = 'app://bundle';
 
@@ -84,7 +87,14 @@ export function bootstrapMain(): void {
       // origin 白名单：开发 = dev server + app 协议；生产 = 仅 app 协议（B.5-6）
       const allowed =
         devServerUrl !== undefined ? [new URL(devServerUrl).origin, APP_ORIGIN] : [APP_ORIGIN];
-      registerIpcHandlers({ allowedOrigins: allowed });
+      const vfs = createVfsService(db);
+      const broadcast = (event: VfsChangedEvent): void => {
+        // 事务提交成功后由 handler 调用；遍历全部窗口广播（宪法 B.3-4）
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send(IPC.vfsChanged, event);
+        }
+      };
+      registerIpcHandlers({ allowedOrigins: allowed, vfs, broadcast });
       createMainWindow(devServerUrl, allowed);
     })
     .catch((e: unknown) => {
