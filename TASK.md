@@ -8,7 +8,6 @@
 | 事项 | 涉及段落 | 原因 | 状态 |
 | --- | --- | --- | --- |
 | package.json / package-lock.json 锁定精确版本（M0-Task 2 触发 TS 版线修正 7.0.x→6.0.3） | AGENTS.md C.2 | 版本已锁定；版线修正已记 CHANGELOG（2026-09-15）并回填 C.2 正文 | 完成（M0） |
-| 同步事务阻塞毫秒预算（压测后回填 A.5-4） | AGENTS.md A.5-4 | 官方无量化数值，须项目实测 | 待办 |
 | `dist/` 内 `main`/`preload` 子目录形态与宪法 B.1 树的差异 | AGENTS.md B.1 | B.1 + C.4 对齐回填（差异点：C.4 构建命令实际拆出 `build:preload` rolldown 直调脚本；`src/main/ipc.ts` 为顶层文件而非 B.1 目录树所示子目录分层。M1 评审时随迁移条目一并处理） | 待办 |
 
 ## 待决策
