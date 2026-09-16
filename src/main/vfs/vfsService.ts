@@ -85,6 +85,11 @@ export function createVfsService(db: Database.Database) {
   }
 
   // —— 写路径语句（FR-VFS-01/03）：业务行与 FTS 索引行必须同事务写入（宪法 A.4-4）——
+  // 重名预查（spec §5）：事务前置读，服务层不依赖 SQLite 报错（partial unique 仅兜底）；
+  // 与写语句同为闭包级预编译一次复用，禁在方法体内联 prepare（宪法 A.4-5）
+  const stmtDupIdByParentName = db.prepare<[number, string], { id: number }>(
+    'SELECT id FROM node WHERE parent_id = ? AND name = ? AND deleted_at IS NULL',
+  );
   const stmtInsertNode = db.prepare(
     `INSERT INTO node (parent_id, node_type, name, virtual_path, mime_type, size, content, content_hash, created_at, updated_at)
      VALUES (@parentId, @nodeType, @name, @virtualPath, @mimeType, @size, @content, @contentHash, @now, @now)`,
@@ -147,11 +152,7 @@ export function createVfsService(db: Database.Database) {
         content = Buffer.from(input.content);
       }
       // 重名前置校验（spec §5：不依赖 SQLite 报错；partial unique 兜底）
-      const dup = db
-        .prepare<[number, string], { id: number }>(
-          'SELECT id FROM node WHERE parent_id = ? AND name = ? AND deleted_at IS NULL',
-        )
-        .get(parent.id, name);
+      const dup = stmtDupIdByParentName.get(parent.id, name);
       if (dup !== undefined) {
         throw new AppError(E_VFS_DUPLICATE_NAME, '同级已存在同名文件或文件夹');
       }
