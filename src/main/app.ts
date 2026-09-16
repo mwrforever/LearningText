@@ -6,6 +6,7 @@
  * 模块加载时立即执行一次，生产行为不变。
  */
 import path from 'node:path';
+import type Database from 'better-sqlite3';
 import { app, BrowserWindow, protocol } from 'electron';
 import { handleAppResource } from './protocol/appProtocol';
 import { registerIpcHandlers } from './ipc';
@@ -64,10 +65,14 @@ function createMainWindow(
 
 /**
  * 执行主进程装配（整个生命周期仅调用一次）。
- * 消费 electron app 生命周期；装配失败（ready 阶段抛错）时记录错误并退出进程（fail-fast）。
+ * 消费 electron app 生命周期（window-all-closed 退出、will-quit 优雅关库）；
+ * 装配失败（ready 阶段抛错）时记录错误并退出进程（fail-fast）。
  */
 export function bootstrapMain(): void {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  // 数据库连接句柄：仅在 whenReady 内开库成功后赋值；开库前的 fail-fast 路径保持
+  // undefined，will-quit 关库以可选链短路、不二次抛错（宪法 A.4-1/A.5-1）
+  let db: Database.Database | undefined;
   // standard+secure 使 app:// 拥有正常 origin（senderFrame origin 校验依赖此语义）
   protocol.registerSchemesAsPrivileged([
     { scheme: 'app', privileges: { standard: true, secure: true } },
@@ -80,7 +85,7 @@ export function bootstrapMain(): void {
       // 都落入下方 catch 分支 app.exit(1)（fail-fast，B.3-1 禁带伤运行）
       const layout = resolveDataDir(app.getPath('userData'));
       ensureDataDir(layout);
-      const db = openDatabase({ file: layout.dbFile });
+      db = openDatabase({ file: layout.dbFile });
       // 迁移失败抛错 → catch 分支 app.exit(1)（fail-fast，B.3-1）
       runMigrations(db);
       protocol.handle('app', handleAppResource);
@@ -106,6 +111,17 @@ export function bootstrapMain(): void {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
       app.quit();
+    }
+  });
+
+  // 退出前优雅关库（spec §2.2 / 宪法 A.4-1/A.5-1）：干净关闭令 SQLite 自动执行
+  // 最终 WAL checkpoint 并清理 -wal/-shm。关库失败仅记录日志、不中断退出流程；
+  // 开库前的 fail-fast 路径 db 为 undefined，可选链短路为无操作、不二次抛错。
+  app.on('will-quit', () => {
+    try {
+      db?.close();
+    } catch (e) {
+      console.error('[main] 关闭数据库失败', e);
     }
   });
 }

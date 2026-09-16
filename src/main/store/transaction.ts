@@ -1,5 +1,6 @@
 // 写事务唯一入口（spec §4）：IMMEDIATE 变体（BEGIN 即取写锁 fail-fast）；
-// 禁 async（宪法 A.4-4：事务不得跨事件循环 tick）。错误统一映射后以 AppError 抛出。
+// 禁 async（宪法 A.4-4：事务不得跨事件循环 tick）。SQLite 错误统一映射为 AppError 抛出；
+// 业务 AppError 原样透传。
 import type Database from 'better-sqlite3';
 import { AppError } from '../../shared/result';
 import { mapSqliteError } from './errorMapping';

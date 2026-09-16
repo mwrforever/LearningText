@@ -21,6 +21,10 @@
 | electron-builder 以 `postinstall: electron-builder install-app-deps` 替代直调 @electron/rebuild | 打包日志建议项（依赖编排更贴近 electron-builder 语义） | 待定 |
 | Vite/Vitest configLoader 'native' 迁移警告（config 文件含 ESM 语法但以 CJS 加载，native 计划成为默认） | 根治需切 `"type":"module"`（CJS/ESM 跨任务决策，影响构建产物形态），随 M1 构建编排重构一并评估 | 已裁决（2026-09-16）：M1 暂不切 "type":"module"——收益仅消除构建警告，代价是主进程 CJS 产物加载链与 preload 捆绑输出的连锁重构；待 Vite 将 native loader 设为默认（大版本升级预警）时随迁移条目再评估 |
 | VFS 同路径双回收站树 purge 连带清理 | 同一虚拟路径先后两次 trash 形成两棵回收站树时，purge 任一入口按路径谓词会连带物理移除两棵（谓词无法区分树身份）；restore 场景有 partial unique 约束兜底回滚、无数据风险；根治需 parent_id 递归 CTE 按树定位，属设计级改动 | 待定（M2 开工前评估） |
+| ListChildrenRequest 二选一参数未强制互斥 | zod 默认 strip 模式下同时传 parentId 与 virtualPath 会命中 parentId 分支通过校验（spec §7.3 写明互斥）；行为确定性无害（服务层恒取 parentId），终审 Minor；改 z.strictObject 分支即可（spec §8.2 已背书 strictObject） | 待定（下次契约触碰时顺手处理） |
+| moveNode 移到当前父目录报误导性 E_VFS_DUPLICATE_NAME | 重名预查命中节点自身（renameNode 有同名短路、moveNode 无对应处理）；计划级语义毛边，终审 Minor | 待定（下次服务触碰时加 target.id === row.parent_id 短路返回 affectedCount 0） |
+| restoreNode 返回 meta.updatedAt 为还原前旧值 | stmtRestoreSubtree 已刷 updated_at 但返回用还原前快照，restored 广播事件携带同旧值；无契约要求新鲜度，终审 Minor | 待定（M4 消费广播前裁决：文档化「restored 后以重查为准」或返回还原后行） |
+| A.5-4 毫秒预算基线口径偏乐观 | 万行写入基准为裸 SQL 绕过服务层与 node_fts 插入、启动基准为空 :memory: 库（注释已诚实声明）；200ms 预算有十倍余量结论不翻，终审 Minor | 待定（M2 引入文件库 + 服务层路径重测，保持预算结论可追溯） |
 
 ## 待调研项（源自 docs/agmds-research/ 四份报告，注明触发时机）
 

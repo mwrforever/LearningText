@@ -85,10 +85,6 @@ export interface ReadFileResponse {
   readonly meta: NodeMeta;
 }
 
-export interface NodeResponse {
-  readonly node: NodeMeta;
-}
-
 export interface AffectedResponse {
   /** 受级联影响的子树节点数（rename/move/trash）或物理移除数（purge） */
   readonly affectedCount: number;

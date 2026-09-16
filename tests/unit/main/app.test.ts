@@ -1,6 +1,6 @@
 // 主进程装配单元测试：以 vi.mock('electron') 驱动 bootstrapMain（宪法 A.5-1 / B.3-1），
 // 断言 scheme 注册、协议挂载、IPC 注入（origin 白名单 + vfs 服务工厂 + 广播实现）、
-// 窗口安全默认值与 fail-fast 退出路径。
+// 窗口安全默认值、fail-fast 退出路径与 will-quit 优雅关库（spec §2.2）。
 // 数据目录/开库/迁移/vfs 工厂接线：electron getPath 返回真实临时目录（dataDir 布局走真实现），
 // db/migrate/vfsService 以桩替换（单元测试不触原生 SQLite，真实行为由集成测试与 E2E 覆盖）。
 import { existsSync, mkdtempSync } from 'node:fs';
@@ -21,7 +21,10 @@ const mocks = vi.hoisted(() => {
     appQuit: vi.fn<() => void>(),
     getAppPath: vi.fn<() => string>(),
     getPath: vi.fn<(name: string) => string>(),
-    openDatabase: vi.fn<(options: { readonly file: string }) => { readonly file: string }>(),
+    openDatabase:
+      vi.fn<(options: { readonly file: string }) => { readonly file: string; close: () => void }>(),
+    // db 句柄 close 桩：断言 will-quit 优雅关库接线（spec §2.2 / 宪法 A.4-1）
+    dbClose: vi.fn<() => void>(),
     runMigrations: vi.fn<(db: unknown) => void>(),
     createVfsService: vi.fn<(db: unknown) => typeof vfsStub>(),
     getAllWindows:
@@ -50,8 +53,9 @@ const mocks = vi.hoisted(() => {
   m.getAppPath.mockImplementation(() => '/mock-app-path');
   // userData 指向真实临时目录：dataDir 的 ensureDataDir 递归建目录可安全落盘（测试结束后由系统回收）
   m.getPath.mockImplementation(() => mkdtempSync(path.join(tmpdir(), 'lt-app-userdata-')));
-  // 开库桩：原样返回选项对象充当句柄，供 runMigrations 调用参数断言
-  m.openDatabase.mockImplementation((options) => options);
+  // 开库桩：返回带 close 桩的句柄对象（选项展开保留 file 字段供既有断言复用），
+  // 供 will-quit 优雅关库用例断言 close 调用
+  m.openDatabase.mockImplementation((options) => ({ ...options, close: m.dbClose }));
   // vfs 工厂桩：单元测试不触原生 SQLite（真实行为由集成测试与 E2E 覆盖）
   m.createVfsService.mockImplementation(() => vfsStub);
   // getAllWindows 默认无窗口：broadcast 遍历空集（具体窗口断言在对应用例内覆写返回值）
@@ -108,6 +112,15 @@ function windowAllClosedHandler(): () => void {
   const call = mocks.appOn.mock.calls.find(([event]) => event === 'window-all-closed');
   if (call === undefined) {
     throw new Error('bootstrapMain 未注册 window-all-closed 监听');
+  }
+  return call[1];
+}
+
+/** 取出 will-quit 监听器；未注册视为装配缺陷直接失败 */
+function willQuitHandler(): () => void {
+  const call = mocks.appOn.mock.calls.find(([event]) => event === 'will-quit');
+  if (call === undefined) {
+    throw new Error('bootstrapMain 未注册 will-quit 监听');
   }
   return call[1];
 }
@@ -214,6 +227,36 @@ describe('主进程装配 bootstrapMain', () => {
     bootstrapMain();
     withPlatform('darwin', windowAllClosedHandler());
     expect(mocks.appQuit).not.toHaveBeenCalled();
+  });
+
+  it('will-quit 优雅关库：开库成功后触发 db.close，开库前 fail-fast 路径不关库不抛错（spec §2.2 / A.4-1）', async () => {
+    bootstrapMain();
+    const handler = willQuitHandler();
+    // ready 链尚未落地：db 未赋值（fail-fast 开库前路径），关库可选链短路为无操作，
+    // 不得因 close 二次抛错
+    expect(() => handler()).not.toThrow();
+    expect(mocks.dbClose).not.toHaveBeenCalled();
+    // 装配完成后（开库成功）再次触发退出：必须执行优雅关库（干净关闭自动 checkpoint）
+    await flushReadyChain();
+    handler();
+    expect(mocks.dbClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('will-quit 关库失败：记录 error 日志且异常不向外传播（不中断退出流程）', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // close 抛错仅本次生效（mockImplementationOnce，避免向后续用例泄漏失败实现）
+    mocks.dbClose.mockImplementationOnce(() => {
+      throw new Error('模拟关库失败');
+    });
+    try {
+      bootstrapMain();
+      await flushReadyChain();
+      const handler = willQuitHandler();
+      expect(() => handler()).not.toThrow();
+      expect(errorSpy).toHaveBeenCalledWith('[main] 关闭数据库失败', expect.any(Error));
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('窗口装配注册 B.5-4/5 安全基线三件套', async () => {
