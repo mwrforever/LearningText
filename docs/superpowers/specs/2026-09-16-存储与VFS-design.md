@@ -19,6 +19,18 @@
 
 另覆盖：数据库生命周期（§2）、VFS 服务与路径物化（§7）、IPC 契约与 zod v4 习语（§8）、备份机制（§9）、性能与测试策略（§10）。
 
+### 1.1 M1 里程碑的领域外前置项（不入本文，规格来源为宪法与 TASK.md）
+
+M1 实施范围除本文领域设计外，还包含 M0 移交的工程修复与回填（TASK.md「执行项登记」/「待回填」表）。它们属构建编排与安全基线范畴，非存储/VFS 领域设计，故不在本文展开——规格来源与处置如下，将由 M1 实施计划作为**前置任务**排入：
+
+| 事项 | 规格来源 | 计划中的排位 |
+| --- | --- | --- |
+| preload 从 tsconfig.main 拆出独立构建（dev watch / 单独 build:main 产出坏 preload，dev 形态 IPC 断） | TASK.md 执行项登记【M1 前置】 | 首个任务（主开发循环即受影响） |
+| 补齐 B.5-4/5 窗口安全基线：`will-navigate` origin 白名单、`setWindowOpenHandler` 一律 deny、`setPermissionRequestHandler` 默认拒绝 | 宪法 B.5-4/5（条款已完备） | 窗口/树 UI 任务之前 |
+| `configLoader 'native'` 警告与 `"type":"module"` 决策 | TASK.md 待决策表（随 M1 构建编排重构评估） | 随 preload 拆出任务一并裁决 |
+| 同步事务阻塞毫秒预算实测回填（宪法 A.5-4） | TASK.md 待回填表 | 随 §10 性能基准测试实测后回填 |
+| B.1 + C.4 对齐回填（`build:preload` 脚本、`src/main/ipc.ts` 目录树形态） | TASK.md 待回填表 | M1 评审时一并处理 |
+
 ## 2. 数据库生命周期
 
 ### 2.1 数据位置
