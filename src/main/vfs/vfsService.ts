@@ -386,7 +386,11 @@ export function createVfsService(db: Database.Database) {
       });
     },
 
-    /** 彻底删除（FR-VFS-06）：物理移除子树；不变式——回收站节点无 FTS 行，无需再动 FTS */
+    /**
+     * 彻底删除（FR-VFS-06）：物理移除子树并清 FTS。回收站子树本就无 FTS 行（trash 先删，
+     * 此处 DELETE 影响 0 行无副作用）；直删未删除节点则由本步清掉其 FTS 行，
+     * 顺序满足宪法 A.4-10（先删索引行后删业务行）。
+     */
     purgeNode(request: NodeIdRequest): AffectedResponse {
       const row = stmtRowById.get(request.nodeId); // 不过滤删除态：回收站内节点也可彻底删除
       if (row === undefined) throw new AppError(E_VFS_NOT_FOUND, '节点不存在');
@@ -394,14 +398,11 @@ export function createVfsService(db: Database.Database) {
       return runWriteTransaction(db, () => {
         // 简报代码适配：FK ON DELETE CASCADE 的级联删除不计入 changes（实测 sqlite3_changes
         // 仅统计语句直接删除行），故先以子树定位语句计数（与 rename/move 同一口径）再物理移除
-        const affected = stmtSubtreeIds.all({
-          rootPath: row.virtual_path,
-          rootPrefix: row.virtual_path + '/',
-        }).length;
-        stmtPurgeSubtree.run({
-          rootPath: row.virtual_path,
-          rootPrefix: row.virtual_path + '/',
-        });
+        const params = { rootPath: row.virtual_path, rootPrefix: row.virtual_path + '/' };
+        const affected = stmtSubtreeIds.all(params).length;
+        // 先清子树 FTS 行（A.4-10 顺序）再删业务行；评审裁决项：直删活节点不得残留孤儿索引行
+        stmtDeleteFtsBySubtree.run(params);
+        stmtPurgeSubtree.run(params);
         return { affectedCount: affected };
       });
     },

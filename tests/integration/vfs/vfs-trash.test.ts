@@ -127,6 +127,19 @@ describe('purgeNode', () => {
     expect(() => vfs.resolvePath({ virtualPath: '/web' })).toThrow(AppError);
   });
 
+  it('直接彻底删除未删除文件：FTS 行一并清除（FR-VFS-06）', () => {
+    // 回收站不变式只覆盖 trash 过的节点；对活节点直删同样必须先清 FTS（宪法 A.4-10），
+    // 否则残留孤儿索引行 → M2 搜索出现幽灵命中
+    const { indexId } = seedScenario();
+    const result = vfs.purgeNode({ nodeId: indexId });
+    expect(result.affectedCount).toBe(1);
+    expect(ftsCount(indexId)).toBe(0);
+    expect(
+      db.prepare<number, { c: number }>('SELECT COUNT(*) AS c FROM node WHERE id = ?').get(indexId)
+        ?.c,
+    ).toBe(0);
+  });
+
   it('根不可彻底删除', () => {
     try {
       vfs.purgeNode({ nodeId: 1 });
