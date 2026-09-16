@@ -26,3 +26,8 @@
   - C.5 由「CI 生产落地方案」细则全文**精简**为工具、选定方案与门禁语义的精简描述——工作流文件、矩阵、阶段、缓存、产物策略及 M6 发布链均属后续执行项，不入宪法，移登记至 `TASK.md`「执行项登记」。
 - **M0-Task 15 收尾**：dev / main 分支保护经 GitHub API 配置生效（必需检查 = Task 14 三平台检查名 + 要求分支同步，禁强推 / 禁删除；main 不豁免管理员）；`rolldown@1.2.8` 由 vite 传递依赖显式化为直接 devDependency（`build:preload` 直调 CLI 不再是幻影依赖，版本与 vite 依赖树严格一致）；`TASK.md` 执行 M0 回填（精确版本锁定、目录 / 命令对齐、.nvmrc 双写三项销账，ci.yml 与分支保护执行项标记完成，新增 B.1 对齐回填待办与 M1 / M6 待办登记）。
 - **M0 最终评审修复**：electron-builder `files` 补 `dist/shared/**/*`（tsconfig.main rootDir=src 将 shared 编译到 dist/shared，dist/main 产物 require `../shared/*`，此前打包产物缺该目录必崩）；`playwright.config.ts` 新增 `globalSetup`（`tests/e2e/global-setup.ts` 执行完整生产构建），干净检出下 `npm test` 无需手动 build，本地与 CI 语义一致；`TASK.md` 两处调整（B.1 + C.4 对齐回填差异点补注、preload 拆出条目提升 M1 前置）并新增 Vitest configLoader 'native' 待决策项。
+
+## 2026-09-16
+
+- **M1 实施计划定稿并标记 SDD 执行**：`docs/superpowers/plans/2026-09-16-M1-存储与VFS.md`（13 任务、TDD 粒度）；spec `docs/superpowers/specs/2026-09-16-存储与VFS-design.md` 定稿评审通过。
+- **需求基线修订（先记后改）：docs/03 §3.1 `virtual_path` 唯一性由列级 UNIQUE 改为部分唯一索引** `idx_node_virtual_path ... WHERE deleted_at IS NULL`。裁决背景：SDD 执行 Task 9 发现基线内部矛盾——列级 UNIQUE 连软删行一并约束，与 FR-VFS-06「回收站让名 + 还原撞名报 `E_VFS_DUPLICATE_NAME`」及 spec §7.5「同名新建合法」互斥（软删行永久占用路径，两语义均不可达，Task 10 计划用例必然失败）。三方案（部分唯一索引 / trash 路径改写加后缀 / 放弃让名语义）经决策门提请用户裁决，用户未应答，按推荐方案自主裁决选**部分唯一索引**：改动最小、完整保留 FR-VFS-06 与 spec §7.5 已锁语义、索引与 `resolvePath` 查询谓词（`virtual_path = ? AND deleted_at IS NULL`）精确匹配、v1 迁移未发布可原地修正（无升级路径负担）。FR 条文本身零变更，仅 schema 机制修正；spec §10「virtual_path UNIQUE 索引」表述随之以部分唯一索引理解。落地：v1 迁移（`0001-initial.ts`）随 Task 10 同步调整。
