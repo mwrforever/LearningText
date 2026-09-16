@@ -131,6 +131,27 @@ describe('moveNode', () => {
     }
   });
 
+  it('目标为文件节点 → E_VFS_INVALID_MOVE', () => {
+    const { webId } = seedTree();
+    const fileId = vfs.createNode({ parentId: 1, name: 'note.html', nodeType: 'file' }).id;
+    try {
+      vfs.moveNode({ nodeId: webId, targetDirId: fileId });
+      expect.unreachable('应拒绝');
+    } catch (e) {
+      expect((e as AppError).code).toBe(E_VFS_INVALID_MOVE);
+    }
+  });
+
+  it('移动后父指针同步更新为目标目录 id（防仅改路径不改归属的回归）', () => {
+    const { webId, docsId } = seedTree();
+    vfs.moveNode({ nodeId: webId, targetDirId: docsId });
+    // 仅断言 virtual_path 不足以锁定树结构归属：parent_id 必须与级联路径同事务落库
+    const parentId = db
+      .prepare<number, { parent_id: number }>('SELECT parent_id FROM node WHERE id = ?')
+      .get(webId)?.parent_id;
+    expect(parentId).toBe(docsId);
+  });
+
   it('目标目录已有同名 → E_VFS_DUPLICATE_NAME；目标不存在 → E_VFS_NOT_FOUND', () => {
     const { webId } = seedTree();
     // 目标目录名不可与场景树既有顶级目录（web/docs）重名，否则建目录阶段即被重名拒绝
