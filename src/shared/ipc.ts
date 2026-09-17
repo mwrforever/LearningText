@@ -26,6 +26,9 @@ export const IPC = {
   vfsPurge: 'vfs:purge',
   /** 虚拟路径解析 */
   vfsResolve: 'vfs:resolve',
+  // —— 搜索域（M2）：命名 <域>:<动作>（宪法 B.2-5）——
+  /** 模糊/全文搜索：索引通道或 LIKE 回退通道，渲染端无感知（spec §4） */
+  searchQuery: 'search:query',
   /** 主→渲染：树变更广播（事务提交成功后发出，宪法 B.3-4） */
   vfsChanged: 'vfs:changed',
 } as const;

@@ -1,4 +1,5 @@
 import type { Result } from './result';
+import type { SearchQueryRequest, SearchQueryResponse } from './search-contract';
 import type {
   AffectedResponse,
   CreateNodeRequest,
@@ -33,6 +34,8 @@ export interface WindowApi {
   restoreNode(request: NodeIdRequest): Promise<Result<NodeMeta>>;
   purgeNode(request: NodeIdRequest): Promise<Result<AffectedResponse>>;
   resolvePath(request: ResolvePathRequest): Promise<Result<NodeIdResponse>>;
+  // —— 搜索域（M2）：每通道一个具名包装（宪法 A.7-4 桥接面最小化）——
+  searchQuery(request: SearchQueryRequest): Promise<Result<SearchQueryResponse>>;
   /** 订阅树变更广播，返回取消订阅函数 */
   onVfsChanged(callback: (event: VfsChangedEvent) => void): () => void;
 }
