@@ -12,15 +12,22 @@ export const trigramMigration: Migration = {
     // 漂移对账前置（spec §2.2）：非根活节点与索引行必须一一对应（根节点由 v1 种子创建、
     // M1 写侧不为其建索引行——对账口径排除 id=1）；不平即中止，事务回滚（旧表原样），
     // 启动 fail-fast 阻止带病运行，杜绝把漂移复制进新表
-    const live = db
-      .prepare<[], { c: number }>(
-        'SELECT COUNT(*) AS c FROM node WHERE deleted_at IS NULL AND id <> 1',
-      )
-      .get()?.c;
-    const indexed = db.prepare<[], { c: number }>('SELECT COUNT(*) AS c FROM node_fts').get()?.c;
+    // COUNT(*) 聚合恒返回单行（SQLite 语义），get 结果无空值路径——显式断言收窄，
+    // 不引入运行时不可达的空值分支（满足 src/main/** 分支覆盖 100% 门禁）；
+    // 对自身 schema 的聚合查询，不涉 A.1-5 的 IPC 边界/外部输入/schema 校验三类禁区
+    const live = (
+      db
+        .prepare<[], { c: number }>(
+          'SELECT COUNT(*) AS c FROM node WHERE deleted_at IS NULL AND id <> 1',
+        )
+        .get() as { c: number }
+    ).c;
+    const indexed = (
+      db.prepare<[], { c: number }>('SELECT COUNT(*) AS c FROM node_fts').get() as { c: number }
+    ).c;
     if (live !== indexed) {
       throw new Error(
-        `FTS 漂移对账失败：非根活节点 ${live ?? '未知'} ≠ 索引行 ${indexed ?? '未知'}，v2 迁移中止等待修复（备份恢复或重建索引，见 M5 设置页规划）`,
+        `FTS 漂移对账失败：非根活节点 ${live} ≠ 索引行 ${indexed}，v2 迁移中止等待修复（备份恢复或重建索引，见 M5 设置页规划）`,
       );
     }
     // 默认 case_sensitive=0：索引大小写不敏感，且可优化 ≥3 连续字符 LIKE/GLOB（A.4-11 退化面的正面形态）
