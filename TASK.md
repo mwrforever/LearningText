@@ -24,7 +24,6 @@
 | ListChildrenRequest 二选一参数未强制互斥 | zod 默认 strip 模式下同时传 parentId 与 virtualPath 会命中 parentId 分支通过校验（spec §7.3 写明互斥）；行为确定性无害（服务层恒取 parentId），终审 Minor；改 z.strictObject 分支即可（spec §8.2 已背书 strictObject） | 待定（下次契约触碰时顺手处理） |
 | moveNode 移到当前父目录报误导性 E_VFS_DUPLICATE_NAME | 重名预查命中节点自身（renameNode 有同名短路、moveNode 无对应处理）；计划级语义毛边，终审 Minor | 待定（下次服务触碰时加 target.id === row.parent_id 短路返回 affectedCount 0） |
 | restoreNode 返回 meta.updatedAt 为还原前旧值 | stmtRestoreSubtree 已刷 updated_at 但返回用还原前快照，restored 广播事件携带同旧值；无契约要求新鲜度，终审 Minor | 待定（M4 消费广播前裁决：文档化「restored 后以重查为准」或返回还原后行） |
-| A.5-4 毫秒预算基线口径偏乐观 | 万行写入基准为裸 SQL 绕过服务层与 node_fts 插入、启动基准为空 :memory: 库（注释已诚实声明）；200ms 预算有十倍余量结论不翻，终审 Minor | 待定（M2 引入文件库 + 服务层路径重测，保持预算结论可追溯） |
 
 ## 待调研项（源自 docs/agmds-research/ 四份报告，注明触发时机）
 
