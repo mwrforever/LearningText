@@ -195,6 +195,37 @@ describe('purgeNode', () => {
     expect(ftsCount(newIndexId)).toBe(1);
   });
 
+  it('双回收站树独立清除：同路径两棵回收站树 purge 一棵不沾染另一棵（M2 spec §3.2 根治）', () => {
+    const { webId } = seedScenario(); // /web（含子节点 index.html，共 2 行）
+    vfs.trashNode({ nodeId: webId });
+    // 同路径重建再删：出现第二棵 /web 回收站树（M1 路径谓词下 purge 旧树会连带两棵）
+    vfs.createNode({ parentId: 1, name: 'web', nodeType: 'dir' });
+    const second = vfs.resolvePath({ virtualPath: '/web' });
+    vfs.createNode({
+      parentId: second.nodeId,
+      name: 'inner.html',
+      nodeType: 'file',
+      content: new Uint8Array(Buffer.from('<i>')),
+    });
+    vfs.trashNode({ nodeId: second.nodeId });
+    // 两棵均不可解析
+    expect(() => vfs.resolvePath({ virtualPath: '/web' })).toThrow(AppError);
+    // 彻底删除第一棵（webId 子树 2 行）：计数 2，第二棵（含 inner）不受沾染
+    const purged = vfs.purgeNode({ nodeId: webId });
+    expect(purged.affectedCount).toBe(2);
+    expect(
+      db
+        .prepare<[], { c: number }>(
+          "SELECT COUNT(*) AS c FROM node WHERE name = 'inner.html' AND deleted_at IS NOT NULL",
+        )
+        .get()?.c,
+    ).toBe(1);
+    // 第二棵仍可还原且路径正确（身份独立）
+    const restored = vfs.restoreNode({ nodeId: second.nodeId });
+    expect(restored.virtualPath).toBe('/web');
+    expect(vfs.resolvePath({ virtualPath: '/web' }).nodeId).toBe(second.nodeId);
+  });
+
   it('根不可彻底删除', () => {
     try {
       vfs.purgeNode({ nodeId: 1 });

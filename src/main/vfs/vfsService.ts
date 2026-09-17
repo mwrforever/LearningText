@@ -15,6 +15,7 @@ import { toLocalIsoTime } from '../../shared/time';
 import { runWriteTransaction } from '../store/transaction';
 import { isTextualMime, lookupMimeType } from './mime';
 import { validateNodeName } from './nodeName';
+import { createSubtreeStatements } from './subtreeScope';
 import type {
   AffectedResponse,
   CreateNodeRequest,
@@ -101,22 +102,11 @@ export function createVfsService(db: Database.Database) {
   );
   const stmtUpdateFtsBody = db.prepare('UPDATE node_fts SET body = @body WHERE rowid = @id');
 
+  // 子树身份统一走 parent_id 递归 CTE 工厂（M2 spec §3.2）：闭包级预编译（宪法 A.4-5）；
+  // 「trash 后同路径重建」孪生树按结构身份互不沾染（M1 状态锚定方案下线，理由见 subtreeScope 头注）
+  const subtree = createSubtreeStatements(db);
+
   // —— 重构类操作语句（FR-VFS-04/05，spec §7.4/§7.5）：rename 与 move 共用级联改写 ——
-  // 子树定位（含根自身）：substr 前缀比较，禁 LIKE（免通配符转义退化，spec §7.4）；
-  // 活锚定（deleted_at IS NULL）：requireRow 保证目标活且活节点后代必全活，正常流程命中行集不变，
-  // 防「trash 后同路径重建」的回收站孪生树被计数污染（评审 Important 修复）
-  const stmtSubtreeIds = db.prepare<{ rootPath: string; rootPrefix: string }, { id: number }>(
-    `SELECT id FROM node
-     WHERE (virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix)
-       AND deleted_at IS NULL`,
-  );
-  // 级联路径改写：自身整路径替换 + 后代按旧路径前缀拼接新路径（rename/move 共用）；
-  // 活锚定：孪生回收站行的 virtual_path 是还原定位的唯一凭据，不得被活树级联改写
-  const stmtCascadePath = db.prepare(
-    `UPDATE node SET virtual_path = @newPath || substr(virtual_path, length(@oldPath) + 1)
-     WHERE (virtual_path = @oldPath OR substr(virtual_path, 1, length(@oldPath) + 1) = @oldPath || '/')
-       AND deleted_at IS NULL`,
-  );
   const stmtRenameSelf = db.prepare(
     'UPDATE node SET name = @name, updated_at = @now WHERE id = @id',
   );
@@ -127,72 +117,10 @@ export function createVfsService(db: Database.Database) {
     'UPDATE node SET parent_id = @parentId, updated_at = @now WHERE id = @id',
   );
 
-  // —— 软删除域语句（FR-VFS-06，spec §7.5）：与重构段同区闭包级预编译，禁方法体内联 prepare（宪法 A.4-5）——
-  // 锚定总则（评审 Important 修复）：子树谓词纯按路径匹配无法区分「trash 后同路径重建」的孪生树
-  // （partial unique 仅约束未删除行），故各子树语句一律按目标行删除状态锚定——
-  // 活目标 AND deleted_at IS NULL / 回收站目标 AND deleted_at IS NOT NULL；
-  // 依赖不变式「软删行构成闭包子树、活节点后代必全活」，正常流程锚定前后命中行集一致。
-  // 注意 SQLite 中 AND 优先级高于 OR，路径 OR 谓词必须整体加括号后再与删除态合取。
+  // —— 软删除域语句（FR-VFS-06，spec §7.5）：子树级读写统一走上方 CTE 工厂，禁方法体内联 prepare（宪法 A.4-5）——
   // 回收站行获取：仅命中 deleted_at 非空行，作为还原入口的回收站判定（未删除/不存在统一拒绝）
   const stmtRowInTrash = db.prepare<number, NodeRow>(
     'SELECT * FROM node WHERE id = ? AND deleted_at IS NOT NULL',
-  );
-  // 还原时按行重建 FTS：需 content 列按 MIME 判定文本类（SELECT * 行结构兼容 NodeRow 消费字段）；
-  // 回收站锚定——孪生场景只重建回收站树，活树 FTS 行不得被重复插入
-  const stmtSubtreeRows = db.prepare<
-    { rootPath: string; rootPrefix: string },
-    NodeRow & { content: Buffer | null }
-  >(
-    `SELECT id, parent_id, node_type, name, virtual_path, mime_type, size, created_at, updated_at, content
-     FROM node
-     WHERE (virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix)
-       AND deleted_at IS NOT NULL`,
-  );
-  // 子树 FTS 删除·活锚定（trash 前置步与 purge 活目标分支共用；宪法 A.4-10：先删索引行后改业务行）
-  const stmtDeleteFtsByLiveSubtree = db.prepare(
-    `DELETE FROM node_fts WHERE rowid IN (
-       SELECT id FROM node
-       WHERE (virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix)
-         AND deleted_at IS NULL)`,
-  );
-  // 子树 FTS 删除·回收站锚定（purge 回收站目标分支）：回收站子树本无 FTS 行（trash 已先删），
-  // 正常恒影响 0 行，作为不变式破缺的防御兜底，与活锚定变体保持分支对称
-  const stmtDeleteFtsByTrashedSubtree = db.prepare(
-    `DELETE FROM node_fts WHERE rowid IN (
-       SELECT id FROM node
-       WHERE (virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix)
-         AND deleted_at IS NOT NULL)`,
-  );
-  const stmtSoftDeleteSubtree = db.prepare(
-    `UPDATE node SET deleted_at = @now, updated_at = @now
-     WHERE (virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix)
-       AND deleted_at IS NULL`,
-  );
-  const stmtRestoreSubtree = db.prepare(
-    `UPDATE node SET deleted_at = NULL, updated_at = @now
-     WHERE (virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix)
-       AND deleted_at IS NOT NULL`,
-  );
-  // 物理移除（purge）：软删行的 virtual_path 未被改写，前缀定位对回收站子树同样成立；
-  // 按目标删除状态各配锚定变体，谓词与计数语句（stmtSubtreeIds / stmtTrashedSubtreeIds）严格同形态
-  const stmtPurgeLiveSubtree = db.prepare(
-    `DELETE FROM node
-     WHERE (virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix)
-       AND deleted_at IS NULL`,
-  );
-  const stmtPurgeTrashedSubtree = db.prepare(
-    `DELETE FROM node
-     WHERE (virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix)
-       AND deleted_at IS NOT NULL`,
-  );
-  // purge 回收站目标分支的子树计数：回收站锚定，与 stmtPurgeTrashedSubtree 谓词严格同形态
-  const stmtTrashedSubtreeIds = db.prepare<
-    { rootPath: string; rootPrefix: string },
-    { id: number }
-  >(
-    `SELECT id FROM node
-     WHERE (virtual_path = @rootPath OR substr(virtual_path, 1, length(@rootPrefix)) = @rootPrefix)
-       AND deleted_at IS NOT NULL`,
   );
 
   return {
@@ -331,14 +259,11 @@ export function createVfsService(db: Database.Database) {
         // 新路径 = 旧路径去掉末级旧名 + 新名（JS 侧按 UTF-16 切片，SQLite 侧 substr/length 自洽，拼接结果一致）
         const newPath = oldPath.slice(0, oldPath.length - row.name.length) + newName;
         stmtRenameSelf.run({ id: row.id, name: newName, now });
-        stmtCascadePath.run({ oldPath, newPath });
+        subtree.stmtCascadePath.run({ rootId: row.id, oldPath, newPath });
         // FTS 仅根级 name 联动；子树节点 name/body 不变，不产生 FTS 写（spec §7.7）
         stmtRenameFtsName.run({ id: row.id, name: newName });
-        // 子树计数在级联提交后统计：stmtSubtreeIds 谓词含根自身，length 即含自身的子树总数（勿再 +1）
-        const affected = stmtSubtreeIds.all({
-          rootPath: newPath,
-          rootPrefix: newPath + '/',
-        }).length;
+        // 子树计数按 id 身份集合统计（含根自身，勿再 +1）：身份集合与级联前一致，计数不再依赖 newPath
+        const affected = subtree.stmtSubtreeIds.all({ rootId: row.id }).length;
         return { affectedCount: affected };
       });
     },
@@ -376,13 +301,10 @@ export function createVfsService(db: Database.Database) {
         const newPath =
           target.virtual_path === '/' ? '/' + newName : target.virtual_path + '/' + newName;
         // 先级联改写子树全部路径（含被移节点自身），再更新被移节点父指针，两写同事务（宪法 A.4-4）
-        stmtCascadePath.run({ oldPath, newPath });
+        subtree.stmtCascadePath.run({ rootId: row.id, oldPath, newPath });
         stmtMoveParent.run({ parentId: target.id, now, id: row.id });
-        // 子树计数在级联提交后统计：stmtSubtreeIds 谓词含被移节点自身，length 即含自身的子树总数（勿再 +1）
-        const affected = stmtSubtreeIds.all({
-          rootPath: newPath,
-          rootPrefix: newPath + '/',
-        }).length;
+        // 子树计数按 id 身份集合统计（含被移节点自身，勿再 +1）：计数不再依赖 newPath
+        const affected = subtree.stmtSubtreeIds.all({ rootId: row.id }).length;
         return { affectedCount: affected };
       });
     },
@@ -392,10 +314,9 @@ export function createVfsService(db: Database.Database) {
       if (row.id === 1) throw new AppError(E_VFS_NOT_FOUND, '根节点不可操作');
       return runWriteTransaction(db, () => {
         const now = toLocalIsoTime(new Date());
-        const params = { rootPath: row.virtual_path, rootPrefix: row.virtual_path + '/' };
-        // 活锚定：只软删活行，同路径回收站孪生树的 deleted_at/updated_at 不被误改
-        stmtDeleteFtsByLiveSubtree.run(params);
-        const info = stmtSoftDeleteSubtree.run({ ...params, now });
+        // A.4-10：先删 FTS 索引行后软删业务行；CTE 按 id 圈定整树，同路径回收站孪生树不受沾染
+        subtree.stmtDeleteFts.run({ rootId: row.id });
+        const info = subtree.stmtSoftDelete.run({ rootId: row.id, now });
         return { affectedCount: info.changes };
       });
     },
@@ -415,11 +336,9 @@ export function createVfsService(db: Database.Database) {
       }
       return runWriteTransaction(db, () => {
         const now = toLocalIsoTime(new Date());
-        const params = { rootPath: row.virtual_path, rootPrefix: row.virtual_path + '/' };
-        // 修复适配：先以回收站锚定取子树全行快照，再整树还原——若先还原后取行，
-        // 行已复原（deleted_at=NULL）将不再命中锚定谓词，FTS 重建为空
-        const rows = stmtSubtreeRows.all(params);
-        stmtRestoreSubtree.run({ ...params, now });
+        // 时序结论保留（M1 修复轮）：先取子树全行快照，再整树还原，避免对处于变更中的行集取数
+        const rows = subtree.stmtSubtreeRows.all({ rootId: row.id });
+        subtree.stmtRestore.run({ rootId: row.id, now });
         // 按快照重建子树 FTS：逐行取内容判定文本（与业务行同事务，宪法 A.4-4）
         for (const r of rows) {
           const body =
@@ -433,28 +352,21 @@ export function createVfsService(db: Database.Database) {
     },
 
     /**
-     * 彻底删除（FR-VFS-06）：物理移除子树并清 FTS。按目标行删除状态分支锚定：
-     * 活目标先清活子树 FTS 行（FR-VFS-06「并清 FTS」；顺序满足宪法 A.4-10）；回收站目标
-     * 子树本无 FTS 行（trash 已删），仍走回收站锚定兜底清理。两组 DELETE/FTS 清理/计数
-     * 谓词严格同形态，确保「trash 后同路径重建」的孪生树互不误伤（评审 Important 修复）。
+     * 彻底删除（FR-VFS-06）：物理移除子树并清 FTS。子树身份按 parent_id 递归 CTE 的结构闭包圈定，
+     * 不再按目标行删除状态分支锚定——「trash 后同路径重建」的孪生树互不误伤（M2 spec §3.2）。
+     * 顺序满足宪法 A.4-10：先清子树 FTS 行（FR-VFS-06「并清 FTS」；回收站目标子树本无 FTS 行
+     * ——trash 已先删，本语句恒影响 0 行，仅作不变式兜底），后物理删除业务行。
      */
     purgeNode(request: NodeIdRequest): AffectedResponse {
       const row = stmtRowById.get(request.nodeId); // 不过滤删除态：回收站内节点也可彻底删除
       if (row === undefined) throw new AppError(E_VFS_NOT_FOUND, '节点不存在');
       if (row.id === 1) throw new AppError(E_VFS_NOT_FOUND, '根节点不可操作');
       return runWriteTransaction(db, () => {
-        // 计数不取 changes：FK ON DELETE CASCADE 的级联删除不计入 sqlite3_changes（实测），
-        // 且计数语句与删除谓词严格同形态，孪生场景口径一致（与 rename/move 同一 affectedCount 语义）
-        const params = { rootPath: row.virtual_path, rootPrefix: row.virtual_path + '/' };
-        if (row.deleted_at === null) {
-          const affected = stmtSubtreeIds.all(params).length;
-          stmtDeleteFtsByLiveSubtree.run(params);
-          stmtPurgeLiveSubtree.run(params);
-          return { affectedCount: affected };
-        }
-        const affected = stmtTrashedSubtreeIds.all(params).length;
-        stmtDeleteFtsByTrashedSubtree.run(params);
-        stmtPurgeTrashedSubtree.run(params);
+        // 计数不取 changes：FK ON DELETE CASCADE 的级联删除不计入 sqlite3_changes（实测）；
+        // 计数与删除同源于 id 身份集合（与 rename/move 同一 affectedCount 语义）
+        const affected = subtree.stmtSubtreeIds.all({ rootId: row.id }).length;
+        subtree.stmtDeleteFts.run({ rootId: row.id });
+        subtree.stmtPurge.run({ rootId: row.id });
         return { affectedCount: affected };
       });
     },
