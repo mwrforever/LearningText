@@ -38,3 +38,10 @@
 
 - **NFR-03 复核缺陷修复（Task 9 基准发现）：trigram 行查询列命中探针改物化 CTE**。M2 基准实测发现 `searchService` 行语句的两个列过滤 MATCH 探针以普通 FROM 派生表 LEFT JOIN 时，SQLite 对 FTS5 虚表派生表不自动物化，查询计划按外层命中行逐行重扫 MATCH（万级全命中实测 3s/查询，超 NFR-03 P95 红线 15 倍）；改为 `WITH ... AS MATERIALIZED` 物化后每探针仅执行一次（3s → 12ms），命中位/分数/片段语义逐字段不变（既有 21 个搜索集成用例全绿，红线由基准测试 `tests/integration/search/perf-baseline.test.ts` 锁死）。
 - **A.5-4 复核回填——M2 基准实测：万行含 FTS 单事务写入 343 ms、search:query 万级 P95 17.7 ms、v2 换表迁移 24 ms、冷启动 10k 库 3 ms（Windows 本机中位，三次运行取中位数；基准 `tests/integration/search/perf-baseline.test.ts`）**；交互路径预算复核结论：M1 值 200ms **上调至 3500 ms**（按公式 `ceil(max(X′, Y′) × 10 / 100) × 100`、下限 200ms：max(343, 17.7) = 343 → ceil(34.3) × 100 = 3500；含 FTS 的万行批量写为预算主导项）。
+- **M2 搜索里程碑定稿（SDD 执行 Task 1-10 完毕）**：spec `docs/superpowers/specs/2026-09-17-搜索-design.md` 与实施计划 `docs/superpowers/plans/2026-09-17-M2-搜索.md` 定稿并全部落地。要点：
+  - **v2 迁移语义**：trigram 分词器变更不可 ALTER，走「新建 → 复制 → 换名」换表重建（`0002-search-trigram.ts`）；迁移期先做行数对账（非根活节点数 = 索引行数，排除 id=1 根），不平即中止回滚保旧表；并对 `node(parent_id)` 建全量索引 `idx_node_parent_all`——回收站树下钻（递归 CTE）不被仅覆盖活行的部分索引漏掉；
+  - **双通道检索设计**：索引通道 FTS5 `bm25(name×10, body×1)` 加权 + 稳定 tie-break 排序分页；不足 3 字符等退化查询走 LIKE 回退通道（A.4-11 边界，无分数、更新时间序，不承诺 P95 红线）；
+  - **子树定位根治**：purge / underPath 过滤等子树圈定统一改 `parent_id` 递归 CTE 按树身份定位，替换路径前缀谓词，根治「同路径双回收站树」purge 连带误删；
+  - **M1 遗留三项闭环**：`ListChildrenRequest` 改 `strictObject` 强制 parentId/virtualPath 互斥、moveNode 移到当前父目录短路返回 0（不再误报 DUPLICATE）、restoreNode 返回还原后新鲜 `meta.updatedAt`（广播同步新值）；**A.5-4 交互预算上调 3500 ms**（见本日上文复核回填条）；
+  - **性能修复**：trigram 行查询列命中探针改物化 CTE（见本日上文首条，万级全命中 3s → 12ms）；
+  - `TASK.md` 登记台 M2 触碰条目清零：待决策表删除已闭环四行（双回收站树 purge / ListChildrenRequest 互斥 / moveNode 同父 / restoreNode 新鲜值），并按 spec §7.1 预留登记 M5「搜索索引重建修复例程」执行项。
