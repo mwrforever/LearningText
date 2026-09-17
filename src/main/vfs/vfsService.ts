@@ -16,6 +16,8 @@ import { runWriteTransaction } from '../store/transaction';
 import { isTextualMime, lookupMimeType } from './mime';
 import { validateNodeName } from './nodeName';
 import { createSubtreeStatements } from './subtreeScope';
+// 行→元数据映射共用 nodeRowMapper 单一实现（M2 Task 7 DRY 收口：search 服务映射同一行形态）
+import { toNodeMeta, type NodeRow } from './nodeRowMapper';
 import type {
   AffectedResponse,
   CreateNodeRequest,
@@ -29,33 +31,6 @@ import type {
   ResolvePathRequest,
   WriteFileRequest,
 } from '../../shared/vfs-contract';
-
-/** node 行 → NodeMeta（读模型 ≠ 存储行 ≠ 请求 DTO，各自建模，宪法 A.7-4） */
-interface NodeRow {
-  id: number;
-  parent_id: number | null;
-  node_type: string;
-  name: string;
-  virtual_path: string;
-  mime_type: string | null;
-  size: number;
-  created_at: string;
-  updated_at: string;
-}
-
-function toNodeMeta(row: NodeRow): NodeMeta {
-  return {
-    id: row.id,
-    parentId: row.parent_id,
-    nodeType: row.node_type === 'dir' ? 'dir' : 'file',
-    name: row.name,
-    virtualPath: row.virtual_path,
-    mimeType: row.mime_type,
-    size: row.size,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
 
 export function createVfsService(db: Database.Database) {
   // 高频语句与行获取助手在工厂闭包内预编译一次复用（宪法 A.4-5）
