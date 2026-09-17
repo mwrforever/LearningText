@@ -6,7 +6,7 @@ import { runMigrations } from '../../../src/main/store/migrate';
 import { ALL_MIGRATIONS } from '../../../src/main/store/migrations';
 
 describe('runMigrations', () => {
-  it('v1 迁移建全量表结构并种子根节点，user_version=1', () => {
+  it('全量迁移建表并种子根节点，user_version=2', () => {
     const db = openDatabase({ file: ':memory:' });
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     try {
@@ -18,7 +18,7 @@ describe('runMigrations', () => {
       infoSpy.mockRestore();
     }
 
-    expect(db.pragma('user_version', { simple: true })).toBe(1);
+    expect(db.pragma('user_version', { simple: true })).toBe(2);
     const root = db
       .prepare<[number], { id: number; parent_id: number | null; virtual_path: string }>(
         'SELECT id, parent_id, virtual_path FROM node WHERE id = ?',
@@ -40,7 +40,7 @@ describe('runMigrations', () => {
     ).run();
     runMigrations(db);
     infoSpy.mockRestore();
-    expect(db.pragma('user_version', { simple: true })).toBe(1);
+    expect(db.pragma('user_version', { simple: true })).toBe(2);
     expect(db.prepare<[], { c: number }>('SELECT COUNT(*) AS c FROM node').get()?.c).toBe(2);
     db.close();
   });
@@ -73,6 +73,7 @@ describe('runMigrations', () => {
   });
 
   it('注册表版本严格递增（防止乱序注册）', () => {
+    expect(ALL_MIGRATIONS.length).toBeGreaterThanOrEqual(1);
     for (let i = 1; i < ALL_MIGRATIONS.length; i += 1) {
       expect(ALL_MIGRATIONS[i]?.version).toBe((ALL_MIGRATIONS[i - 1]?.version ?? 0) + 1);
     }
