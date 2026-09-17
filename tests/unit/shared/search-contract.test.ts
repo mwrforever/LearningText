@@ -7,10 +7,12 @@ import {
 } from '../../../src/shared/search-contract';
 
 describe('搜索契约 schema', () => {
-  it('request 接受最小载荷并拒绝越界 limit/负 offset/多余字段', () => {
+  it('request 接受最小载荷与超限 limit（截断语义，200 恰好上界）并拒绝负 offset/多余字段', () => {
     expect(SearchQueryRequestSchema.safeParse({ keyword: '指数' }).success).toBe(true);
     expect(SearchQueryRequestSchema.safeParse({}).success).toBe(false);
-    expect(SearchQueryRequestSchema.safeParse({ keyword: 'a', limit: 201 }).success).toBe(false);
+    // spec §5 截断语义：limit>200 不在 schema 拒绝，由服务层截断为 200
+    expect(SearchQueryRequestSchema.safeParse({ keyword: 'a', limit: 201 }).success).toBe(true);
+    expect(SearchQueryRequestSchema.safeParse({ keyword: 'a', limit: 200 }).success).toBe(true);
     expect(SearchQueryRequestSchema.safeParse({ keyword: 'a', offset: -1 }).success).toBe(false);
     expect(SearchQueryRequestSchema.safeParse({ keyword: 'a', extra: 1 }).success).toBe(false);
   });

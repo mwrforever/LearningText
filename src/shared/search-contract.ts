@@ -52,8 +52,8 @@ export const SearchQueryRequestSchema = z.strictObject({
   /** 原始查询串：分词/规范化在服务层（spec §4） */
   keyword: z.string(),
   filters: SearchFiltersSchema.optional(),
-  /** 省略取默认 50；>200 直接拒绝（载荷错误而非静默截断） */
-  limit: z.number().int().min(1).max(SEARCH_LIMIT_MAX).optional(),
+  /** 省略取默认 50；超限由服务层截断为 200（spec §5 截断语义），SEARCH_LIMIT_MAX 供服务层钳制 */
+  limit: z.number().int().min(1).optional(),
   offset: z.number().int().min(0).optional(),
 });
 export type SearchQueryRequest = z.infer<typeof SearchQueryRequestSchema>;

@@ -6,6 +6,7 @@
 // vfsService 与 searchService（underPath 过滤）共用本工厂，各自闭包级预编译（宪法 A.4-5）。
 import type { Statement } from 'better-sqlite3';
 import type Database from 'better-sqlite3';
+import type { NodeRow } from './nodeRowMapper';
 
 /** CTE 头部：WITH RECURSIVE subtree(id) AS (...) —— 可前置到 SELECT/UPDATE/DELETE 任一种语句；
  *  searchService 以同一文本组合 underPath 子树限定谓词（身份来源唯一，spec §3.1） */
@@ -15,17 +16,8 @@ export const SUBTREE_CTE = `WITH RECURSIVE subtree(id) AS (
   SELECT n.id FROM node n JOIN subtree s ON n.parent_id = s.id
 )`;
 
-export interface SubtreeRowBase {
-  id: number;
-  parent_id: number | null;
-  node_type: string;
-  name: string;
-  virtual_path: string;
-  mime_type: string | null;
-  size: number;
-  created_at: string;
-  updated_at: string;
-}
+/** 子树行基形态：复用 nodeRowMapper 的存储行模型（字段与 node 表读取行同源，消除双份手写漂移） */
+export type SubtreeRowBase = NodeRow;
 
 export interface SubtreeStatements {
   readonly stmtSubtreeIds: Statement<{ rootId: number }, { id: number }>;

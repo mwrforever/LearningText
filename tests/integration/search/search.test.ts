@@ -1,5 +1,5 @@
 // 搜索全链路（FR-SEARCH-01/02/04、spec §4-§7）：双通道、排序、分页、filters、一致性
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { openDatabase } from '../../../src/main/store/db';
 import { runMigrations } from '../../../src/main/store/migrate';
@@ -39,6 +39,12 @@ beforeEach(() => {
 
 const query = (req: SearchQueryRequest) => search.query(req);
 const names = (req: SearchQueryRequest): string[] => query(req).hits.map((h) => h.node.name);
+
+/** 静音搜索 warn 日志（M1 先例：参数拒绝路径会记 warn，拒绝用例不断言日志，仅消音） */
+function silenceWarn(): () => void {
+  const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  return () => spy.mockRestore();
+}
 
 describe('trigram 索引通道（全词 ≥3 码点）', () => {
   it('中文子串命中正文：二元指数 → 仅 index.html，matchIn=body、bodySnippet 区间可还原子串', () => {
@@ -125,6 +131,14 @@ describe('trigram 索引通道（全词 ≥3 码点）', () => {
     expect(over.truncated).toBe(false);
   });
 
+  it('limit 超限截断生效（spec §5：>200 截为 200 而非拒绝）：少量命中场景等价全量返回且 total 正确', () => {
+    for (let i = 0; i < 5; i += 1) file(1, `超限项${String(i)}.html`, 'body');
+    const res = query({ keyword: '超限项', limit: 201 }); // 钳制为 200，命中仅 5 → 等价全量返回
+    expect(res.hits).toHaveLength(5);
+    expect(res.total).toBe(5);
+    expect(res.truncated).toBe(false);
+  });
+
   it('名称与正文同时命中 → matchIn=both（单行两列同含词，spec §6 列归属）', () => {
     const id = file(1, '双列.html', '双列正文'); // 名称与正文均含「双列」
     const hit = query({ keyword: '双列' }).hits.find((h) => h.node.id === id);
@@ -138,7 +152,7 @@ describe('LIKE 回退通道（任一词 <3 码点，整条降级）', () => {
     const res = query({ keyword: '指数' });
     expect(res.hits.map((h) => h.node.name).sort()).toEqual(['index.html', '指数.txt', '指数目录']);
     expect(res.hits.every((h) => h.score === null)).toBe(true);
-    // 无 score：回退通道按更新时间倒序（场景创建顺序即时间序，index.html 最新——afterEach 断言弱序即可）
+    // 回退通道按更新时间倒序返回（无分数可用）；本用例对命中集合 sort 归一后断言，不绑定具体顺序
     expect(res.total).toBe(3);
   });
 
@@ -146,7 +160,11 @@ describe('LIKE 回退通道（任一词 <3 码点，整条降级）', () => {
     file(1, '指xay.txt', 'body'); // 名称含 指 与 xay
     file(1, '指x_y.txt', 'body'); // 名称含 指 与 x_y 字面
     // terms：x_y(3 码点) + 指(1 码点 <3) → 整条 LIKE 通道；%x\_y% 转义精确
-    expect(names({ keyword: 'x_y 指' })).toEqual(['指x_y.txt']);
+    const res = query({ keyword: 'x_y 指' });
+    expect(res.hits.map((h) => h.node.name)).toEqual(['指x_y.txt']);
+    // 名称全命中、正文不含任一词 → 仅名称命中，正文片段为 null（spec §6 bodySnippet 可空口径）
+    expect(res.hits[0]?.matchIn).toBe('name');
+    expect(res.hits[0]?.bodySnippet).toBeNull();
   });
 
   it('like 通道 snippet：窗口文本含词且区间可还原（省略号偏移正确）', () => {
@@ -188,6 +206,11 @@ describe('filters（FR-SEARCH-03）', () => {
     ]);
   });
 
+  it('trigram 通道 × nodeTypes：索引通道行经类型白名单过滤（指数.txt 文件名命中，dir 白名单下为空）', () => {
+    // 全词 ≥3 码点走索引通道；名称命中行是 file，dir 白名单将其排除 → 空数组
+    expect(names({ keyword: '指数.txt', filters: { nodeTypes: ['dir'] } })).toEqual([]);
+  });
+
   it('underPath 子树限定：/笔记 内命中 index.html，子树外 指数.txt 排除', () => {
     expect(names({ keyword: '指数', filters: { underPath: '/笔记' } })).toEqual(['index.html']);
   });
@@ -220,13 +243,18 @@ describe('索引一致性（FR-SEARCH-04：删除立即可验证）', () => {
 
 describe('查询拒绝（E_IPC_BAD_PAYLOAD，spec §4/§7.3）', () => {
   it('空查询与引号未闭合拒绝', () => {
-    for (const kw of ['', '   ', '未闭合 "指数']) {
-      try {
-        query({ keyword: kw });
-        expect.unreachable('应拒绝');
-      } catch (e) {
-        expect((e as AppError).code).toBe(E_IPC_BAD_PAYLOAD);
+    const restoreWarn = silenceWarn(); // 拒绝路径现在会记 warn 日志，本用例不断言日志，仅消音
+    try {
+      for (const kw of ['', '   ', '未闭合 "指数']) {
+        try {
+          query({ keyword: kw });
+          expect.unreachable('应拒绝');
+        } catch (e) {
+          expect((e as AppError).code).toBe(E_IPC_BAD_PAYLOAD);
+        }
       }
+    } finally {
+      restoreWarn();
     }
   });
 });

@@ -64,3 +64,4 @@
 | release 发布工作流：tag 触发、draft release 人工发布闸门、签名 / 公证 secrets 占位、`forceCodeSigning` 证书就绪后开启为硬门禁 | 同上 §三方案 C | M6 | 待办 |
 | 搜索索引重建修复例程（设置页：v1 对账不平或用户自修复触发——同 v2 复制范式重跑；M5 辅助功能批次） | docs/superpowers/specs/2026-09-17-搜索-design.md §7.1 | M5 | 待办 |
 | electron-builder v27 `electronGet` 更名复核 | 同上 §三（C.6-11） | v27 发布后 |
+| A.5-4 交互/批量预算分档与基句悬空指针清理（终审建议：交互单点写与批量导入分档、删「见 TASK.md」悬空引用） | M2 终审 | 下一修宪周期 | 待办 |

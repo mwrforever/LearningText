@@ -8,7 +8,7 @@
 import { performance } from 'node:perf_hooks';
 import type { Statement } from 'better-sqlite3';
 import type Database from 'better-sqlite3';
-import { E_VFS_NOT_FOUND } from '../../shared/errors';
+import { E_IPC_BAD_PAYLOAD, E_VFS_NOT_FOUND } from '../../shared/errors';
 import { AppError } from '../../shared/result';
 import {
   SEARCH_LIMIT_DEFAULT,
@@ -21,7 +21,7 @@ import {
 } from '../../shared/search-contract';
 import { SUBTREE_CTE } from '../vfs/subtreeScope';
 import { toNodeMeta, type NodeRow } from '../vfs/nodeRowMapper';
-import { buildSearchQuery } from './queryBuilder';
+import { buildSearchQuery, type BuiltQuery } from './queryBuilder';
 import {
   SNIPPET_WINDOW,
   buildWindowSnippet,
@@ -292,7 +292,17 @@ export function createSearchService(db: Database.Database) {
      */
     query(request: SearchQueryRequest): SearchQueryResponse {
       const started = performance.now();
-      const built = buildSearchQuery(request.keyword);
+      // 参数拒绝先 warn 审计（拒绝原因形态描述，不含关键词原文，docs/03 §7.4）再原样重抛；
+      // E_VFS_NOT_FOUND 等其他错误不在本 try 内（underPath 解析在 runTrigram/runLike 内），语义不变
+      let built: BuiltQuery;
+      try {
+        built = buildSearchQuery(request.keyword);
+      } catch (e) {
+        if (e instanceof AppError && e.code === E_IPC_BAD_PAYLOAD) {
+          console.warn(`[search] 查询参数被拒绝：${e.message}`);
+        }
+        throw e;
+      }
       const limit = Math.min(request.limit ?? SEARCH_LIMIT_DEFAULT, SEARCH_LIMIT_MAX);
       const offset = request.offset ?? 0;
       const shape = filterShape(request.filters);
