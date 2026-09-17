@@ -129,26 +129,33 @@ export function createSearchService(db: Database.Database) {
 
   /**
    * trigram 通道 SQL 对：MATCH @match 行选 + bm25 加权 + snippet 标记 + 稳定排序。
-   * 列命中位（全词命中口径，spec §6）经「列过滤 MATCH 派生表 LEFT JOIN」求得：
+   * 列命中位（全词命中口径，spec §6）经「列过滤 MATCH 物化探针 CTE LEFT JOIN」求得：
    * FTS5 禁止 MATCH 出现在 SELECT 列位（unable to use function MATCH in the requested
    * context），而 snippet 标记语义是「列含任一查询词」，无法表达「列满足整条 AND」；
    * 列过滤串 = name:/body: 前缀 + 复用 @match 短语组（内部引号已由 queryBuilder 按 ""
-   * 加倍转义，探针验证列过滤下同一转义规则），无用户数据拼接。派生行集按 rowid 唯一，
+   * 加倍转义，探针验证列过滤下同一转义规则），无用户数据拼接。探针行集按 rowid 唯一，
    * 无 JOIN 扇出；仅行查询携带（COUNT 不需要命中位）。
    */
   function trigramSqls(shape: FilterShape): { rows: string; count: string } {
     const { typeFrag, subFrag, cte } = filterFragments(shape);
     const where = `WHERE node_fts MATCH @match AND n.deleted_at IS NULL${typeFrag}${subFrag}`;
+    // 列命中探针必须显式物化（AS MATERIALIZED）：FTS5 虚表派生表不满足 SQLite 自动物化
+    // 条件，普通 FROM 派生表 LEFT JOIN 会被查询计划按外层命中行逐行重扫 MATCH（万级全命中
+    // 实测 3s/查询，超 NFR-03 P95 红线 15 倍；红线由 tests/integration/search/perf-baseline.test.ts
+    // 锁死），物化后每探针仅执行一次（毫秒级），命中位/分数/片段语义逐字段不变
+    const probeCtes = `nm(rowid) AS MATERIALIZED (SELECT rowid FROM node_fts WHERE node_fts MATCH @nameMatch),
+       bd(rowid) AS MATERIALIZED (SELECT rowid FROM node_fts WHERE node_fts MATCH @bodyMatch)`;
     return {
       count: `${cte}SELECT COUNT(*) AS c FROM node_fts
      JOIN node n ON n.id = node_fts.rowid
      ${where}`,
-      rows: `${cte}SELECT ${NODE_COLUMNS}, bm25(node_fts, 10.0, 1.0) AS score,
+      rows: `${shape.hasSubtree ? `${SUBTREE_CTE}, ${probeCtes}` : `WITH ${probeCtes}`}
+     SELECT ${NODE_COLUMNS}, bm25(node_fts, 10.0, 1.0) AS score,
        (nm.rowid IS NOT NULL) AS name_hit, (bd.rowid IS NOT NULL) AS body_hit,
        snippet(node_fts, 1, char(2), char(3), '…', 12) AS body_marked
      FROM node_fts
-     LEFT JOIN (SELECT rowid FROM node_fts WHERE node_fts MATCH @nameMatch) nm ON nm.rowid = node_fts.rowid
-     LEFT JOIN (SELECT rowid FROM node_fts WHERE node_fts MATCH @bodyMatch) bd ON bd.rowid = node_fts.rowid
+     LEFT JOIN nm ON nm.rowid = node_fts.rowid
+     LEFT JOIN bd ON bd.rowid = node_fts.rowid
      JOIN node n ON n.id = node_fts.rowid
      ${where}
      ORDER BY score ASC, n.updated_at DESC, n.id ASC

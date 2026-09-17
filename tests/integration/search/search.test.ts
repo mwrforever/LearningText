@@ -192,6 +192,11 @@ describe('filters（FR-SEARCH-03）', () => {
     expect(names({ keyword: '指数', filters: { underPath: '/笔记' } })).toEqual(['index.html']);
   });
 
+  it('underPath × 索引通道（全词 ≥3 码点，RECURSIVE 子树 CTE 与物化探针 CTE 组合形态）：子树内命中、子树外排除', () => {
+    expect(names({ keyword: '二元指数', filters: { underPath: '/笔记' } })).toEqual(['index.html']);
+    expect(names({ keyword: '指数.txt', filters: { underPath: '/笔记' } })).toEqual([]);
+  });
+
   it('underPath 不存在路径 → E_VFS_NOT_FOUND（复用既有码，spec §6）', () => {
     try {
       query({ keyword: '指数', filters: { underPath: '/无此路径' } });
