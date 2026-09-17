@@ -198,6 +198,15 @@ describe('moveNode', () => {
     }
     expect(() => vfs.moveNode({ nodeId: webId, targetDirId: 9999 })).toThrow(AppError);
   });
+
+  it('移动到当前父目录为无操作：affectedCount 0、路径与父指针不变（M2 spec §3.3）', () => {
+    const { webId, docsId } = seedTree();
+    void docsId;
+    const parent = vfs.resolvePath({ virtualPath: '/' }); // web 的父 = 根
+    const result = vfs.moveNode({ nodeId: webId, targetDirId: parent.nodeId });
+    expect(result.affectedCount).toBe(0);
+    expect(pathOf(webId)).toBe('/web');
+  });
 });
 
 describe('同路径回收站孪生树隔离', () => {

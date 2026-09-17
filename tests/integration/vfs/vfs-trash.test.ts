@@ -58,9 +58,15 @@ describe('trashNode', () => {
 });
 
 describe('restoreNode', () => {
-  it('整棵子树还原：deleted_at 清空、FTS 行重建、路径不变', () => {
+  it('整棵子树还原：deleted_at 清空、FTS 行重建、路径不变', async () => {
     const { webId, indexId } = seedScenario();
+    // trash 前 updated_at 快照（M2 spec §3.3 新鲜度基线）：时间戳为毫秒精度，内存库下
+    // 创建/回收/还原可能落入同一毫秒，先记录再隔开时刻，「≠ 快照」断言才确定有区分力
+    const updatedAtBeforeTrash = db
+      .prepare<number, { updated_at: string }>('SELECT updated_at FROM node WHERE id = ?')
+      .get(webId)?.updated_at;
     vfs.trashNode({ nodeId: webId });
+    await new Promise((r) => setTimeout(r, 2)); // 保证还原时刻晚于创建/回收时刻（毫秒精度时间戳）
     const restored = vfs.restoreNode({ nodeId: webId });
     expect(restored.virtualPath).toBe('/web');
     expect(
@@ -75,6 +81,12 @@ describe('restoreNode', () => {
       db.prepare<number, { body: string }>('SELECT body FROM node_fts WHERE rowid = ?').get(indexId)
         ?.body,
     ).toBe('<p>i</p>');
+    // M2 spec §3.3：还原返回与广播携带还原时刻的 updatedAt（非回收站期旧值）
+    const stored = db
+      .prepare<number, { updated_at: string }>('SELECT updated_at FROM node WHERE id = ?')
+      .get(webId);
+    expect(restored.updatedAt).toBe(stored?.updated_at);
+    expect(restored.updatedAt).not.toBe(updatedAtBeforeTrash); // ≠ trash 前记录的 updated_at
   });
 
   it('原位置被占用 → E_VFS_DUPLICATE_NAME（partial unique 约束映射）', () => {

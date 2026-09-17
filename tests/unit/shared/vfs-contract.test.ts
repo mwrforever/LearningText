@@ -14,6 +14,17 @@ describe('VFS 契约 schema', () => {
     expect(ListChildrenRequestSchema.safeParse({}).success).toBe(false);
   });
 
+  it('listChildren 双字段并存或缺一字段一律拒绝（strictObject 互斥，M2 spec §3.3）', () => {
+    expect(ListChildrenRequestSchema.safeParse({ parentId: 1 }).success).toBe(true);
+    expect(ListChildrenRequestSchema.safeParse({ virtualPath: '/a' }).success).toBe(true);
+    expect(ListChildrenRequestSchema.safeParse({ parentId: 1, virtualPath: '/a' }).success).toBe(
+      false,
+    );
+    expect(ListChildrenRequestSchema.safeParse({}).success).toBe(false);
+    // strict：多余字段同样拒绝（M1 union 默认 strip 形态的收口）
+    expect(ListChildrenRequestSchema.safeParse({ parentId: 1, extra: 2 }).success).toBe(false);
+  });
+
   it('createNode 的 content 仅接受 Uint8Array', () => {
     const payload = { parentId: 1, name: 'a.html', nodeType: 'file' };
     expect(CreateNodeRequestSchema.safeParse(payload).success).toBe(true);

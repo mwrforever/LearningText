@@ -270,7 +270,8 @@ export function createVfsService(db: Database.Database) {
 
     /**
      * 移动（FR-VFS-05）：环检测（O(1) 前缀比较）→ 目标校验与重名预查 → 单事务级联迁移子树路径并更新父指针。
-     * 目标必须是文件夹；根节点不可被移动；移到自身或自身后代一律拒绝（防子树成环）。
+     * 目标必须是文件夹；根节点不可被移动；移到自身或自身后代一律拒绝（防子树成环）；
+     * 移动到当前父目录为无操作短路，直接返回 affectedCount 0（M2 spec §3.3）。
      * 参数 targetDirId 为目标文件夹节点 id；返回 affectedCount 为含自身的子树受影响节点数。
      * 异常：E_VFS_NOT_FOUND（源/目标缺失或已在回收站、根节点）、E_VFS_INVALID_MOVE（目标非文件夹/环/根）、
      * E_VFS_DUPLICATE_NAME（目标目录下已有同名节点）；调用方按 AppError.code 分支处理。
@@ -281,6 +282,8 @@ export function createVfsService(db: Database.Database) {
       if (row.parent_id === null) throw new AppError(E_VFS_INVALID_MOVE, '根节点不可移动');
       const target = requireRow(request.targetDirId);
       if (target.node_type !== 'dir') throw new AppError(E_VFS_INVALID_MOVE, '目标必须是文件夹');
+      // 同父移动为无操作：先于重名预查短路（预查会命中节点自身造成 DUPLICATE 误导，M2 spec §3.3）
+      if (row.parent_id === target.id) return { affectedCount: 0 };
       // 环检测 O(1)：目标路径等于被移节点路径或落在其子树内（含移到自身）即拒绝（spec §7.5）
       if (
         target.virtual_path === row.virtual_path ||
@@ -347,7 +350,15 @@ export function createVfsService(db: Database.Database) {
               : '';
           stmtInsertFts.run({ id: r.id, name: r.name, body });
         }
-        return toNodeMeta(row);
+        // 返回/广播携带还原时刻 updatedAt（spec §3.3）：以行快照合并已写入字段（还原 UPDATE 刚写入，
+        // 值必一致）；不重读、不留死分支——「与库一致」由测试直查 SQL 验证。
+        // 注解保留 deleted_at 覆盖语义（还原后必为 null）；toNodeMeta 只读展示字段，多余列不参与映射
+        const restoredRow: NodeRow & { deleted_at: string | null } = {
+          ...row,
+          deleted_at: null,
+          updated_at: now,
+        };
+        return toNodeMeta(restoredRow);
       });
     },
 

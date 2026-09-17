@@ -38,9 +38,10 @@ export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
 // —— 请求 schema：字段级契约即规格（docs/03 §7.1）——
 
+// strictObject 逐分支：二选一强制互斥（双字段/缺字段/多余字段一律拒），z.infer 形态与 M1 等价（spec §3.3）
 export const ListChildrenRequestSchema = z.union([
-  z.object({ parentId: z.number().int() }),
-  z.object({ virtualPath: z.string().min(1) }),
+  z.strictObject({ parentId: z.number().int() }),
+  z.strictObject({ virtualPath: z.string().min(1) }),
 ]);
 export type ListChildrenRequest = z.infer<typeof ListChildrenRequestSchema>;
 
