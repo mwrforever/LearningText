@@ -21,6 +21,7 @@ import {
 import { AppError } from '../../../src/shared/result';
 import { registerIpcHandlers } from '../../../src/main/ipc';
 import type { VfsService } from '../../../src/main/vfs/vfsService';
+import type { SearchService } from '../../../src/main/search/searchService';
 
 function fakeEvent(origin: string | null): { senderFrame: { origin: string | null } | null } {
   return origin === '__null__' ? { senderFrame: null } : { senderFrame: { origin } };
@@ -42,12 +43,20 @@ function makeVfsStub(): VfsService {
   } as unknown as VfsService;
 }
 
+// 搜索服务桩：query 可注入返回值/抛错（vi.fn 与接口测试期适配）
+function makeSearchStub(): SearchService {
+  return {
+    query: vi.fn(() => ({ hits: [], total: 0, truncated: false })),
+  } as unknown as SearchService;
+}
+
 describe('system:ping 入口校验', () => {
   beforeEach(() => {
     handlers.clear();
     registerIpcHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
+      search: makeSearchStub(),
       broadcast: vi.fn(),
     });
   });
@@ -107,7 +116,12 @@ describe('vfs 通道接线', () => {
   it('vfs:resolve 合法请求 → ok；非法载荷 → E_IPC_BAD_PAYLOAD', () => {
     const vfs = makeVfsStub();
     const broadcast = vi.fn();
-    registerIpcHandlers({ allowedOrigins: ['app://bundle'], vfs, broadcast });
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs,
+      search: makeSearchStub(),
+      broadcast,
+    });
     const okResult = handlers.get(IPC.vfsResolve)?.(fakeEvent('app://bundle'), {
       virtualPath: '/a',
     }) as {
@@ -137,7 +151,12 @@ describe('vfs 通道接线', () => {
     const vfs = makeVfsStub();
     (vfs.createNode as ReturnType<typeof vi.fn>).mockReturnValue(node);
     const broadcast = vi.fn();
-    registerIpcHandlers({ allowedOrigins: ['app://bundle'], vfs, broadcast });
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs,
+      search: makeSearchStub(),
+      broadcast,
+    });
     handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
       name: 'a.html',
@@ -156,7 +175,12 @@ describe('vfs 通道接线', () => {
       throw new Error('意外错误');
     });
     const broadcast = vi.fn();
-    registerIpcHandlers({ allowedOrigins: ['app://bundle'], vfs, broadcast });
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs,
+      search: makeSearchStub(),
+      broadcast,
+    });
     const dup = handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
       name: 'x',
@@ -177,7 +201,12 @@ describe('vfs 通道接线', () => {
 
   it('非白名单 origin 对 vfs 通道同样拒绝', () => {
     const broadcast = vi.fn();
-    registerIpcHandlers({ allowedOrigins: ['app://bundle'], vfs: makeVfsStub(), broadcast });
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      broadcast,
+    });
     const r = handlers.get(IPC.vfsList)?.(fakeEvent('http://evil'), { parentId: 1 }) as {
       ok: boolean;
     };
@@ -209,7 +238,12 @@ describe('vfs 通道接线', () => {
     (vfs.restoreNode as ReturnType<typeof vi.fn>).mockReturnValue(node);
     (vfs.purgeNode as ReturnType<typeof vi.fn>).mockReturnValue(affected);
     const broadcast = vi.fn();
-    registerIpcHandlers({ allowedOrigins: ['app://bundle'], vfs, broadcast });
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs,
+      search: makeSearchStub(),
+      broadcast,
+    });
 
     const read = handlers.get(IPC.vfsRead)?.(fakeEvent('app://bundle'), { nodeId: 5 }) as {
       ok: boolean;
@@ -252,5 +286,59 @@ describe('vfs 通道接线', () => {
     expect(broadcast).toHaveBeenNthCalledWith(5, { type: 'restored', node });
     expect(broadcast).toHaveBeenNthCalledWith(6, { type: 'purged', nodeId: 5, purgedCount: 3 });
     expect(broadcast).toHaveBeenCalledTimes(6);
+  });
+});
+
+// search:query 两道校验 + Result 转换 + 不广播（spec §1/§7.3）
+describe('search 通道接线', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('search:query 合法请求透传服务结果；非法载荷 E_IPC_BAD_PAYLOAD', () => {
+    const search = makeSearchStub();
+    const broadcast = vi.fn();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search,
+      broadcast,
+    });
+    const okResult = handlers.get(IPC.searchQuery)?.(fakeEvent('app://bundle'), {
+      keyword: '指数',
+    }) as { ok: boolean };
+    expect(okResult).toEqual({ ok: true, value: { hits: [], total: 0, truncated: false } });
+    const badResult = handlers.get(IPC.searchQuery)?.(fakeEvent('app://bundle'), {}) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(badResult.ok).toBe(false);
+    expect(badResult.error.code).toBe(E_IPC_BAD_PAYLOAD);
+  });
+
+  it('非白名单 origin 拒绝；服务抛 AppError 保真为 err 且全程不广播', () => {
+    const search = makeSearchStub();
+    (search.query as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new AppError('E_VFS_NOT_FOUND', '子树过滤路径不存在或已在回收站');
+    });
+    const broadcast = vi.fn();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search,
+      broadcast,
+    });
+    const forbidden = handlers.get(IPC.searchQuery)?.(fakeEvent('http://evil'), {
+      keyword: 'x',
+    }) as { ok: boolean; error: { code: string } };
+    expect(forbidden.error.code).toBe(E_IPC_FORBIDDEN_ORIGIN);
+    const errResult = handlers.get(IPC.searchQuery)?.(fakeEvent('app://bundle'), {
+      keyword: 'x',
+    }) as { ok: boolean; error: { code: string } };
+    expect(errResult.error).toEqual({
+      code: 'E_VFS_NOT_FOUND',
+      message: '子树过滤路径不存在或已在回收站',
+    });
+    expect(broadcast).not.toHaveBeenCalled();
   });
 });

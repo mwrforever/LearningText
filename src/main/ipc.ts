@@ -9,6 +9,9 @@ import { IPC } from '../shared/ipc';
 import { AppError, err, ok, type Result } from '../shared/result';
 import { E_IPC_BAD_PAYLOAD, E_IPC_FORBIDDEN_ORIGIN, E_STORE_INTERNAL } from '../shared/errors';
 import type { VfsService } from './vfs/vfsService';
+import type { SearchService } from './search/searchService';
+import { SearchQueryRequestSchema } from '../shared/search-contract';
+import type { SearchQueryRequest, SearchQueryResponse } from '../shared/search-contract';
 import {
   CreateNodeRequestSchema,
   ListChildrenRequestSchema,
@@ -38,6 +41,8 @@ export interface IpcHandlerDeps {
   readonly allowedOrigins: readonly string[];
   /** VFS 服务（事务边界唯一归属存储层，handler 仅做转发与 Result 转换） */
   readonly vfs: VfsService;
+  /** 搜索服务（纯读，spec §1：搜索通道不产生广播事件） */
+  readonly search: SearchService;
   /** 主→渲染广播（app.ts 提供：遍历窗口 webContents.send）；必须在事务提交后调用 */
   readonly broadcast: (event: VfsChangedEvent) => void;
 }
@@ -182,6 +187,13 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     IPC.vfsResolve,
     handleWith(deps, ResolvePathRequestSchema, (q: ResolvePathRequest) => ({
       result: deps.vfs.resolvePath(q),
+    })),
+  );
+  // 搜索通道纯读、无写事务：返回对象无 event 键 → handleWith 守卫不广播（spec §1）
+  ipcMain.handle(
+    IPC.searchQuery,
+    handleWith(deps, SearchQueryRequestSchema, (q: SearchQueryRequest) => ({
+      result: deps.search.query(q) satisfies SearchQueryResponse,
     })),
   );
 }

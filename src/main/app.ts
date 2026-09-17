@@ -15,6 +15,7 @@ import { openDatabase } from './store/db';
 import { runMigrations } from './store/migrate';
 import { ensureDataDir, resolveDataDir } from './store/dataDir';
 import { createVfsService } from './vfs/vfsService';
+import { createSearchService } from './search/searchService';
 import { IPC } from '../shared/ipc';
 import type { VfsChangedEvent } from '../shared/vfs-contract';
 
@@ -93,13 +94,15 @@ export function bootstrapMain(): void {
       const allowed =
         devServerUrl !== undefined ? [new URL(devServerUrl).origin, APP_ORIGIN] : [APP_ORIGIN];
       const vfs = createVfsService(db);
+      // 搜索服务与 VFS 同源单例连接（服务禁自行开连接，spec §7.3）
+      const search = createSearchService(db);
       const broadcast = (event: VfsChangedEvent): void => {
         // 事务提交成功后由 handler 调用；遍历全部窗口广播（宪法 B.3-4）
         for (const win of BrowserWindow.getAllWindows()) {
           win.webContents.send(IPC.vfsChanged, event);
         }
       };
-      registerIpcHandlers({ allowedOrigins: allowed, vfs, broadcast });
+      registerIpcHandlers({ allowedOrigins: allowed, vfs, search, broadcast });
       createMainWindow(devServerUrl, allowed);
     })
     .catch((e: unknown) => {

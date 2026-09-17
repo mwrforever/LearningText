@@ -1,8 +1,8 @@
 // 主进程装配单元测试：以 vi.mock('electron') 驱动 bootstrapMain（宪法 A.5-1 / B.3-1），
-// 断言 scheme 注册、协议挂载、IPC 注入（origin 白名单 + vfs 服务工厂 + 广播实现）、
+// 断言 scheme 注册、协议挂载、IPC 注入（origin 白名单 + vfs/search 服务工厂 + 广播实现）、
 // 窗口安全默认值、fail-fast 退出路径与 will-quit 优雅关库（spec §2.2）。
-// 数据目录/开库/迁移/vfs 工厂接线：electron getPath 返回真实临时目录（dataDir 布局走真实现），
-// db/migrate/vfsService 以桩替换（单元测试不触原生 SQLite，真实行为由集成测试与 E2E 覆盖）。
+// 数据目录/开库/迁移/vfs/search 工厂接线：electron getPath 返回真实临时目录（dataDir 布局走真实现），
+// db/migrate/vfsService/searchService 以桩替换（单元测试不触原生 SQLite，真实行为由集成测试与 E2E 覆盖）。
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => {
   // vfs 服务桩标记对象：断言注入链路（工厂产物原样进入 registerIpcHandlers deps）
   const vfsStub = { __vfsServiceStub: true } as const;
+  // 搜索服务桩标记对象：断言 search:query 通道的装配注入链路（M2 spec §7.3）
+  const searchStub = { __searchServiceStub: true } as const;
   const m = {
     registerSchemesAsPrivileged: vi.fn<(schemes: unknown[]) => void>(),
     protocolHandle:
@@ -27,6 +29,7 @@ const mocks = vi.hoisted(() => {
     dbClose: vi.fn<() => void>(),
     runMigrations: vi.fn<(db: unknown) => void>(),
     createVfsService: vi.fn<(db: unknown) => typeof vfsStub>(),
+    createSearchService: vi.fn<(db: unknown) => typeof searchStub>(),
     getAllWindows:
       vi.fn<() => Array<{ webContents: { send: (channel: string, payload: unknown) => void } }>>(),
     BrowserWindow: vi.fn<(options: unknown) => { loadURL: (url: string) => Promise<void> }>(),
@@ -44,6 +47,7 @@ const mocks = vi.hoisted(() => {
         (deps: {
           readonly allowedOrigins: readonly string[];
           readonly vfs: unknown;
+          readonly search: unknown;
           readonly broadcast: (event: unknown) => void;
         }) => void
       >(),
@@ -58,6 +62,8 @@ const mocks = vi.hoisted(() => {
   m.openDatabase.mockImplementation((options) => ({ ...options, close: m.dbClose }));
   // vfs 工厂桩：单元测试不触原生 SQLite（真实行为由集成测试与 E2E 覆盖）
   m.createVfsService.mockImplementation(() => vfsStub);
+  // 搜索工厂桩：同上，产物标记对象仅供注入链路断言（工厂本身会立刻 prepare 语句，禁触真库）
+  m.createSearchService.mockImplementation(() => searchStub);
   // getAllWindows 默认无窗口：broadcast 遍历空集（具体窗口断言在对应用例内覆写返回值）
   m.getAllWindows.mockImplementation(() => []);
   // BrowserWindow 以 new 调用，桩实现必须用 function 声明（箭头函数不可构造）
@@ -71,8 +77,8 @@ const mocks = vi.hoisted(() => {
       },
     };
   });
-  // vfsStub 供用例断言 deps.vfs 与工厂产物同一引用
-  return Object.assign(m, { vfsStub });
+  // vfsStub/searchStub 供用例断言 deps 与工厂产物同一引用
+  return Object.assign(m, { vfsStub, searchStub });
 });
 
 vi.mock('electron', () => ({
@@ -96,6 +102,9 @@ vi.mock('../../../src/main/store/db', () => ({ openDatabase: mocks.openDatabase 
 vi.mock('../../../src/main/store/migrate', () => ({ runMigrations: mocks.runMigrations }));
 vi.mock('../../../src/main/vfs/vfsService', () => ({
   createVfsService: mocks.createVfsService,
+}));
+vi.mock('../../../src/main/search/searchService', () => ({
+  createSearchService: mocks.createSearchService,
 }));
 
 import { bootstrapMain } from '../../../src/main/app';
@@ -164,14 +173,19 @@ describe('主进程装配 bootstrapMain', () => {
     ]);
     // 协议处理器必须挂载真实的 handleAppResource（防误接桩实现）
     expect(mocks.protocolHandle).toHaveBeenCalledWith('app', handleAppResource);
-    // 生产环境 origin 白名单仅含 app 协议（B.5-6）；vfs 服务工厂与广播实现一并注入（M1）
+    // 生产环境 origin 白名单仅含 app 协议（B.5-6）；vfs/search 服务工厂与广播实现一并注入
     expect(mocks.registerIpcHandlers).toHaveBeenCalledTimes(1);
     const ipcDeps = mocks.registerIpcHandlers.mock.calls[0]?.[0];
     expect(ipcDeps?.allowedOrigins).toEqual(['app://bundle']);
     expect(ipcDeps?.vfs).toBe(mocks.vfsStub);
+    expect(ipcDeps?.search).toBe(mocks.searchStub);
     expect(ipcDeps?.broadcast).toEqual(expect.any(Function));
     // vfs 服务由开库句柄构建（装配顺序：开库 → 迁移 → 服务工厂 → IPC 注册）
     expect(mocks.createVfsService).toHaveBeenCalledWith(mocks.openDatabase.mock.results[0]?.value);
+    // 搜索服务同一开库句柄构建（M2 spec §7.3：单例连接，服务禁自行开连接）
+    expect(mocks.createSearchService).toHaveBeenCalledWith(
+      mocks.openDatabase.mock.results[0]?.value,
+    );
     // 数据目录与开库迁移接线（spec §2.1/§3）：备份目录真实落盘，库文件收敛在 userData/LearningText 布局内
     expect(mocks.getPath).toHaveBeenCalledWith('userData');
     const userDataDir = mocks.getPath.mock.results[0]?.value;
