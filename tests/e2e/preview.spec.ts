@@ -1,5 +1,6 @@
 // M3 验收关键项（spec §9.1）：三形态路径/越界 404/内联 script/null-origin fetch/
-// 连续输入最终态一致/重载仅变更回 200/localStorage 隔离 + NFR-04 计时
+// https 外链 CSP 阻断/连续输入最终态一致/重载仅变更回 200 + 未变子资源重取/localStorage
+// 隔离 + NFR-04 计时（304 重验探针勘误见 spec §4.2；两断言为终审 I-2 补强）
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -119,6 +120,38 @@ test('沙箱内 fetch null-origin 可取 VFS 资源（验收项 4）', async () 
   expect(status).toBe(200); // Origin:null + CORS 通配（spec §2.3）
 });
 
+test('预览文档 fetch https 外链被 CSP 阻断（验收项 4：connect-src 断出网面）', async () => {
+  // 沙箱文档 CSP 为 connect-src vfs:（spec §3.2 / VFS_HTML_CSP）：https 外链在 CSP
+  // 评估期即拒，fetch 以 TypeError reject、请求不达网络层——reject 即通过。旁证断言：
+  // 期间不出现任何 example.com 的网络请求事件（区分「CSP 前置拒绝」与「请求已出网后
+  // 被 CORS 拒」两种同形 reject，坐实阻断发生在本机出网之前）
+  const externalRequests: string[] = [];
+  const onRequest = (req: { url(): string }): void => {
+    if (req.url().startsWith('https://example.com')) externalRequests.push(req.url());
+  };
+  page.on('request', onRequest);
+  let rejectedByCsp: boolean;
+  try {
+    rejectedByCsp = await page
+      .frameLocator('iframe')
+      .locator('#t')
+      .evaluate(async (el) => {
+        const view = el.ownerDocument.defaultView;
+        if (view === null) throw new Error('预览文档无默认视图');
+        try {
+          await view.fetch('https://example.com/');
+          return false; // fetch 成功 = CSP 未阻断（回归信号）
+        } catch {
+          return true; // TypeError: Failed to fetch——connect-src 违规拒绝形态
+        }
+      });
+  } finally {
+    page.off('request', onRequest); // 局部监听即插即拔，不泄漏进后续用例
+  }
+  expect(rejectedByCsp).toBe(true);
+  expect(externalRequests).toHaveLength(0); // 请求未出渲染器——阻断发生在网络层之前
+});
+
 test('localStorage 抛 SecurityError（验收项 7，隔离断言=已知边界）', async () => {
   const threw = await page
     .frameLocator('iframe')
@@ -136,12 +169,14 @@ test('localStorage 抛 SecurityError（验收项 7，隔离断言=已知边界�
   expect(threw).toBe(true);
 });
 
-test('连续输入最终态一致 + NFR-04 重载计时（验收项 5/6 + spec §4.4）', async () => {
+test('连续输入最终态一致 + 未变子资源重取与校验器稳定 + NFR-04 重载计时（验收项 5/6 + spec §4.4）', async () => {
   const before = vfsResponses.length;
   const editor = page.getByLabel('编辑区');
-  // charset meta 同主链路用例（协议不注入 charset，无 meta 乱码）；<p> 不闭合——
-  // pressSequentially 在文尾续打时字符须落进 #t 内（闭合标签会把续打字符挤到段外）
-  const target = '<meta charset="utf-8"><p id="t">最终态一二三四五六七八九十';
+  // charset meta 同主链路用例（协议不注入 charset，无 meta 乱码）；保留 ./a.css 引用——
+  // 使未变更子资源进入重载请求面（终审 I-2 补强，断言与降级依据见 tail 段注释）；
+  // <p> 不闭合——pressSequentially 在文尾续打时字符须落进 #t 内（闭合标签会把续打字符挤到段外）
+  const target =
+    '<meta charset="utf-8"><link rel="stylesheet" href="./a.css"><p id="t">最终态一二三四五六七八九十';
   const start = Date.now();
   await editor.fill(target); // fill 单次提交终值：等价高频输入的尾沿
   await expect(page.frameLocator('iframe').locator('#t')).toHaveText('最终态一二三四五六七八九十');
@@ -154,7 +189,18 @@ test('连续输入最终态一致 + NFR-04 重载计时（验收项 5/6 + spec �
   );
   const tail = vfsResponses.slice(before);
   expect(tail.filter((r) => r.status() === 200).length).toBeGreaterThanOrEqual(2); // 主文档两次刷新均 200（内容变）
-  expect(tail.filter((r) => r.url().endsWith('.css'))).toHaveLength(0); // 未再引用 css 变化（无多余请求）
+  // 未变子资源重验（验收项 6 后半句；终审 I-2 按探针实证降级，勘误见 spec §4.2）：
+  // E2E 探针实证 Chromium 对 vfs:// 自定义 scheme 子资源跨重载不稳定执行 no-cache 条件
+  // 重验——常态为「无 If-None-Match 的 200 全量重取」（连续 3 次复现），304 形态仅混现
+  // 一次，故 304 不可作 E2E 断言依赖（If-None-Match→304 传输语义由集成测试
+  // vfs-protocol.test.ts 锁死）。此处断言实测恒真的两层：未变子资源每轮重载均被重新
+  // 请求（no-cache 不放行免验复用）+ 校验器稳定（200 形态 css 响应 ETag 弱校验器逐一相等）
+  const cssRequests = vfsResponses.slice(before).filter((r) => r.url().endsWith('/a.css'));
+  expect(cssRequests.length).toBeGreaterThanOrEqual(2); // 两次导航各重新请求一次
+  const cssEtags = cssRequests.filter((r) => r.status() === 200).map((r) => r.headers()['etag']);
+  expect(cssEtags.length).toBeGreaterThanOrEqual(2);
+  expect(cssEtags.every((e) => typeof e === 'string' && e.startsWith('W/'))).toBe(true); // 弱校验器形态（etagOf 契约）
+  expect(new Set(cssEtags).size).toBe(1); // 内容未变 → 校验器跨重载稳定（304 收益的前提）
 });
 
 test('删除（回收站）后预览不可达', async () => {

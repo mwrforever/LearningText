@@ -54,7 +54,9 @@ export function EditorPanel({ node, debounceMs }: EditorPanelProps): React.JSX.E
       });
   }
 
-  // 节点切换的唯一例外 effect（读内容入草稿——外部数据到达）；卸载清计时器（成对释放）
+  // 节点切换的唯一例外 effect（读内容入草稿——外部数据到达）；如实语义（终审 M-2）：
+  // 节点切换经 [node] effect 体首行 cancelTimer 防跨节点迟写；卸载后悬挂去抖写=保存
+  // 最新草稿到正确节点（无害；unsaved-guard 归 M4 收口，见 TASK.md 预览打磨批次）
   useEffect(() => {
     cancelTimer();
     setNotice('');

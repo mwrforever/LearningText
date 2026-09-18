@@ -52,9 +52,9 @@
 - **M3 预览里程碑定稿（SDD 执行 Task 1-8 完毕，Task 9 收尾）**：spec `docs/superpowers/specs/2026-09-18-预览-design.md` 与实施计划 `docs/superpowers/plans/2026-09-18-M3-预览.md` 定稿并全部落地。要点：
   - **vfs:// 协议语义定档**：standard scheme 注册 + `supportFetchAPI`/`stream`/`corsEnabled` 特权；响应统一 CORS（ACAO:*）、ETag（写入时 sha256 计算）+ If-None-Match 304、Range 单区间 206/416；iframe 沙箱（无 Node、仅触达 `vfs://` 只读资源）+ 受限 CSP；主文档 CSP 追加 `connect-src vfs:` 放行沙箱外验证性 fetch；
   - **rev 防撕裂契约变更（跨里程碑接口变更）**：VFS 变更广播载荷由裸 `VfsChangedEvent` 改型为 `{rev, event}`（rev = 主进程写事务提交自增版本号，消费侧比对丢弃过期刷新）——**M4 编辑器/树消费侧一律按 `{rev, event}` 形态解构**（Task 1 dc116f8 落地）；
-  - **最小设置通道**：`settings:get` / `settings:save`（zod strictObject 校验，失败统一 E_IPC_BAD_PAYLOAD），文件首字段 `schemaVersion`（当前 1）为旧文件迁移闸；文件缺失/损坏/版本不识别 warn 回退默认值，不阻断启动；M3 仅承载预览去抖一键 `preview.debounceMs`（100–2000，默认 300）；
+  - **最小设置通道**：`settings:get` / `settings:set`（zod strictObject 校验，失败统一 E_IPC_BAD_PAYLOAD），文件首字段 `schemaVersion`（当前 1）为旧文件迁移闸；文件缺失/损坏/版本不识别 warn 回退默认值，不阻断启动；M3 仅承载预览去抖一键 `preview.debounceMs`（100–2000，默认 300）；
   - **最小三栏工作台**：树面板（懒加载 + stale 整层重取）/ 编辑区 / 预览面板（沙箱 iframe + `location.replace` 精确重载）装配完成；
-  - **验收与性能实测**：E2E 8/8 通过（app 2 + preview 6，七项验收关键项全绿）；NFR-04（编辑→预览首帧一致，含 300 ms 去抖）三轮实测 343/350/351 ms、**中位 350 ms**（门禁 <2000 ms，余量充足；持续观测出口为 `npm run test:e2e` 输出的 `[perf-m3]` 行）。
+  - **验收与性能实测**：E2E 8/8 通过（app 2 + preview 6，七项验收关键项全绿）；NFR-04（编辑→预览首帧一致，含 300 ms 去抖）三轮实测 343/350/351 ms、**中位 350 ms**（门禁 <2000 ms，余量充足；持续观测出口为 `npm run test:e2e` 输出的 `[perf-m3]` 行）。终审补强：E2E 补 304 子资源重验与 https 外链 CSP 阻断断言（终审 I-2）。
 - **M3 执行中三项计划外勘误（探针实证产生，均已实施并评审通过；spec 与 docs 同步勘误对齐）**：
   1. **spec §2.2-3 单机制勘误（Task 3）**：WHATWG URL 解析器把规范编码点段（`%2e` 等四种规范形态）与字面点段按**同一机制**根锚定归一（Node 24 探针实证 `new URL("vfs:///a/%2E/b").pathname === "/a/b"`），v0.3「解析器归一 + 处理器点段检查」双机制前提作废；处理器保留残防线（空段/非法编码/host）。为什么：解析器行为是运行时权威事实，文档不得保留与实证相悖的机制划分。
   2. **固定 host 约定 `vfs://local/<virtualPath>`（产品修复波 f84d2bc）**：Blink（GURL）对 standard scheme 空 authority 形态「首段提为 host」（`vfs:///a.html` 规范化为 `vfs://a.html/`），与 Node WHATWG 不同构，空 host 路径式在导航链路不可达（产品死路）；裁决固定 host 约定——身份门仅放行 host `local`（shared 常量 `VFS_URL_HOST` 单一来源，`vfs://evil/` 拒绝语义保留）；spec §2.1/§2.2/§3.1/§9.1/§10-D1 与 docs/03 §7.2、docs/02 §D7 已勘误对齐。为什么：E2E 探针实证导航链路 URL 必变形，固定非空 host 是让 Blink 发起侧与 Node 解析侧同构的最小约定。

@@ -1,6 +1,7 @@
 /**
  * vfs:// 请求解析纯函数（M3 spec §2.2/§2.3、§3.2）：URL 身份→虚拟路径、Range/ETag
- * 语义判定、预览 CSP 常量。零依赖不触库，HTTP 响应组装归 vfsProtocol。
+ * 语义判定、预览 CSP 常量。仅依赖 shared 常量（VFS_URL_HOST），不触库；解析逻辑保持
+ * 纯函数，HTTP 响应组装归 vfsProtocol。
  */
 import { VFS_URL_HOST } from '../../shared/vfs-contract';
 
