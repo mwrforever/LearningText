@@ -31,8 +31,6 @@ export function EditorPanel({ node, debounceMs }: EditorPanelProps): React.JSX.E
   const [draft, setDraft] = useState('');
   const [notice, setNotice] = useState('');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const nodeRef = useRef<NodeMeta | null>(node);
-  nodeRef.current = node; // 渲染期同步最新引用（异步回写防陈旧节点写；非派生 state，A.1-10 允许 ref 赋值）
 
   function cancelTimer(): void {
     if (timerRef.current !== null) {
@@ -41,12 +39,16 @@ export function EditorPanel({ node, debounceMs }: EditorPanelProps): React.JSX.E
     }
   }
 
+  // 直读闭包 node 的依据（评审 Important 修复，替代原 nodeRef 渲染期同步方案）：
+  // 触发点（保存钮 onClick、去抖 setTimeout 回调）均为事件处理器闭包，绑定的是已提交
+  // 渲染的 node，恒与最新 UI 状态一致；跨节点迟写由节点切换/卸载 effect cleanup 的
+  // cancelTimer 防住。渲染期写 ref 属 React 19 习语禁止——并发渲染丢弃帧会把未提交
+  // 的 node 污染进 ref，反而重新引入「陈旧节点误写」风险。
   function flushWrite(value: string): void {
     cancelTimer();
-    const current = nodeRef.current;
-    if (current === null) return;
+    if (node === null) return;
     void window.api
-      .writeFile({ nodeId: current.id, content: new TextEncoder().encode(value) })
+      .writeFile({ nodeId: node.id, content: new TextEncoder().encode(value) })
       .then((result) => {
         setNotice(result.ok ? '已保存' : `保存失败：${result.error.message}`);
       });
