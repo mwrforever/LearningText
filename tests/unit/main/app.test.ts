@@ -170,12 +170,19 @@ describe('主进程装配 bootstrapMain', () => {
 
     // scheme 必须以 standard+secure 注册，senderFrame origin 校验依赖该语义；
     // vfs:// 特权声明：standard 供相对 URL 解析、supportFetchAPI 供沙箱 fetch、
-    // stream 供媒体 Range/206 渐进读取（M3 spec §2.4）
+    // stream 供媒体 Range/206 渐进读取、corsEnabled 供跨源 fetch 的 scheme 级白名单
+    // （缺它则一切跨源 fetch('vfs://…') 网络栈前即被拒，M3 spec §2.4）
     expect(mocks.registerSchemesAsPrivileged).toHaveBeenCalledWith([
       { scheme: 'app', privileges: { standard: true, secure: true } },
       {
         scheme: 'vfs',
-        privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+        privileges: {
+          standard: true,
+          secure: true,
+          supportFetchAPI: true,
+          stream: true,
+          corsEnabled: true,
+        },
       },
     ]);
     // 协议处理器必须挂载真实的 handleAppResource（防误接桩实现）

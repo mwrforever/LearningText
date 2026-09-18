@@ -83,7 +83,18 @@ export function bootstrapMain(): void {
     // supportFetchAPI 供沙箱 connect-src vfs: 的 fetch；stream 供媒体渐进读取（Range/206）
     {
       scheme: 'vfs',
-      privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        stream: true,
+        // corsEnabled 是跨源 fetch 的 scheme 级白名单：Blink 的 CORS scheme 白名单不认
+        // 未声明该特权的自定义 scheme，缺它则一切跨源 fetch('vfs://…') 在进入网络栈前
+        // 即被拒（Task 8 E2E console 实证："Cross origin requests are only supported for
+        // protocol schemes: http, https…"），响应侧 ACAO:*（spec §2.3）无从生效——
+        // 主页面 app://bundle 与沙箱 null origin 的 fetch 均依赖此特权（spec §2.4 勘误同提交）
+        corsEnabled: true,
+      },
     },
   ]);
 
