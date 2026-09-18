@@ -65,6 +65,7 @@
 | 搜索索引重建修复例程（设置页：v1 对账不平或用户自修复触发——同 v2 复制范式重跑；M5 辅助功能批次） | docs/superpowers/specs/2026-09-17-搜索-design.md §7.1 | M5 | 待办 |
 | electron-builder v27 `electronGet` 更名复核 | 同上 §三（C.6-11） | v27 发布后 |
 | A.5-4 交互/批量预算分档与基句悬空指针清理（终审建议：交互单点写与批量导入分档、删「见 TASK.md」悬空引用） | M2 终审 | 下一修宪周期 | 待办 |
+| 预览 P1 实现批次：DevTools（`webContents.inspectElement`）、滚动同步（postMessage 比例+锚点协议）、CSS 热替换（协议层只读接收器注入 + postMessage 交换） | docs/superpowers/specs/2026-09-18-预览-design.md §7 | M4/M5 | 待办 |
 | MatchIn 双源声明收口：手写 `'name'|'body'|'both'` 联合改 `MatchInSchema` + `z.infer` 派生（值域由 spec §6 锁定，当前两处漂移会被 typecheck 拦截） | M2 终审 deferred（Task 4 评审） | M4 触碰搜索契约时 | 待办 |
 | searchService `filterFragments` 类型白名单形态仅覆盖 ≤2 值（0/1/2 三分支，≥3 静默失真）——nodeTypes 枚举扩展时须同步参数化改造 | M2 终审 deferred（Task 7 评审） | M4 契约/枚举变更时 | 待办 |
 | 搜索测试细化批次：preload 通道映射载荷改 search 形、vfs-contract.test 三条重复断言清理、queryBuilder 注释措辞（「上限校验」→「空词项校验」）与 @throws 硬编码 8/255、ipc.test AppError 抛出形态对齐 isMock 先例 + origin 拒绝补 `ok === false` 断言 | M2 各任务评审 deferred | M4 触碰对应文件时顺手清 | 待办 |
