@@ -61,7 +61,7 @@ describe('vfs:// handler 响应语义', () => {
     expect(htmlRes.headers.get('content-security-policy')).toContain('connect-src vfs:');
   });
 
-  it('ETag 命中 → 304 无体（If-None-Match 列表与 * 两形态）', async () => {
+  it('ETag 命中 → 304 无体、未命中 → 200 正常体（If-None-Match 列表与 * 两形态）', async () => {
     const first = await handler(req(requestUrl('/style.css')));
     const etag = first.headers.get('etag') ?? '';
     const res = await handler(
@@ -71,6 +71,13 @@ describe('vfs:// handler 响应语义', () => {
     expect(await res.text()).toBe('');
     const any = await handler(req(requestUrl('/style.css'), { headers: { 'If-None-Match': '*' } }));
     expect(any.status).toBe(304);
+    // 未命中对照：列表全不匹配当前 ETag → 条件不成立，走 200 正常体（非命中侧显式锚定；
+    // 头值须为 Latin-1 ByteString，ETag 实际形态即 ASCII hash，取固定 64 位十六进制）
+    const miss = await handler(
+      req(requestUrl('/style.css'), { headers: { 'If-None-Match': `"${'0'.repeat(64)}"` } }),
+    );
+    expect(miss.status).toBe(200);
+    expect(await miss.text()).toBe('body{}');
   });
 
   it('Range 单区间 206 + Content-Range；越界 416 + bytes */size；多区间忽略按 200', async () => {
@@ -86,6 +93,7 @@ describe('vfs:// handler 响应语义', () => {
     );
     expect(bad.status).toBe(416);
     expect(bad.headers.get('content-range')).toBe('bytes */6');
+    expect(await bad.text()).toBe('Range Not Satisfiable'); // 固定短语：不泄露库内信息
     const multi = await handler(
       req(requestUrl('/style.css'), { headers: { Range: 'bytes=0-1,3-4' } }),
     );
@@ -112,11 +120,13 @@ describe('vfs:// handler 响应语义', () => {
       requestUrl('/无此.html'),
       requestUrl('/笔记'), // 目录
       requestUrl('/回收.html'), // 回收站不可达（spec §2.2-4）
-      'vfs:///%2E%2E/笔记', // 编码越界拒绝（spec §2.2-3 v0.3）
+      'vfs:///%2E%2E/笔记', // %2E%2E 由 URL 解析器解码归一且不越根，结果 /笔记 为目录 → 404（Task 3 裁决 A）
       'vfs://evil/笔记/index.html',
     ]) {
       const res = await handler(req(url));
       expect(res.status).toBe(404);
+      // CORS 恒发含错误响应（spec §2.3）：cors 模式 fetch 须能读到 404 状态码的回归锚
+      expect(res.headers.get('access-control-allow-origin')).toBe('*');
       expect(await res.text()).toBe('Not Found');
     }
   });
@@ -162,6 +172,8 @@ describe('vfs:// handler 响应语义', () => {
       });
       const res = await broken(req(requestUrl('/style.css')));
       expect(res.status).toBe(500);
+      expect(await res.text()).toBe('Internal Server Error'); // 固定短语：不泄露库内信息
+      expect(errSpy).toHaveBeenCalledTimes(1); // 与损坏行用例对齐：error 日志恰一次
     } finally {
       errSpy.mockRestore();
     }

@@ -22,7 +22,11 @@ interface VfsRow {
 }
 
 function textResponse(body: string, status: number): Response {
-  return new Response(body, { status });
+  // spec §2.3 钉死「所有响应」CORS 恒发（含 404/500 错误侧）：cors 模式 fetch 遇无
+  // ACAO 响应直接 reject、读不到错误状态码——Task 8 E2E 在 app:// 页面以 cors 模式
+  // fetch('vfs://…') 断言 404/200 状态码、opaque origin 沙箱文档区分「不存在/失败」
+  // 均硬依赖此头；200/304/206/416 路径经 headers 展开已带，此处补齐 textResponse 缺漏
+  return new Response(body, { status, headers: { 'Access-Control-Allow-Origin': '*' } });
 }
 
 export function createVfsProtocolHandler(deps: {
