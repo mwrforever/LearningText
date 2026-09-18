@@ -33,18 +33,21 @@ export function parseVfsUrl(rawUrl: string): VfsPathResult {
   // standard scheme 的绝对路径首段恒空串（根标记），非段内容——弹出后逐段校验
   if (parts[0] === '') parts.shift();
   else return { kind: 'invalid' };
+  // for...of 迭代元素类型恒为 string，免除下标收窄 ?? '' 的不可覆盖死侧；解码结果
+  // 累积到新数组而非写回 parts（行为与原逐段写回完全一致）
+  const decoded: string[] = [];
   try {
-    for (let i = 0; i < parts.length; i += 1) {
-      const seg = decodeURIComponent(parts[i] ?? '');
+    for (const raw of parts) {
+      const seg = decodeURIComponent(raw);
       // 点段已穷举证明不可达（见函数 doc），残防线只留空段拒绝（404 目录形态）
       if (seg === '') return { kind: 'invalid' };
-      parts[i] = seg;
+      decoded.push(seg);
     }
   } catch {
     return { kind: 'invalid' }; // 截断编码序列（URIError）
   }
-  if (parts.length === 0) return { kind: 'invalid' }; // 根请求 vfs:/// 属目录形态，404
-  return { kind: 'file', virtualPath: '/' + parts.join('/') };
+  if (decoded.length === 0) return { kind: 'invalid' }; // 根请求 vfs:/// 属目录形态，404
+  return { kind: 'file', virtualPath: '/' + decoded.join('/') };
 }
 
 export type RangeResult =
