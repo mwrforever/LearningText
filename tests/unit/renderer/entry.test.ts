@@ -5,6 +5,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 describe('渲染入口装配', () => {
   beforeEach(() => {
     vi.resetModules();
+    // M3 起 App 挂载 Workspace：挂载期即拉取设置/根列表并订阅广播，桥桩按挂载路径最小注入
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      writable: true,
+      value: {
+        settingsGet: vi.fn(() =>
+          Promise.resolve({ ok: true, value: { schemaVersion: 1, preview: { debounceMs: 300 } } }),
+        ),
+        listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
+        onVfsChanged: vi.fn(() => () => undefined),
+      },
+    });
   });
 
   it('#root 存在时完成 React 挂载', async () => {
