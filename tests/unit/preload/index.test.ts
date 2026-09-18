@@ -108,10 +108,11 @@ describe('preload 桥注册', () => {
     if (listener === undefined) {
       throw new Error('onVfsChanged 未注册监听器');
     }
-    // 模拟主进程广播：首个参数为 IpcRendererEvent 形态，必须被剥离后不透传
-    listener({ sender: 'ipc-event' }, { type: 'created', node: { id: 1 } });
+    // 模拟主进程广播：首个参数为 IpcRendererEvent 形态，必须被剥离后不透传；
+    // 载荷为 { rev, event } 包装形态（M3 spec §4.2 防撕裂）
+    listener({ sender: 'ipc-event' }, { rev: 1, event: { type: 'created', node: { id: 1 } } });
     expect(callback).toHaveBeenCalledTimes(1);
-    expect(callback).toHaveBeenCalledWith({ type: 'created', node: { id: 1 } });
+    expect(callback).toHaveBeenCalledWith({ rev: 1, event: { type: 'created', node: { id: 1 } } });
     // 退订必须移除同一个监听器实例，避免泄漏
     unsubscribe();
     expect(mocks.removeListener).toHaveBeenCalledWith(IPC.vfsChanged, listener);

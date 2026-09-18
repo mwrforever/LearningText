@@ -104,3 +104,9 @@ export type VfsChangedEvent =
   | { readonly type: 'trashed'; readonly nodeId: number; readonly affectedCount: number }
   | { readonly type: 'restored'; readonly node: NodeMeta }
   | { readonly type: 'purged'; readonly nodeId: number; readonly purgedCount: number };
+
+/** 广播载荷包装（M3 spec §4.2 防撕裂）：rev 为主进程写事务版本号，消费侧比对用 */
+export interface VfsChangedBroadcast {
+  readonly rev: number;
+  readonly event: VfsChangedEvent;
+}

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type Database from 'better-sqlite3';
 import { openDatabase } from '../../../src/main/store/db';
 import { runMigrations } from '../../../src/main/store/migrate';
-import { runWriteTransaction } from '../../../src/main/store/transaction';
+import { currentRev, runWriteTransaction } from '../../../src/main/store/transaction';
 import {
   E_VFS_DUPLICATE_NAME,
   E_STORE_BUSY,
@@ -117,5 +117,30 @@ describe('mapSqliteError', () => {
   it('未识别 SQLite 码兜底 E_STORE_INTERNAL', () => {
     const unknownCode = Object.assign(new Error('未知 SQLite 错误'), { code: 'SQLITE_WEIRD' });
     expect(mapSqliteError(unknownCode).code).toBe(E_STORE_INTERNAL);
+  });
+});
+
+// rev 契约（M3 spec §4.2）：写事务 commit 成功后单调 +1；回滚（fn 抛错）不递增
+describe('writeRev 写事务版本号', () => {
+  it('提交后 +1、回滚不加、相对单调（初值不假设 0，模块级持久）', () => {
+    const db = openDatabase({ file: ':memory:' });
+    runMigrations(db);
+    const r0 = currentRev();
+    runWriteTransaction(db, () => {
+      db.prepare(
+        "INSERT INTO node (parent_id, node_type, name, virtual_path, size, created_at, updated_at) VALUES (1, 'dir', 'x', '/x', 0, 't', 't')",
+      ).run();
+    });
+    expect(currentRev()).toBe(r0 + 1);
+    expect(() =>
+      runWriteTransaction(db, () => {
+        db.prepare(
+          "INSERT INTO node (parent_id, node_type, name, virtual_path, size, created_at, updated_at) VALUES (1, 'dir', 'y', '/y', 0, 't', 't')",
+        ).run();
+        throw new Error('故意中止');
+      }),
+    ).toThrow('故意中止');
+    expect(currentRev()).toBe(r0 + 1); // 回滚不加
+    db.close();
   });
 });

@@ -10,6 +10,7 @@ import { AppError, err, ok, type Result } from '../shared/result';
 import { E_IPC_BAD_PAYLOAD, E_IPC_FORBIDDEN_ORIGIN, E_STORE_INTERNAL } from '../shared/errors';
 import type { VfsService } from './vfs/vfsService';
 import type { SearchService } from './search/searchService';
+import { currentRev } from './store/transaction';
 import { SearchQueryRequestSchema } from '../shared/search-contract';
 import type { SearchQueryRequest, SearchQueryResponse } from '../shared/search-contract';
 import {
@@ -32,6 +33,7 @@ import type {
   ReadFileRequest,
   RenameNodeRequest,
   ResolvePathRequest,
+  VfsChangedBroadcast,
   VfsChangedEvent,
   WriteFileRequest,
 } from '../shared/vfs-contract';
@@ -44,7 +46,7 @@ export interface IpcHandlerDeps {
   /** 搜索服务（纯读，spec §1：搜索通道不产生广播事件） */
   readonly search: SearchService;
   /** 主→渲染广播（app.ts 提供：遍历窗口 webContents.send）；必须在事务提交后调用 */
-  readonly broadcast: (event: VfsChangedEvent) => void;
+  readonly broadcast: (broadcast: VfsChangedBroadcast) => void;
 }
 
 /** origin 白名单判定（B.5-6）：senderFrame 可能为 null，null/空串/非白名单一律拒绝 */
@@ -72,7 +74,8 @@ function handleWith<TReq, TRes>(
     try {
       const { result, event: changed } = fn(parsed.data);
       // 服务方法内部事务已提交成功，此刻广播满足宪法 B.3-4（事务提交后）
-      if (changed !== undefined) deps.broadcast(changed);
+      if (changed !== undefined)
+        deps.broadcast({ rev: currentRev(), event: changed } satisfies VfsChangedBroadcast);
       return ok(result);
     } catch (error: unknown) {
       // 业务错误码保真透传；非业务异常收敛为 E_STORE_INTERNAL，禁异常跨进程透传（A.7-3）

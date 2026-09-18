@@ -162,7 +162,9 @@ describe('vfs 通道接线', () => {
       name: 'a.html',
       nodeType: 'file',
     });
-    expect(broadcast).toHaveBeenCalledWith({ type: 'created', node });
+    expect(broadcast).toHaveBeenCalledWith(
+      expect.objectContaining({ rev: expect.any(Number), event: { type: 'created', node } }),
+    );
   });
 
   it('服务抛 AppError → err(code, message)；非 AppError → err(E_STORE_INTERNAL)；失败路径不广播', () => {
@@ -279,12 +281,42 @@ describe('vfs 通道接线', () => {
       true,
     ]);
     // 事件形态逐一对应契约判别字段；vfs:read 无变更事件，总计广播 6 次
-    expect(broadcast).toHaveBeenNthCalledWith(1, { type: 'written', node });
-    expect(broadcast).toHaveBeenNthCalledWith(2, { type: 'renamed', nodeId: 5, affectedCount: 3 });
-    expect(broadcast).toHaveBeenNthCalledWith(3, { type: 'moved', nodeId: 5, affectedCount: 3 });
-    expect(broadcast).toHaveBeenNthCalledWith(4, { type: 'trashed', nodeId: 5, affectedCount: 3 });
-    expect(broadcast).toHaveBeenNthCalledWith(5, { type: 'restored', node });
-    expect(broadcast).toHaveBeenNthCalledWith(6, { type: 'purged', nodeId: 5, purgedCount: 3 });
+    expect(broadcast).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ rev: expect.any(Number), event: { type: 'written', node } }),
+    );
+    expect(broadcast).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        rev: expect.any(Number),
+        event: { type: 'renamed', nodeId: 5, affectedCount: 3 },
+      }),
+    );
+    expect(broadcast).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        rev: expect.any(Number),
+        event: { type: 'moved', nodeId: 5, affectedCount: 3 },
+      }),
+    );
+    expect(broadcast).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        rev: expect.any(Number),
+        event: { type: 'trashed', nodeId: 5, affectedCount: 3 },
+      }),
+    );
+    expect(broadcast).toHaveBeenNthCalledWith(
+      5,
+      expect.objectContaining({ rev: expect.any(Number), event: { type: 'restored', node } }),
+    );
+    expect(broadcast).toHaveBeenNthCalledWith(
+      6,
+      expect.objectContaining({
+        rev: expect.any(Number),
+        event: { type: 'purged', nodeId: 5, purgedCount: 3 },
+      }),
+    );
     expect(broadcast).toHaveBeenCalledTimes(6);
   });
 });
@@ -340,5 +372,25 @@ describe('search 通道接线', () => {
       message: '子树过滤路径不存在或已在回收站',
     });
     expect(broadcast).not.toHaveBeenCalled();
+  });
+});
+
+// 广播载荷 rev 包装（M3 spec §4.2 防撕裂）：rev 取自主进程写事务版本计数器
+describe('广播版本号 rev', () => {
+  it('广播载荷为 { rev, event } 包装且 rev 取自事务层（spec §4.2）', () => {
+    const broadcast = vi.fn();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      broadcast,
+    });
+    handlers.get(IPC.vfsWrite)?.(fakeEvent('app://bundle'), {
+      nodeId: 2,
+      content: new Uint8Array([104, 105]),
+    });
+    const arg = broadcast.mock.calls[0]?.[0] as { rev: number; event: { type: string } };
+    expect(typeof arg.rev).toBe('number');
+    expect(arg.event.type).toBe('written');
   });
 });

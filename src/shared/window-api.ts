@@ -12,7 +12,7 @@ import type {
   ReadFileResponse,
   RenameNodeRequest,
   ResolvePathRequest,
-  VfsChangedEvent,
+  VfsChangedBroadcast,
   WriteFileRequest,
 } from './vfs-contract';
 
@@ -37,7 +37,7 @@ export interface WindowApi {
   // —— 搜索域（M2）：每通道一个具名包装（宪法 A.7-4 桥接面最小化）——
   searchQuery(request: SearchQueryRequest): Promise<Result<SearchQueryResponse>>;
   /** 订阅树变更广播，返回取消订阅函数 */
-  onVfsChanged(callback: (event: VfsChangedEvent) => void): () => void;
+  onVfsChanged(callback: (broadcast: VfsChangedBroadcast) => void): () => void;
 }
 
 declare global {

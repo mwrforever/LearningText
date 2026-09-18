@@ -17,7 +17,7 @@ import { ensureDataDir, resolveDataDir } from './store/dataDir';
 import { createVfsService } from './vfs/vfsService';
 import { createSearchService } from './search/searchService';
 import { IPC } from '../shared/ipc';
-import type { VfsChangedEvent } from '../shared/vfs-contract';
+import type { VfsChangedBroadcast } from '../shared/vfs-contract';
 
 const APP_ORIGIN = 'app://bundle';
 
@@ -96,10 +96,10 @@ export function bootstrapMain(): void {
       const vfs = createVfsService(db);
       // 搜索服务与 VFS 同源单例连接（服务禁自行开连接，spec §7.3）
       const search = createSearchService(db);
-      const broadcast = (event: VfsChangedEvent): void => {
+      const broadcast = (payload: VfsChangedBroadcast): void => {
         // 事务提交成功后由 handler 调用；遍历全部窗口广播（宪法 B.3-4）
         for (const win of BrowserWindow.getAllWindows()) {
-          win.webContents.send(IPC.vfsChanged, event);
+          win.webContents.send(IPC.vfsChanged, payload);
         }
       };
       registerIpcHandlers({ allowedOrigins: allowed, vfs, search, broadcast });
