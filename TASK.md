@@ -27,7 +27,6 @@
 | --- | --- | --- |
 | tsconfig 次级开关取值（exactOptionalPropertyTypes / verbatimModuleSyntax / isolatedModules） | 2026-09-14-语言框架与UI栈.md §三 | M0 编写 tsconfig 前 |
 | TypeScript 7 与 5.x/6.x 行为差异 | 同上 §三 | M0 版本锁定前 |
-| `protocol.handle` API 细则（vfs:// 落地） | 同上 §三（B） | M3 预览管线实现前 |
 | Electron fuses 全量清单与 @electron/fuses 用法 | 同上 §三（B-0-19） | M6 打包前 |
 | Electron 用户设置社区方案（如 electron-store） | 同上 §三（A.2） | 若内置 userData JSON 方案不足 |
 | wal_checkpoint TRUNCATE 模式原文；trigram 引入精确版本号（3.34.0）核对 | 2026-09-14-存储层.md §三（P-3/P-4） | 引用对应语义时核对原文 |
@@ -46,7 +45,6 @@
 
 | 编号 | spec | 决策范围（docs/03 缺口） | 定稿时机 | 状态 |
 | --- | --- | --- | --- | --- |
-| docs/06 | 预览管线详细设计 | protocol.handle 响应语义（Content-Type/ETag/Range）、iframe 沙箱属性与 CSP 具体值、去抖与刷新事件归属、滚动同步协议（P1） | M3 开工前（先完成 protocol.handle 待调研项） | 待撰写 |
 | docs/07 | 编辑器与保存管线设计 | 多标签页状态模型、自动保存去抖与写合并（竞态规则）、大文件阈值行为 | M4 开工前 | 待撰写 |
 | docs/08 | 导入导出与辅助功能设计 | 导入冲突判定键与三策略（跳过/重命名/覆盖）语义、vfs:// → 相对路径改写算法、设置 schema、备份命名与恢复流程 | M5 开工前 | 待撰写 |
 | docs/09 | 打包与发布规格 | electron-builder 配置基线、@electron/fuses 关闭清单（待调研项）、release 工作流与签名占位、版本号策略 | M6 开工前（先完成 fuses 待调研项） | 待撰写 |
@@ -70,3 +68,4 @@
 | searchService `filterFragments` 类型白名单形态仅覆盖 ≤2 值（0/1/2 三分支，≥3 静默失真）——nodeTypes 枚举扩展时须同步参数化改造 | M2 终审 deferred（Task 7 评审） | M4 契约/枚举变更时 | 待办 |
 | 搜索测试细化批次：preload 通道映射载荷改 search 形、vfs-contract.test 三条重复断言清理、queryBuilder 注释措辞（「上限校验」→「空词项校验」）与 @throws 硬编码 8/255、ipc.test AppError 抛出形态对齐 isMock 先例 + origin 拒绝补 `ok === false` 断言 | M2 各任务评审 deferred | M4 触碰对应文件时顺手清 | 待办 |
 | 片段高亮 `toLowerCase` 1→2 码元展开字符（İ 类）致命中区间偏移 +1（展示级降级，不崩溃）——M4 渲染高亮消费区间时评估码点对齐折叠策略 | M2 终审 deferred（Task 6 评审） | M4 片段渲染实现时 | 待办 |
+| 预览外壳批次：FR-SHELL-01 折叠/记忆 + FR-SHELL-02 原生菜单快捷键 + P1 三项（DevTools/滚动同步/CSS 热替换）+ 编辑区 unsaved-guard | docs/superpowers/specs/2026-09-18-预览-design.md §1/§6/§7 | M4 | 待办 |
