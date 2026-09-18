@@ -9,6 +9,7 @@ import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { app, BrowserWindow, protocol } from 'electron';
 import { handleAppResource } from './protocol/appProtocol';
+import { createVfsProtocolHandler } from './protocol/vfsProtocol';
 import { registerIpcHandlers } from './ipc';
 import { isOriginAllowed } from './security';
 import { openDatabase } from './store/db';
@@ -78,6 +79,12 @@ export function bootstrapMain(): void {
   // standard+secure 使 app:// 拥有正常 origin（senderFrame origin 校验依赖此语义）
   protocol.registerSchemesAsPrivileged([
     { scheme: 'app', privileges: { standard: true, secure: true } },
+    // vfs://：standard 是相对 URL 解析的地基（非 standard 静默失败，spec §2.4 钉死）；
+    // supportFetchAPI 供沙箱 connect-src vfs: 的 fetch；stream 供媒体渐进读取（Range/206）
+    {
+      scheme: 'vfs',
+      privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+    },
   ]);
 
   app
@@ -91,6 +98,9 @@ export function bootstrapMain(): void {
       // 迁移失败抛错 → catch 分支 app.exit(1)（fail-fast，B.3-1）
       runMigrations(db);
       protocol.handle('app', handleAppResource);
+      // vfs:// 只读资源出口：handler 惰性装配语句（首请求才触库），挂载仍处
+      // 开库 → 迁移 → 协议注册 → 建窗的 B.3-1 顺序内
+      protocol.handle('vfs', createVfsProtocolHandler({ db }));
       // origin 白名单：开发 = dev server + app 协议；生产 = 仅 app 协议（B.5-6）
       const allowed =
         devServerUrl !== undefined ? [new URL(devServerUrl).origin, APP_ORIGIN] : [APP_ORIGIN];

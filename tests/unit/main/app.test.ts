@@ -168,12 +168,20 @@ describe('主进程装配 bootstrapMain', () => {
     bootstrapMain();
     await flushReadyChain();
 
-    // scheme 必须以 standard+secure 注册，senderFrame origin 校验依赖该语义
+    // scheme 必须以 standard+secure 注册，senderFrame origin 校验依赖该语义；
+    // vfs:// 特权声明：standard 供相对 URL 解析、supportFetchAPI 供沙箱 fetch、
+    // stream 供媒体 Range/206 渐进读取（M3 spec §2.4）
     expect(mocks.registerSchemesAsPrivileged).toHaveBeenCalledWith([
       { scheme: 'app', privileges: { standard: true, secure: true } },
+      {
+        scheme: 'vfs',
+        privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+      },
     ]);
     // 协议处理器必须挂载真实的 handleAppResource（防误接桩实现）
     expect(mocks.protocolHandle).toHaveBeenCalledWith('app', handleAppResource);
+    // vfs:// handler 经工厂闭包装配（惰性语句装配，工厂不触库），挂载在 'vfs' 通道
+    expect(mocks.protocolHandle).toHaveBeenCalledWith('vfs', expect.any(Function));
     // 生产环境 origin 白名单仅含 app 协议（B.5-6）；vfs/search 服务工厂与广播实现一并注入
     expect(mocks.registerIpcHandlers).toHaveBeenCalledTimes(1);
     const ipcDeps = mocks.registerIpcHandlers.mock.calls[0]?.[0];
