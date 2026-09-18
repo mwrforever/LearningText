@@ -46,7 +46,7 @@ export function parseVfsUrl(rawUrl: string): VfsPathResult {
   } catch {
     return { kind: 'invalid' }; // 截断编码序列（URIError）
   }
-  if (decoded.length === 0) return { kind: 'invalid' }; // 根请求 vfs:/// 属目录形态，404
+  if (decoded.length === 0) return { kind: 'invalid' }; // 空 pathname（裸 scheme 形态 vfs://）无任何段；根请求 vfs:/// 已被上方空段检查拦截，到不了这里
   return { kind: 'file', virtualPath: '/' + decoded.join('/') };
 }
 
@@ -64,10 +64,17 @@ export type RangeResult =
  */
 export function parseRange(header: string | null, size: number): RangeResult {
   if (header === null) return { kind: 'full' };
-  const single = /^bytes=(\d*)-(\d*)$/.exec(header);
-  if (single === null) return { kind: 'full' };
-  const rawStart = single[1] ?? '';
-  const rawEnd = single[2] ?? '';
+  // 手工解析（前缀 startsWith → 连字符 indexOf → 两段 slice）替代正则捕获组提取：
+  // 捕获组下标在 noUncheckedIndexedAccess 下的收窄（?? ''）产生不可覆盖死侧，
+  // 违反无死分支纪律；判定语义与原 `/^bytes=(\d*)-(\d*)$/` 整串匹配逐项等价
+  if (!header.startsWith('bytes=')) return { kind: 'full' }; // 非 bytes 单位
+  const spec = header.slice('bytes='.length);
+  const hyphen = spec.indexOf('-');
+  if (hyphen === -1) return { kind: 'full' }; // 无连字符，区间语法残缺
+  const rawStart = spec.slice(0, hyphen);
+  const rawEnd = spec.slice(hyphen + 1);
+  // 两端须为纯数字（允许空串）：含非数字（多区间逗号形态、多连字符等残缺形态）→ full
+  if (!/^\d*$/.test(rawStart) || !/^\d*$/.test(rawEnd)) return { kind: 'full' };
   if (rawStart === '' && rawEnd === '') return { kind: 'full' };
   if (rawStart === '') {
     // 后缀区间：末 N 字节（N 超过 size 钳到全文；0 不可满足）

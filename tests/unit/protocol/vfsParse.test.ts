@@ -53,14 +53,25 @@ describe('parseVfsUrl', () => {
     expect(parseVfsUrl('vfs:///%E4%A').kind).toBe('invalid'); // 截断的 UTF-8 序列
     expect(parseVfsUrl('not-a-url').kind).toBe('invalid');
   });
+
+  it('不透明路径（vfs:x）与裸 scheme 空路径（vfs://）无根标记段，一律 invalid', () => {
+    // vfs:x 经 URL 解析为不透明路径（pathname='x' 不以 '/' 开头），首段非根标记 → invalid
+    expect(parseVfsUrl('vfs:x').kind).toBe('invalid');
+    // vfs:// 的 pathname 为空串，弹出根标记后无任何剩余段 → invalid（注意 vfs:/// 的
+    // pathname 为 '/'，死于上方空段检查，与本例走的是不同分支）
+    expect(parseVfsUrl('vfs://').kind).toBe('invalid');
+  });
 });
 
 describe('parseRange', () => {
-  it('无头/多区间/非 bytes 单位 → full（忽略 Range 按 200，RFC 7233）', () => {
+  it('无头/多区间/非 bytes 单位/语法残缺 → full（忽略 Range 按 200，RFC 7233 允许的降级）', () => {
     expect(parseRange(null, 100)).toEqual({ kind: 'full' });
     expect(parseRange('bytes=0-1,3-4', 100)).toEqual({ kind: 'full' });
     expect(parseRange('items=0-1', 100)).toEqual({ kind: 'full' });
     expect(parseRange('bytes=-', 100)).toEqual({ kind: 'full' }); // 无意义空双端，按无 Range
+    expect(parseRange('bytes=', 100)).toEqual({ kind: 'full' }); // 无连字符，区间语法残缺
+    expect(parseRange('bytes=a-b', 100)).toEqual({ kind: 'full' }); // 端点含非数字
+    expect(parseRange('bytes=1-2-3', 100)).toEqual({ kind: 'full' }); // 多连字符，超区间语法
   });
 
   it('单区间：有界/开放端/后缀三形态，end 钳到 size-1', () => {
@@ -70,11 +81,12 @@ describe('parseRange', () => {
     expect(parseRange('bytes=50-999', 100)).toEqual({ kind: 'partial', start: 50, end: 99 });
   });
 
-  it('语法合法但不满足 → unsatisfiable（416）；start≥size、start>end、空文档全区间', () => {
+  it('语法合法但不满足 → unsatisfiable（416）；start≥size、start>end、空文档全区间与后缀', () => {
     expect(parseRange('bytes=100-120', 100).kind).toBe('unsatisfiable');
     expect(parseRange('bytes=20-10', 100).kind).toBe('unsatisfiable');
     expect(parseRange('bytes=0-10', 0).kind).toBe('unsatisfiable');
     expect(parseRange('bytes=-0', 100).kind).toBe('unsatisfiable');
+    expect(parseRange('bytes=-30', 0).kind).toBe('unsatisfiable'); // 空文档后缀区间：钳长 min(30, 0)=0 不可满足
   });
 });
 
