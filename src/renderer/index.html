@@ -2,9 +2,11 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <!-- 主文档 CSP：connect-src vfs: 放行主页面 fetch('vfs://…')（E2E 用 404/200 状态断言与
+         后续热替换 fetch 依赖；缺省时 default-src 'self' 回落拦截——Task 8 探针实证）； -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; frame-src vfs:"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src vfs:; frame-src vfs:"
     />
     <title>LearningText</title>
   </head>

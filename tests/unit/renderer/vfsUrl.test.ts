@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { vfsUrl } from '../../../src/renderer/src/features/preview/vfsUrl';
 
 describe('vfsUrl', () => {
-  it('虚拟路径直接拼接 scheme 与空 host（standard scheme 规范形态）', () => {
-    expect(vfsUrl('/笔记/web/index.html')).toBe('vfs:///笔记/web/index.html');
+  it('虚拟路径拼接 scheme 与固定 host local（与 vfsParse 身份门同锚，Blink 空 host 规范化规避）', () => {
+    expect(vfsUrl('/笔记/web/index.html')).toBe('vfs://local/笔记/web/index.html');
   });
 });

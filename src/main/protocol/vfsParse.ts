@@ -2,12 +2,18 @@
  * vfs:// 请求解析纯函数（M3 spec §2.2/§2.3、§3.2）：URL 身份→虚拟路径、Range/ETag
  * 语义判定、预览 CSP 常量。零依赖不触库，HTTP 响应组装归 vfsProtocol。
  */
+import { VFS_URL_HOST } from '../../shared/vfs-contract';
 
 export type VfsPathResult =
   { readonly kind: 'file'; readonly virtualPath: string } | { readonly kind: 'invalid' };
 
 /**
- * 解析 vfs:// URL 为虚拟路径（spec §2.2-3 单机制收口版）：
+ * 解析 vfs:// URL 为虚拟路径（spec §2.2-3 单机制收口版；身份为固定 host 约定形态 `vfs://local/…`）：
+ * - 身份只认约定 host `local`（shared VFS_URL_HOST，大小写不敏感归一）：Task 8 E2E 探针
+ *   实证 Blink（GURL）对 standard scheme 的空 authority 形态做「首段提为 host」规范化
+ *   （`vfs:///probe.html` → `vfs://probe.html/`），与 Node WHATWG URL 不同构，空 host
+ *   路径式在导航链路不可达——故渲染层产出侧与本解析侧统一钉死固定 host，其余一切 host
+ *   （空 host 形态、`vfs://evil/…` 等伪造 host）一律 invalid（拒绝语义保留）；
  * - 字面点段与规范编码点段由 WHATWG URL 解析器（Node 24 与 Chromium 同构）在
  *   path state 以**同一机制**先行归一且**不越根**——逃逸面在解析期闭合；
  * - 穷举证明：解码为 '.'/'..' 的原始段必属解析器识别的点段规范形态组合
@@ -15,8 +21,8 @@ export type VfsPathResult =
  *   故循环内不设点段检查；多点混合形态（如 `.%2e.`）解码为 `...` 非点段，按普通段名
  *   放行，查库不中即 404（探针实证见 task-3-report §七）；
  * - 残防线仅剩可达分支，一律 invalid、**不做 clamp、越界归一后查库不中即 404**：
- *   空段（连续斜杠/尾斜杠）、根请求（vfs:///，目录形态）、非法百分号编码（URIError）、
- *   host 非空（身份只认路径，standard scheme 空 host 形态）；
+ *   空段（连续斜杠/尾斜杠）、根请求（vfs://local/，目录形态）、非法百分号编码（URIError）、
+ *   host 非约定值（见首条）；
  * - 先按原始 '/' 分段再逐段 decode——%2F 不得充当路径分隔符；
  *   query/fragment 由 URL 解析天然剥离。
  * 段内 decode 出 '/'（%2F 场景）不在此拒绝——查库不中即 404，库路径无裸 %2F 形态。
@@ -28,11 +34,14 @@ export function parseVfsUrl(rawUrl: string): VfsPathResult {
   } catch {
     return { kind: 'invalid' };
   }
-  if (url.hostname !== '') return { kind: 'invalid' };
+  // 身份门：host 必须等于约定值，其余（空 host、伪造 host）全拒；GURL 对 standard
+  // scheme 的 host 本就规范化为小写，toLowerCase 为跨端防御性归一（见函数 doc 首条）
+  if (url.hostname.toLowerCase() !== VFS_URL_HOST) return { kind: 'invalid' };
   const parts = url.pathname.split('/');
-  // standard scheme 的绝对路径首段恒空串（根标记），非段内容——弹出后逐段校验
-  if (parts[0] === '') parts.shift();
-  else return { kind: 'invalid' };
+  // 约定 host 在场时 pathname 恒为空串（裸 host 形态 vfs://local）或以 '/' 开头
+  // （WHATWG path-or-authority state 保证），split 后首段恒为根标记空串——直接弹出；
+  // 旧「首段非根标记 → invalid」分支因 host 身份门收口后不可达，按无死分支纪律不设 else
+  parts.shift();
   // for...of 迭代元素类型恒为 string，免除下标收窄 ?? '' 的不可覆盖死侧；解码结果
   // 累积到新数组而非写回 parts（行为与原逐段写回完全一致）
   const decoded: string[] = [];
@@ -46,7 +55,7 @@ export function parseVfsUrl(rawUrl: string): VfsPathResult {
   } catch {
     return { kind: 'invalid' }; // 截断编码序列（URIError）
   }
-  if (decoded.length === 0) return { kind: 'invalid' }; // 空 pathname（裸 scheme 形态 vfs://）无任何段；根请求 vfs:/// 已被上方空段检查拦截，到不了这里
+  if (decoded.length === 0) return { kind: 'invalid' }; // 空 pathname（裸 host 形态 vfs://local）无任何段；根请求 vfs://local/ 已被上方空段检查拦截；裸 scheme（vfs://）与空 host 形态已被 host 身份门拦截，均到不了这里
   return { kind: 'file', virtualPath: '/' + decoded.join('/') };
 }
 

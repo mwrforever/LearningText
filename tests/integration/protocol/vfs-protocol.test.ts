@@ -13,7 +13,8 @@ let handler: (request: Request) => Promise<Response>;
 const req = (url: string, init?: RequestInit): Request => new Request(url, init);
 
 function requestUrl(pathname: string): string {
-  return `vfs://${pathname}`;
+  // 固定 host 约定（shared VFS_URL_HOST 同锚）：Blink 空 host 规范化规避，身份形态 vfs://local/…
+  return `vfs://local${pathname}`;
 }
 
 beforeAll(() => {
@@ -120,8 +121,9 @@ describe('vfs:// handler 响应语义', () => {
       requestUrl('/无此.html'),
       requestUrl('/笔记'), // 目录
       requestUrl('/回收.html'), // 回收站不可达（spec §2.2-4）
-      'vfs:///%2E%2E/笔记', // %2E%2E 由 URL 解析器解码归一且不越根，结果 /笔记 为目录 → 404（Task 3 裁决 A）
-      'vfs://evil/笔记/index.html',
+      'vfs://local/%2E%2E/笔记', // %2E%2E 由 URL 解析器解码归一且不越根，结果 /笔记 为目录 → 404（Task 3 裁决 A）
+      'vfs://evil/笔记/index.html', // 伪造 host：身份门拒绝（拒绝语义保留）
+      'vfs:///笔记/index.html', // 空 host 形态：Node 侧身份门即拒；Blink 发起侧变形（首段提 host）到达同型同拒（Task 8 探针实证锚）
     ]) {
       const res = await handler(req(url));
       expect(res.status).toBe(404);
@@ -132,9 +134,9 @@ describe('vfs:// handler 响应语义', () => {
   });
 
   it('字面 ../ 经 Request 构造的标准归一与直连路径同效（浏览器同构行为，无逃逸面）', async () => {
-    const viaDot = await handler(req('vfs:///笔记/../笔记'));
+    const viaDot = await handler(req('vfs://local/笔记/../笔记'));
     expect(viaDot.status).toBe(404); // 归一后 '/笔记' 为目录，仍不可达
-    const viaDotFile = await handler(req('vfs:///笔记/../笔记/index.html'));
+    const viaDotFile = await handler(req('vfs://local/笔记/../笔记/index.html'));
     expect(viaDotFile.status).toBe(200); // 归一等价 '/笔记/index.html'
   });
 

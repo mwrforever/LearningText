@@ -4,27 +4,41 @@ import { describe, expect, it } from 'vitest';
 import { etagOf, ifNoneMatch, parseRange, parseVfsUrl } from '../../../src/main/protocol/vfsParse';
 
 describe('parseVfsUrl', () => {
-  it('普通虚拟路径还原：去前导根标记后逐段拼接', () => {
-    expect(parseVfsUrl('vfs:///笔记/web/index.html')).toEqual({
+  it('普通虚拟路径还原：固定 host 身份下去根标记后逐段拼接', () => {
+    expect(parseVfsUrl('vfs://local/笔记/web/index.html')).toEqual({
       kind: 'file',
       virtualPath: '/笔记/web/index.html',
     });
   });
 
   it('query 与 fragment 剥离不参与身份（spec §2.1）', () => {
-    expect(parseVfsUrl('vfs:///a.html?v=1#top')).toEqual({ kind: 'file', virtualPath: '/a.html' });
+    expect(parseVfsUrl('vfs://local/a.html?v=1#top')).toEqual({
+      kind: 'file',
+      virtualPath: '/a.html',
+    });
+  });
+
+  it('身份门只认约定 host local：伪造 host 与空 host 形态一律 invalid（拒绝语义保留）', () => {
+    expect(parseVfsUrl('vfs://evil/a.html').kind).toBe('invalid');
+    // 空 host 路径式：Node 侧 hostname 为空串即拒；Task 8 探针实证 Blink 发起侧会把同形态
+    // 变形为「首段提 host」（vfs:///probe.html → vfs://probe.html/），到达侧同型同拒——两侧闭环
+    expect(parseVfsUrl('vfs:///a.html').kind).toBe('invalid');
+  });
+
+  it('约定 host 大小写不敏感放行（GURL 对 standard scheme host 规范化为小写，防御性归一锚定）', () => {
+    expect(parseVfsUrl('vfs://LOCAL/a.html')).toEqual({ kind: 'file', virtualPath: '/a.html' });
   });
 
   it('规范编码点段被解析器归一为根内路径（WHATWG path state 单机制，与字面点段同规则）', () => {
     // %2E 与 %2e%2e 属 single/double-dot path segment（ASCII 大小写不敏感），解析器
     // 先行归一且不越根——越界形态到不了处理器，无 clamp 无逃逸（Node 24 探针实证）
-    expect(parseVfsUrl('vfs:///%2E%2E/a')).toEqual({ kind: 'file', virtualPath: '/a' });
-    expect(parseVfsUrl('vfs:///a/%2e%2e/b')).toEqual({ kind: 'file', virtualPath: '/b' });
-    expect(parseVfsUrl('vfs:///a/%2E/b')).toEqual({ kind: 'file', virtualPath: '/a/b' });
+    expect(parseVfsUrl('vfs://local/%2E%2E/a')).toEqual({ kind: 'file', virtualPath: '/a' });
+    expect(parseVfsUrl('vfs://local/a/%2e%2e/b')).toEqual({ kind: 'file', virtualPath: '/b' });
+    expect(parseVfsUrl('vfs://local/a/%2E/b')).toEqual({ kind: 'file', virtualPath: '/a/b' });
   });
 
   it('空段形态（连续斜杠/尾斜杠/根请求）解析器不归一，处理器残防线一律 invalid，不 clamp', () => {
-    for (const u of ['vfs:///a//b', 'vfs:///a/', 'vfs:///']) {
+    for (const u of ['vfs://local/a//b', 'vfs://local/a/', 'vfs://local/']) {
       expect(parseVfsUrl(u).kind).toBe('invalid');
     }
   });
@@ -33,33 +47,38 @@ describe('parseVfsUrl', () => {
     // 混合字面点与编码点且编码残缺（.%2e%）——解析器原样保留该段，逐段 decode 抛
     // URIError → invalid（残防线「非法百分号编码」分支可达性的实证形态；点段检查已因
     // 穷举不可达移除，见 vfsParse 函数 doc）
-    expect(parseVfsUrl('vfs:///a/.%2e%/b').kind).toBe('invalid');
+    expect(parseVfsUrl('vfs://local/a/.%2e%/b').kind).toBe('invalid');
+    // 截断的 UTF-8 序列，同一 URIError 分支
+    expect(parseVfsUrl('vfs://local/%E4%A').kind).toBe('invalid');
     // 探针实证对照：良构混合点段 .%2e. 解码为 `...`（三点，非 '.'/'..'），按普通段名
     // 放行为 file——查库不中由调用侧 404，属根内路径无逃逸
-    expect(parseVfsUrl('vfs:///a/.%2e./b')).toEqual({ kind: 'file', virtualPath: '/a/.../b' });
+    expect(parseVfsUrl('vfs://local/a/.%2e./b')).toEqual({ kind: 'file', virtualPath: '/a/.../b' });
   });
 
   it('字面点段在到达处理器前已被 standard scheme 解析器 remove-dot-segments 归一且不越根（浏览器同款，无逃逸面）', () => {
-    expect(parseVfsUrl('vfs:///a/../b.html')).toEqual({ kind: 'file', virtualPath: '/b.html' });
-    expect(parseVfsUrl('vfs:///../../b.html')).toEqual({ kind: 'file', virtualPath: '/b.html' });
+    expect(parseVfsUrl('vfs://local/a/../b.html')).toEqual({
+      kind: 'file',
+      virtualPath: '/b.html',
+    });
+    expect(parseVfsUrl('vfs://local/../../b.html')).toEqual({
+      kind: 'file',
+      virtualPath: '/b.html',
+    });
   });
 
   it('%2F 保持段内字面量不作分隔符：decode 后含斜杠仍 file（查库不中由调用侧 404）', () => {
-    expect(parseVfsUrl('vfs:///a%2Fb.txt')).toEqual({ kind: 'file', virtualPath: '/a/b.txt' });
+    expect(parseVfsUrl('vfs://local/a%2Fb.txt')).toEqual({ kind: 'file', virtualPath: '/a/b.txt' });
   });
 
-  it('host 形态与非法编码拒绝（standard scheme 身份只认路径）', () => {
-    expect(parseVfsUrl('vfs://evil/a.html').kind).toBe('invalid');
-    expect(parseVfsUrl('vfs:///%E4%A').kind).toBe('invalid'); // 截断的 UTF-8 序列
+  it('非 URL 串与 host 缺失形态在身份门拒绝：不透明路径/裸 scheme/裸 host', () => {
     expect(parseVfsUrl('not-a-url').kind).toBe('invalid');
-  });
-
-  it('不透明路径（vfs:x）与裸 scheme 空路径（vfs://）无根标记段，一律 invalid', () => {
-    // vfs:x 经 URL 解析为不透明路径（pathname='x' 不以 '/' 开头），首段非根标记 → invalid
+    // 以下两者 hostname 均为空串（host 缺失），身份门即拒——旧口径 vfs:x/vfs:// 走
+    // 「首段非根标记」分支，host 门收口后该分支不可达，已按无死分支纪律移除
     expect(parseVfsUrl('vfs:x').kind).toBe('invalid');
-    // vfs:// 的 pathname 为空串，弹出根标记后无任何剩余段 → invalid（注意 vfs:/// 的
-    // pathname 为 '/'，死于上方空段检查，与本例走的是不同分支）
     expect(parseVfsUrl('vfs://').kind).toBe('invalid');
+    // 裸 host 形态（hostname=local、pathname 空串）：弹出根标记后无任何段 → invalid，
+    // 是「decoded 为空」末道检查的唯一可达入口（防该检查沦为死分支）
+    expect(parseVfsUrl('vfs://local').kind).toBe('invalid');
   });
 });
 

@@ -36,6 +36,15 @@ export const NodeMetaSchema = z.object({
 /** 50MB 单文件上限（docs/03 §3.2-3），服务层写入前校验 */
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 
+/**
+ * vfs:// URL 固定 host 约定（三端共享单一来源）：`vfs://local/<虚拟路径>` 是唯一合法身份。
+ * 为什么必须固定 host：Task 8 E2E 探针实证 Blink（GURL）对 standard scheme 的空 authority
+ * 形态做「首段提为 host」规范化（`vfs:///probe.html` → `vfs://probe.html/`，与 Node
+ * WHATWG URL 不同构），空 host 路径式在导航链路不可达——渲染层产出与主进程解析两侧
+ * 都以本常量为身份锚（证据见 .superpowers task-8-report §五）。
+ */
+export const VFS_URL_HOST = 'local';
+
 // —— 请求 schema：字段级契约即规格（docs/03 §7.1）——
 
 // strictObject 逐分支：二选一强制互斥（双字段/缺字段/多余字段一律拒），z.infer 形态与 M1 等价（spec §3.3）
