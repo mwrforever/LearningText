@@ -11,6 +11,10 @@ export interface DataDirLayout {
   readonly backupDir: string;
   /** 每日自动备份标记文件（M5 备份使用，此处仅落布局） */
   readonly markerFile: string;
+  /** 设置目录（M3 spec §5：userData 应用专属子目录下，为 M5 更多设置文件留层级） */
+  readonly settingsDir: string;
+  /** 设置文件绝对路径 */
+  readonly settingsFile: string;
 }
 
 /** 解析数据目录布局：纯路径运算，不做 IO */
@@ -21,10 +25,13 @@ export function resolveDataDir(userDataRoot: string): DataDirLayout {
     dbFile: path.join(root, 'learningtext.db'),
     backupDir: path.join(root, 'backups'),
     markerFile: path.join(root, 'last-backup.json'),
+    settingsDir: path.join(root, 'settings'),
+    settingsFile: path.join(root, 'settings', 'settings.json'),
   };
 }
 
-/** 确保根目录与备份目录存在（首启创建） */
+/** 确保备份目录与设置目录存在（首启创建） */
 export function ensureDataDir(layout: DataDirLayout): void {
   mkdirSync(layout.backupDir, { recursive: true });
+  mkdirSync(layout.settingsDir, { recursive: true });
 }

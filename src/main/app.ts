@@ -16,6 +16,7 @@ import { runMigrations } from './store/migrate';
 import { ensureDataDir, resolveDataDir } from './store/dataDir';
 import { createVfsService } from './vfs/vfsService';
 import { createSearchService } from './search/searchService';
+import { createSettingsService } from './settings/settingsService';
 import { IPC } from '../shared/ipc';
 import type { VfsChangedBroadcast } from '../shared/vfs-contract';
 
@@ -96,13 +97,15 @@ export function bootstrapMain(): void {
       const vfs = createVfsService(db);
       // 搜索服务与 VFS 同源单例连接（服务禁自行开连接，spec §7.3）
       const search = createSearchService(db);
+      // 设置服务：路径由 dataDir 布局给定（spec §5），损坏回退默认不阻断（A.5-1 例外域）
+      const settings = createSettingsService({ settingsFile: layout.settingsFile });
       const broadcast = (payload: VfsChangedBroadcast): void => {
         // 事务提交成功后由 handler 调用；遍历全部窗口广播（宪法 B.3-4）
         for (const win of BrowserWindow.getAllWindows()) {
           win.webContents.send(IPC.vfsChanged, payload);
         }
       };
-      registerIpcHandlers({ allowedOrigins: allowed, vfs, search, broadcast });
+      registerIpcHandlers({ allowedOrigins: allowed, vfs, search, settings, broadcast });
       createMainWindow(devServerUrl, allowed);
     })
     .catch((e: unknown) => {

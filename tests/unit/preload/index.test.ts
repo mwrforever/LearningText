@@ -1,4 +1,4 @@
-// preload 桥单元测试：仅暴露具名 api、ping 与 vfs 十通道与 search:query 走类型化通道、
+// preload 桥单元测试：仅暴露具名 api、ping 与 vfs 十通道与 search/settings 通道走类型化通道、
 // 广播订阅剥离 event 首参（宪法 A.7-4 / B.5 桥接面最小化）
 import { describe, expect, it, vi } from 'vitest';
 
@@ -16,10 +16,12 @@ interface ExposedApi {
   purgeNode(request: unknown): Promise<unknown>;
   resolvePath(request: unknown): Promise<unknown>;
   searchQuery(request: unknown): Promise<unknown>;
+  settingsGet(request: unknown): Promise<unknown>;
+  settingsSet(request: unknown): Promise<unknown>;
   onVfsChanged(callback: (event: unknown) => void): () => void;
 }
 
-/** vfs 十通道与 search:query 的 invoke 包装方法名（ping 与订阅通道单独用例覆盖） */
+/** vfs 十通道与 search/settings 通道的 invoke 包装方法名（ping 与订阅通道单独用例覆盖） */
 type InvokeMethod = Exclude<keyof ExposedApi, 'ping' | 'onVfsChanged'>;
 
 const mocks = vi.hoisted(() => ({
@@ -62,6 +64,8 @@ describe('preload 桥注册', () => {
       'purgeNode',
       'resolvePath',
       'searchQuery',
+      'settingsGet',
+      'settingsSet',
       'onVfsChanged',
     ]);
   });
@@ -75,26 +79,29 @@ describe('preload 桥注册', () => {
     expect(mocks.invoke).toHaveBeenCalledWith(IPC.systemPing, null);
   });
 
-  it('vfs 十通道与 search:query 的 invoke 包装：通道名常量与载荷原样透传（不感知通道字符串）', async () => {
+  it('vfs 十通道与 search/settings 通道的 invoke 包装：通道名常量与载荷原样透传（不感知通道字符串）', async () => {
     const payload = { nodeId: 3 };
-    // 通道名必须取自 shared 常量，方法与通道一一对应（契约 window-api.ts）
-    const channelCases: Array<[InvokeMethod, string]> = [
-      ['listChildren', IPC.vfsList],
-      ['createNode', IPC.vfsCreate],
-      ['readFile', IPC.vfsRead],
-      ['writeFile', IPC.vfsWrite],
-      ['renameNode', IPC.vfsRename],
-      ['moveNode', IPC.vfsMove],
-      ['trashNode', IPC.vfsTrash],
-      ['restoreNode', IPC.vfsRestore],
-      ['purgeNode', IPC.vfsPurge],
-      ['resolvePath', IPC.vfsResolve],
-      ['searchQuery', IPC.searchQuery],
+    // 通道名必须取自 shared 常量，方法与通道一一对应（契约 window-api.ts）；
+    // settingsGet 无参沿 system:ping 先例固定发 null，其余通道载荷原样透传
+    const channelCases: Array<[InvokeMethod, string, unknown]> = [
+      ['listChildren', IPC.vfsList, payload],
+      ['createNode', IPC.vfsCreate, payload],
+      ['readFile', IPC.vfsRead, payload],
+      ['writeFile', IPC.vfsWrite, payload],
+      ['renameNode', IPC.vfsRename, payload],
+      ['moveNode', IPC.vfsMove, payload],
+      ['trashNode', IPC.vfsTrash, payload],
+      ['restoreNode', IPC.vfsRestore, payload],
+      ['purgeNode', IPC.vfsPurge, payload],
+      ['resolvePath', IPC.vfsResolve, payload],
+      ['searchQuery', IPC.searchQuery, payload],
+      ['settingsGet', IPC.settingsGet, null],
+      ['settingsSet', IPC.settingsSet, payload],
     ];
     mocks.invoke.mockResolvedValue({ ok: true, value: null });
-    for (const [method, channel] of channelCases) {
-      await exposedApi[method](payload);
-      expect(mocks.invoke).toHaveBeenCalledWith(channel, payload);
+    for (const [method, channel, request] of channelCases) {
+      await exposedApi[method](request);
+      expect(mocks.invoke).toHaveBeenCalledWith(channel, request);
     }
   });
 

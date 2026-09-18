@@ -22,6 +22,8 @@ import { AppError } from '../../../src/shared/result';
 import { registerIpcHandlers } from '../../../src/main/ipc';
 import type { VfsService } from '../../../src/main/vfs/vfsService';
 import type { SearchService } from '../../../src/main/search/searchService';
+import type { SettingsService } from '../../../src/main/settings/settingsService';
+import { DEFAULT_SETTINGS, type SettingsData } from '../../../src/shared/settings-contract';
 
 function fakeEvent(origin: string | null): { senderFrame: { origin: string | null } | null } {
   return origin === '__null__' ? { senderFrame: null } : { senderFrame: { origin } };
@@ -50,6 +52,14 @@ function makeSearchStub(): SearchService {
   } as unknown as SearchService;
 }
 
+// 设置服务桩：get 返回默认、set 回显（vi.fn 接口测试期适配）
+function makeSettingsStub(): SettingsService {
+  return {
+    get: vi.fn(() => DEFAULT_SETTINGS),
+    set: vi.fn((d: SettingsData) => d),
+  } as unknown as SettingsService;
+}
+
 describe('system:ping 入口校验', () => {
   beforeEach(() => {
     handlers.clear();
@@ -57,6 +67,7 @@ describe('system:ping 入口校验', () => {
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
+      settings: makeSettingsStub(),
       broadcast: vi.fn(),
     });
   });
@@ -120,6 +131,7 @@ describe('vfs 通道接线', () => {
       allowedOrigins: ['app://bundle'],
       vfs,
       search: makeSearchStub(),
+      settings: makeSettingsStub(),
       broadcast,
     });
     const okResult = handlers.get(IPC.vfsResolve)?.(fakeEvent('app://bundle'), {
@@ -155,6 +167,7 @@ describe('vfs 通道接线', () => {
       allowedOrigins: ['app://bundle'],
       vfs,
       search: makeSearchStub(),
+      settings: makeSettingsStub(),
       broadcast,
     });
     handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
@@ -181,6 +194,7 @@ describe('vfs 通道接线', () => {
       allowedOrigins: ['app://bundle'],
       vfs,
       search: makeSearchStub(),
+      settings: makeSettingsStub(),
       broadcast,
     });
     const dup = handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
@@ -207,6 +221,7 @@ describe('vfs 通道接线', () => {
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
+      settings: makeSettingsStub(),
       broadcast,
     });
     const r = handlers.get(IPC.vfsList)?.(fakeEvent('http://evil'), { parentId: 1 }) as {
@@ -244,6 +259,7 @@ describe('vfs 通道接线', () => {
       allowedOrigins: ['app://bundle'],
       vfs,
       search: makeSearchStub(),
+      settings: makeSettingsStub(),
       broadcast,
     });
 
@@ -334,6 +350,7 @@ describe('search 通道接线', () => {
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search,
+      settings: makeSettingsStub(),
       broadcast,
     });
     const okResult = handlers.get(IPC.searchQuery)?.(fakeEvent('app://bundle'), {
@@ -358,6 +375,7 @@ describe('search 通道接线', () => {
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search,
+      settings: makeSettingsStub(),
       broadcast,
     });
     const forbidden = handlers.get(IPC.searchQuery)?.(fakeEvent('http://evil'), {
@@ -375,6 +393,58 @@ describe('search 通道接线', () => {
   });
 });
 
+// settings 两通道两道校验 + Result 转换 + 不广播（spec §5/§8）
+describe('settings 通道接线', () => {
+  beforeEach(() => {
+    handlers.clear();
+  });
+
+  it('settings:get 返回服务缓存；null 外载荷 E_IPC_BAD_PAYLOAD', () => {
+    const settings = makeSettingsStub();
+    const broadcast = vi.fn();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      settings,
+      broadcast,
+    });
+    const ok = handlers.get(IPC.settingsGet)?.(fakeEvent('app://bundle'), null) as {
+      ok: boolean;
+      value: unknown;
+    };
+    expect(ok).toEqual({ ok: true, value: DEFAULT_SETTINGS });
+    const bad = handlers.get(IPC.settingsGet)?.(fakeEvent('app://bundle'), {}) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+  });
+
+  it('settings:set 合法全量写入；越界 debounceMs 拒且不广播', () => {
+    const settings = makeSettingsStub();
+    const broadcast = vi.fn();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      settings,
+      broadcast,
+    });
+    const r = handlers.get(IPC.settingsSet)?.(fakeEvent('app://bundle'), {
+      schemaVersion: 1,
+      preview: { debounceMs: 1500 },
+    }) as { ok: boolean; value: { preview: { debounceMs: number } } };
+    expect(r.value.preview.debounceMs).toBe(1500);
+    const bad = handlers.get(IPC.settingsSet)?.(fakeEvent('app://bundle'), {
+      schemaVersion: 1,
+      preview: { debounceMs: 99 },
+    }) as { ok: boolean; error: { code: string } };
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+});
+
 // 广播载荷 rev 包装（M3 spec §4.2 防撕裂）：rev 取自主进程写事务版本计数器
 describe('广播版本号 rev', () => {
   it('广播载荷为 { rev, event } 包装且 rev 取自事务层（spec §4.2）', () => {
@@ -383,6 +453,7 @@ describe('广播版本号 rev', () => {
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
+      settings: makeSettingsStub(),
       broadcast,
     });
     handlers.get(IPC.vfsWrite)?.(fakeEvent('app://bundle'), {

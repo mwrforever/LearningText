@@ -1,5 +1,5 @@
 // 主进程装配单元测试：以 vi.mock('electron') 驱动 bootstrapMain（宪法 A.5-1 / B.3-1），
-// 断言 scheme 注册、协议挂载、IPC 注入（origin 白名单 + vfs/search 服务工厂 + 广播实现）、
+// 断言 scheme 注册、协议挂载、IPC 注入（origin 白名单 + vfs/search 服务工厂 + 设置服务 + 广播实现）、
 // 窗口安全默认值、fail-fast 退出路径与 will-quit 优雅关库（spec §2.2）。
 // 数据目录/开库/迁移/vfs/search 工厂接线：electron getPath 返回真实临时目录（dataDir 布局走真实现），
 // db/migrate/vfsService/searchService 以桩替换（单元测试不触原生 SQLite，真实行为由集成测试与 E2E 覆盖）。
@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => {
           readonly allowedOrigins: readonly string[];
           readonly vfs: unknown;
           readonly search: unknown;
+          readonly settings: unknown;
           readonly broadcast: (event: unknown) => void;
         }) => void
       >(),
@@ -179,6 +180,8 @@ describe('主进程装配 bootstrapMain', () => {
     expect(ipcDeps?.allowedOrigins).toEqual(['app://bundle']);
     expect(ipcDeps?.vfs).toBe(mocks.vfsStub);
     expect(ipcDeps?.search).toBe(mocks.searchStub);
+    // 设置服务走真实现（仅读 userData 下几 KB JSON，不触 SQLite）：断言注入链路完整（M3 spec §5）
+    expect(ipcDeps?.settings).toEqual(expect.anything());
     expect(ipcDeps?.broadcast).toEqual(expect.any(Function));
     // vfs 服务由开库句柄构建（装配顺序：开库 → 迁移 → 服务工厂 → IPC 注册）
     expect(mocks.createVfsService).toHaveBeenCalledWith(mocks.openDatabase.mock.results[0]?.value);

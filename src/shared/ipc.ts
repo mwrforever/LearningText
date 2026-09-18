@@ -29,6 +29,11 @@ export const IPC = {
   // —— 搜索域（M2）：命名 <域>:<动作>（宪法 B.2-5）——
   /** 模糊/全文搜索：索引通道或 LIKE 回退通道，渲染端无感知（spec §4） */
   searchQuery: 'search:query',
+  // —— 设置域（M3）——
+  /** 读全量设置（无参，payload null 先例）；服务侧已回退默认，get 不抛业务错 */
+  settingsGet: 'settings:get',
+  /** 全量写设置（渲染端 get→merge→set，schema 闸口 IPC 层） */
+  settingsSet: 'settings:set',
   /** 主→渲染：树变更广播（事务提交成功后发出，宪法 B.3-4） */
   vfsChanged: 'vfs:changed',
 } as const;

@@ -23,6 +23,8 @@ const api: WindowApi = {
   purgeNode: (request) => ipcRenderer.invoke(IPC.vfsPurge, request),
   resolvePath: (request) => ipcRenderer.invoke(IPC.vfsResolve, request),
   searchQuery: (request) => ipcRenderer.invoke(IPC.searchQuery, request),
+  settingsGet: () => ipcRenderer.invoke(IPC.settingsGet, null),
+  settingsSet: (request) => ipcRenderer.invoke(IPC.settingsSet, request),
   /** 订阅树变更广播：包装内部消化 ipcRenderer 并返回取消订阅函数（禁透传原始回调） */
   onVfsChanged: (callback) => {
     // 剥离 event 首参后仅回传业务载荷，渲染层不感知 ipcRenderer

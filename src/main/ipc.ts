@@ -10,9 +10,12 @@ import { AppError, err, ok, type Result } from '../shared/result';
 import { E_IPC_BAD_PAYLOAD, E_IPC_FORBIDDEN_ORIGIN, E_STORE_INTERNAL } from '../shared/errors';
 import type { VfsService } from './vfs/vfsService';
 import type { SearchService } from './search/searchService';
+import type { SettingsService } from './settings/settingsService';
 import { currentRev } from './store/transaction';
 import { SearchQueryRequestSchema } from '../shared/search-contract';
 import type { SearchQueryRequest, SearchQueryResponse } from '../shared/search-contract';
+import { SettingsGetRequestSchema, SettingsSchema } from '../shared/settings-contract';
+import type { SettingsData } from '../shared/settings-contract';
 import {
   CreateNodeRequestSchema,
   ListChildrenRequestSchema,
@@ -45,6 +48,8 @@ export interface IpcHandlerDeps {
   readonly vfs: VfsService;
   /** 搜索服务（纯读，spec §1：搜索通道不产生广播事件） */
   readonly search: SearchService;
+  /** 设置服务（spec §5） */
+  readonly settings: SettingsService;
   /** 主→渲染广播（app.ts 提供：遍历窗口 webContents.send）；必须在事务提交后调用 */
   readonly broadcast: (broadcast: VfsChangedBroadcast) => void;
 }
@@ -197,6 +202,16 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     IPC.searchQuery,
     handleWith(deps, SearchQueryRequestSchema, (q: SearchQueryRequest) => ({
       result: deps.search.query(q) satisfies SearchQueryResponse,
+    })),
+  );
+  ipcMain.handle(
+    IPC.settingsGet,
+    handleWith(deps, SettingsGetRequestSchema, () => ({ result: deps.settings.get() })),
+  );
+  ipcMain.handle(
+    IPC.settingsSet,
+    handleWith(deps, SettingsSchema, (data: SettingsData) => ({
+      result: deps.settings.set(data) satisfies SettingsData,
     })),
   );
 }

@@ -1,5 +1,6 @@
 import type { Result } from './result';
 import type { SearchQueryRequest, SearchQueryResponse } from './search-contract';
+import type { SettingsData } from './settings-contract';
 import type {
   AffectedResponse,
   CreateNodeRequest,
@@ -36,6 +37,9 @@ export interface WindowApi {
   resolvePath(request: ResolvePathRequest): Promise<Result<NodeIdResponse>>;
   // —— 搜索域（M2）：每通道一个具名包装（宪法 A.7-4 桥接面最小化）——
   searchQuery(request: SearchQueryRequest): Promise<Result<SearchQueryResponse>>;
+  // —— 设置域（M3）：全量读写（spec §5）——
+  settingsGet(): Promise<Result<SettingsData>>;
+  settingsSet(request: SettingsData): Promise<Result<SettingsData>>;
   /** 订阅树变更广播，返回取消订阅函数 */
   onVfsChanged(callback: (broadcast: VfsChangedBroadcast) => void): () => void;
 }
