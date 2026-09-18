@@ -7,17 +7,18 @@ export type VfsPathResult =
   { readonly kind: 'file'; readonly virtualPath: string } | { readonly kind: 'invalid' };
 
 /**
- * 解析 vfs:// URL 为虚拟路径（spec §2.2-3 单机制勘误版）：
- * - 规范编码点段（%2e / %2e%2e / .%2e / %2e. 四形态，ASCII 大小写不敏感）与字面
- *   '.'/'..' 段由 WHATWG URL 解析器（Node 24 与 Chromium 同构）在 path state 以
- *   **同一机制**先行归一且**不越根**——逃逸面在解析期闭合；
- * - 到达处理器的只剩解析器不归一的形态：空段（尾斜杠/连续斜杠）、残缺编码，以及
- *   解码后非 '.'/'..' 的混合编码点段（探针实证 `.%2e.` 解码为 `...`，按普通段名放行，
- *   查库不中即 404）。空段与残缺编码（URIError）一律 invalid——**不做 clamp**；
- *   循环内点段/空段检查保留为处理器残防线（纵深防御）；
+ * 解析 vfs:// URL 为虚拟路径（spec §2.2-3 单机制收口版）：
+ * - 字面点段与规范编码点段由 WHATWG URL 解析器（Node 24 与 Chromium 同构）在
+ *   path state 以**同一机制**先行归一且**不越根**——逃逸面在解析期闭合；
+ * - 穷举证明：解码为 '.'/'..' 的原始段必属解析器识别的点段规范形态组合
+ *   （'.'/%2e 与 '../.%2e'/'%2e.'/'%2e%2e'，ASCII 大小写不敏感），**点段不可达处理器**，
+ *   故循环内不设点段检查；多点混合形态（如 `.%2e.`）解码为 `...` 非点段，按普通段名
+ *   放行，查库不中即 404（探针实证见 task-3-report §七）；
+ * - 残防线仅剩可达分支，一律 invalid、**不做 clamp、越界归一后查库不中即 404**：
+ *   空段（连续斜杠/尾斜杠）、根请求（vfs:///，目录形态）、非法百分号编码（URIError）、
+ *   host 非空（身份只认路径，standard scheme 空 host 形态）；
  * - 先按原始 '/' 分段再逐段 decode——%2F 不得充当路径分隔符；
- * - host 非空 invalid（身份只认路径，standard scheme 空 host 形态）；
- * - 非法百分号编码（URIError）invalid；query/fragment 由 URL 解析天然剥离。
+ *   query/fragment 由 URL 解析天然剥离。
  * 段内 decode 出 '/'（%2F 场景）不在此拒绝——查库不中即 404，库路径无裸 %2F 形态。
  */
 export function parseVfsUrl(rawUrl: string): VfsPathResult {
@@ -35,7 +36,8 @@ export function parseVfsUrl(rawUrl: string): VfsPathResult {
   try {
     for (let i = 0; i < parts.length; i += 1) {
       const seg = decodeURIComponent(parts[i] ?? '');
-      if (seg === '' || seg === '.' || seg === '..') return { kind: 'invalid' };
+      // 点段已穷举证明不可达（见函数 doc），残防线只留空段拒绝（404 目录形态）
+      if (seg === '') return { kind: 'invalid' };
       parts[i] = seg;
     }
   } catch {
