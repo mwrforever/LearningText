@@ -1,0 +1,75 @@
+// 广播→树最小同步集（spec §4.3）：created/restored 插入、trashed/purged 移除、
+// written 刷新 meta、renamed/moved 标记受影响子树 stale（懒重取）
+import { describe, expect, it } from 'vitest';
+import type { NodeMeta, VfsChangedBroadcast } from '../../../src/shared/vfs-contract';
+import {
+  applyBroadcast,
+  collectStaleExpanded,
+  findNode,
+  makeTreeRoot,
+  withChildren,
+} from '../../../src/renderer/src/features/tree/treeModel';
+
+function meta(id: number, parentId: number, name: string): NodeMeta {
+  return {
+    id,
+    parentId,
+    nodeType: 'file',
+    name,
+    virtualPath: `/${name}`,
+    mimeType: 'text/html',
+    size: 1,
+    createdAt: '2026-09-18T10:00:00.000+08:00',
+    updatedAt: '2026-09-18T10:00:00.000+08:00',
+  };
+}
+const bcast = (event: VfsChangedBroadcast['event'], rev = 1): VfsChangedBroadcast => ({
+  rev,
+  event,
+});
+const dirNode = (
+  id: number,
+  parentId: number,
+  name: string,
+  children: readonly NodeMeta[] = [],
+) => {
+  let t = makeTreeRoot({ ...meta(id, parentId, name), nodeType: 'dir' });
+  t = withChildren(
+    t,
+    children.map((c) => makeTreeRoot(c)),
+  );
+  return t;
+};
+
+describe('treeModel applyBroadcast', () => {
+  it('created 且父已加载→插入；父未加载→不动（懒加载语义）', () => {
+    const tree = [dirNode(2, 1, '笔记')];
+    const after = applyBroadcast(tree, bcast({ type: 'created', node: meta(3, 2, 'a.html') }));
+    expect(findNode(after, 3)).not.toBeNull();
+    const miss = applyBroadcast(tree, bcast({ type: 'created', node: meta(4, 99, 'x.html') }));
+    expect(findNode(miss, 4)).toBeNull();
+  });
+
+  it('written 刷新命中节点 meta；trashed 移除；restored 插入', () => {
+    let tree: ReturnType<typeof applyBroadcast> = [dirNode(2, 1, '笔记', [meta(3, 2, 'a.html')])];
+    tree = applyBroadcast(
+      tree,
+      bcast({ type: 'written', node: { ...meta(3, 2, 'a.html'), size: 99 } }),
+    );
+    expect(findNode(tree, 3)?.meta.size).toBe(99);
+    tree = applyBroadcast(tree, bcast({ type: 'trashed', nodeId: 3, affectedCount: 1 }));
+    expect(findNode(tree, 3)).toBeNull();
+    tree = applyBroadcast(tree, bcast({ type: 'restored', node: meta(3, 2, 'a.html') }));
+    expect(findNode(tree, 3)).not.toBeNull();
+  });
+
+  it('renamed/moved 标记该节点及子孙 stale；purged 移除整子树', () => {
+    const tree = [dirNode(2, 1, '笔记', [meta(3, 2, 'a.html')])];
+    const after = applyBroadcast(tree, bcast({ type: 'renamed', nodeId: 2, affectedCount: 2 }));
+    const node = findNode(after, 2);
+    expect(node?.stale).toBe(true);
+    expect(collectStaleExpanded(after, new Set([1, 2]))).toEqual([2]); // 已展开的 stale 节点待重取
+    const purged = applyBroadcast(tree, bcast({ type: 'purged', nodeId: 2, purgedCount: 2 }));
+    expect(purged).toHaveLength(0);
+  });
+});
