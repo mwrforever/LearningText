@@ -38,7 +38,6 @@ afterEach(() => {
 describe('EditorPanel（CodeMirror 内核）', () => {
   it('无激活标签 → 空态占位；激活标签 → CM 编辑器就绪且文档一致', () => {
     const sessions = new TabSessions();
-    const onDocChanged = vi.fn();
     sessions.open(
       2,
       createEditorState('<p>一</p>', 'text/html', { onDocChanged: () => {}, onScroll: () => {} }),
@@ -50,7 +49,6 @@ describe('EditorPanel（CodeMirror 内核）', () => {
           sessions={sessions}
           activeTab={{ meta: meta(2, 'a.html'), dirty: false }}
           debounceMs={300}
-          onDocChanged={onDocChanged}
         />,
       );
     });
@@ -84,7 +82,6 @@ describe('EditorPanel（CodeMirror 内核）', () => {
           sessions={sessions}
           activeTab={{ meta: meta(2, 'a.txt'), dirty: false }}
           debounceMs={300}
-          onDocChanged={onDocChanged}
         />,
       );
     });
@@ -104,7 +101,6 @@ describe('EditorPanel（CodeMirror 内核）', () => {
           sessions={sessions}
           activeTab={{ meta: meta(3, 'b.txt'), dirty: false }}
           debounceMs={300}
-          onDocChanged={onDocChanged}
         />,
       );
     });
@@ -114,7 +110,6 @@ describe('EditorPanel（CodeMirror 内核）', () => {
           sessions={sessions}
           activeTab={{ meta: meta(2, 'a.txt'), dirty: true }}
           debounceMs={300}
-          onDocChanged={onDocChanged}
         />,
       );
     });
@@ -147,7 +142,6 @@ describe('EditorPanel（CodeMirror 内核）', () => {
           sessions={sessions}
           activeTab={{ meta: meta(2, 'a.txt'), dirty: false }}
           debounceMs={300}
-          onDocChanged={onDocChanged}
         />,
       );
     });
@@ -162,7 +156,6 @@ describe('EditorPanel（CodeMirror 内核）', () => {
           sessions={sessions}
           activeTab={{ meta: meta(2, 'a.txt'), dirty: true }}
           debounceMs={300}
-          onDocChanged={onDocChanged}
         />,
       );
     });
@@ -190,7 +183,6 @@ describe('EditorPanel（CodeMirror 内核）', () => {
           sessions={sessions}
           activeTab={{ meta: meta(2, 'a.txt'), dirty: false }}
           debounceMs={300}
-          onDocChanged={onDocChanged}
         />,
       );
     });
@@ -200,14 +192,7 @@ describe('EditorPanel（CodeMirror 内核）', () => {
       view?.dispatch({ changes: { from: 0, insert: '乙' } });
     });
     act(() => {
-      tree.render(
-        <EditorPanel
-          sessions={sessions}
-          activeTab={null}
-          debounceMs={300}
-          onDocChanged={onDocChanged}
-        />,
-      );
+      tree.render(<EditorPanel sessions={sessions} activeTab={null} debounceMs={300} />);
     });
     expect(container.querySelector('.cm-editor')).toBeNull();
     expect(container.textContent).toContain('未选中文件');
@@ -217,7 +202,6 @@ describe('EditorPanel（CodeMirror 内核）', () => {
           sessions={sessions}
           activeTab={{ meta: meta(2, 'a.txt'), dirty: true }}
           debounceMs={300}
-          onDocChanged={onDocChanged}
         />,
       );
     });
@@ -236,7 +220,6 @@ describe('EditorPanel（CodeMirror 内核）', () => {
           sessions={sessions}
           activeTab={{ meta: meta(9, '未开.html'), dirty: false }}
           debounceMs={300}
-          onDocChanged={vi.fn()}
         />,
       );
     });
@@ -258,7 +241,6 @@ describe('EditorPanel（CodeMirror 内核）', () => {
           sessions={sessions}
           activeTab={{ meta: meta(2, 'a.txt'), dirty: true }}
           debounceMs={300}
-          onDocChanged={vi.fn()}
           onSaveRequest={onSaveRequest}
         />,
       );
@@ -285,7 +267,6 @@ describe('EditorPanel（CodeMirror 内核）', () => {
           sessions={sessions}
           activeTab={{ meta: meta(2, 'a.txt'), dirty: false }}
           debounceMs={300}
-          onDocChanged={vi.fn()}
         />,
       );
     });

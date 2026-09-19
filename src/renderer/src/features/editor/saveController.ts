@@ -45,7 +45,7 @@ export class SaveController {
     this.activeNodeId = nodeId;
   }
 
-  /** 输入入口：EditorPanel onDocChanged 直连 */
+  /** 输入入口：编辑回路直连（Workspace 装配的 createEditorState onDocChanged 闭包回调） */
   edit(
     nodeId: number,
     // 位置语义参数：编辑内容以 getDoc 快照为唯一事实源（避免双源），实现刻意不消费
@@ -107,7 +107,11 @@ export class SaveController {
     if (outcome.write) this.startWrite(nodeId);
   }
 
-  /** 按双时点重武装计时器（remaining 差值；已到期/空时刻不武装）；唯一调用方 dispatch 已挡 disposed */
+  /**
+   * 按双时点重武装计时器（remaining 差值）：trailingAt/deadlineAt 均非空即武装，无「空时刻」
+   * 分支；已到期时刻（remaining ≤ 0）经 Math.max 兜底为 0ms——定时器立即触发、到期事件在
+   * 下一宏任务兑现，属合法形态而非跳过。唯一调用方 dispatch 已挡 disposed
+   */
   private syncTimers(nodeId: number, state: SaveState): void {
     this.clearTimers(nodeId);
     const timers: TabTimers = {};

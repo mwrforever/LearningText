@@ -280,6 +280,154 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     });
   });
 
+  // 大文件阈值三分支（spec §2.4 裁决 D7 计划缺口补齐）：size 前置判定早于任何 IPC；
+  // >50MB 拒开（不发起 readFile）、5–50MB 经 window.confirm 放行、≤5MB 直开（含边界）
+  it('大文件硬上限（>50MB）前置拒开：toast 呈现且不发起 readFile、不开标签、不弹确认', async () => {
+    const api = stubApi({
+      listChildren: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: [{ ...meta(3, 'huge.html'), size: 50 * 1024 * 1024 + 1 }],
+        }),
+      ),
+    }) as unknown as { readFile: ReturnType<typeof vi.fn> };
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      const tree = createRoot(container);
+      // ToastHost 与 Workspace 同容器装配（二进制拦截用例同款结构），toast 文案断言才有 DOM 落点
+      await act(async () => {
+        tree.render(
+          <>
+            <Workspace />
+            <ToastHost />
+          </>,
+        );
+      });
+      await act(async () => {
+        Array.from(container.querySelectorAll('button'))
+          .find((b) => b.textContent === 'huge.html')
+          ?.click();
+      });
+      // 硬上限分支先于确认分支与读库：>50MB 无征询意义，直接拒开（spec §2.4 D7 前置判定语义）
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(api.readFile).not.toHaveBeenCalled();
+      expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+      expect(container.textContent).toContain('文件超过 50MB，无法打开');
+      act(() => {
+        tree.unmount();
+      });
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('大文件确认区间（5–50MB）：window.confirm 确认后照常读库开标签', async () => {
+    const api = stubApi({
+      listChildren: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: [{ ...meta(3, 'big.html'), size: 5 * 1024 * 1024 + 1 }],
+        }),
+      ),
+      readFile: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: { content: new TextEncoder().encode('<p>大文</p>'), meta: meta(3, 'big.html') },
+        }),
+      ),
+    }) as unknown as { readFile: ReturnType<typeof vi.fn> };
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      const tree = createRoot(container);
+      await act(async () => {
+        tree.render(<Workspace />);
+      });
+      await act(async () => {
+        Array.from(container.querySelectorAll('button'))
+          .find((b) => b.textContent === 'big.html')
+          ?.click();
+      });
+      expect(confirmSpy).toHaveBeenCalledWith('大文件打开可能卡顿，是否继续？');
+      expect(api.readFile).toHaveBeenCalledWith({ nodeId: 3 });
+      expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
+      expect(container.querySelector('.cm-content')?.textContent).toBe('<p>大文</p>');
+      act(() => {
+        tree.unmount();
+      });
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('大文件确认区间（5–50MB）：window.confirm 取消则不开标签不读库', async () => {
+    const api = stubApi({
+      listChildren: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: [{ ...meta(3, 'big.html'), size: 50 * 1024 * 1024 }],
+        }),
+      ),
+    }) as unknown as { readFile: ReturnType<typeof vi.fn> };
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    try {
+      const tree = createRoot(container);
+      await act(async () => {
+        tree.render(<Workspace />);
+      });
+      await act(async () => {
+        Array.from(container.querySelectorAll('button'))
+          .find((b) => b.textContent === 'big.html')
+          ?.click();
+      });
+      expect(confirmSpy).toHaveBeenCalledWith('大文件打开可能卡顿，是否继续？');
+      expect(api.readFile).not.toHaveBeenCalled();
+      expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+      act(() => {
+        tree.unmount();
+      });
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('软阈值边界（恰 5MB）直开：不弹确认框、读库开标签（≤5MB 现行为不回归）', async () => {
+    const api = stubApi({
+      listChildren: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: [{ ...meta(3, 'edge.html'), size: 5 * 1024 * 1024 }],
+        }),
+      ),
+      readFile: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: { content: new TextEncoder().encode('文'), meta: meta(3, 'edge.html') },
+        }),
+      ),
+    }) as unknown as { readFile: ReturnType<typeof vi.fn> };
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      const tree = createRoot(container);
+      await act(async () => {
+        tree.render(<Workspace />);
+      });
+      await act(async () => {
+        Array.from(container.querySelectorAll('button'))
+          .find((b) => b.textContent === 'edge.html')
+          ?.click();
+      });
+      // 软阈值含边界（<= 判定）：恰 5MB 不征询直接开
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(api.readFile).toHaveBeenCalledWith({ nodeId: 3 });
+      expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
+      act(() => {
+        tree.unmount();
+      });
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
   it('点选文本文件开标签：TabBar 激活态、树选中联动、CM 会话就绪与预览命中', async () => {
     const api = stubApi({
       listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),

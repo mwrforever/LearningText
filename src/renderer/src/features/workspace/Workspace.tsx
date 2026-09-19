@@ -297,11 +297,29 @@ export function Workspace({
 
   /**
    * 打开文件为标签（树点选/新建文件唯一入口）：非文本前置拦截（FR-EDIT-04 归后续批次，
-   * 不读库不开标签）→ readFile 成功才建会话与标签（失败 toast）→ 同文件唯一实例仅聚焦
+   * 不读库不开标签）→ 大小三分支前置判定（spec §2.4 裁决 D7：渲染层以 meta.size 前置判定，
+   * 不发起 readFile）→ readFile 成功才建会话与标签（失败 toast；续体内 MAX_TABS 判满防
+   * 孤儿会话）→ 同文件唯一实例仅聚焦
    */
   function openFile(node: NodeMeta): void {
     if (node.mimeType === null || !isTextLike(node.mimeType)) {
       showToast('二进制文件暂不支持编辑（FR-EDIT-04 归后续批次）');
+      return;
+    }
+    // 大小三分支前置判定（spec §2.4 裁决 D7，阈值 5MB/50MB；size 为字节——NodeMeta 契约）：
+    // >50MB 直接拒开且不发起 readFile（超大文档读入解码必拖垮渲染层，无征询意义）；5–50MB
+    // 经用户确认放行（大文档 CM 建档可能卡顿，交由用户权衡）；≤5MB 直开（现行为）。判定只读
+    // meta 本地字段、同步完成，天然早于任何 IPC；MAX_TABS 判满仍留在 readFile 续体内——
+    // tabsRef 实时态只在异步续体时刻才有意义（快速连点的中间态），前置同步判定反而引入
+    // 并发窗口（见续体内注释）
+    if (node.size > LARGE_FILE_HARD_LIMIT_BYTES) {
+      showToast('文件超过 50MB，无法打开');
+      return;
+    }
+    if (
+      node.size > LARGE_FILE_SOFT_LIMIT_BYTES &&
+      !window.confirm('大文件打开可能卡顿，是否继续？')
+    ) {
       return;
     }
     void window.api.readFile({ nodeId: node.id }).then((result) => {
@@ -581,7 +599,6 @@ export function Workspace({
             sessions={sessions}
             activeTab={activeTab}
             debounceMs={debounceMs}
-            onDocChanged={(id, text) => saveController.edit(id, text)}
             onSaveRequest={() => saveController.flushActive()}
           />
         </section>
@@ -642,6 +659,13 @@ const ROOT_NODE: NodeMeta = {
   createdAt: '2026-09-18T00:00:00.000+08:00',
   updatedAt: '2026-09-18T00:00:00.000+08:00',
 };
+
+/**
+ * 大文件阈值常量（spec §2.4 裁决 D7，计划缺口补齐）：单位字节（NodeMeta.size 契约）。
+ * 软阈值 5MB 为「直开不征询」上限，硬上限 50MB 为「一律拒开」下限，二者之间须用户确认
+ */
+const LARGE_FILE_SOFT_LIMIT_BYTES = 5 * 1024 * 1024;
+const LARGE_FILE_HARD_LIMIT_BYTES = 50 * 1024 * 1024;
 
 /**
  * 文本可编辑 MIME 判定（M3 textarea 版 EditorPanel 同名函数语义迁入——openFile 前置拦截

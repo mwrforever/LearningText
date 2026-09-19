@@ -22,12 +22,6 @@ export interface EditorPanelProps {
    * Task 5 接线）；参数位按 brief 落地注 ③ 保留为 props 契约，不做解构绑定
    */
   readonly debounceMs: number;
-  /**
-   * 文档变更回报（Workspace → SaveController.edit，Task 5 接线）：本组件不经 props 调用——
-   * CM 监听闭包在会话 state 创建时固化（createEditorState handlers 携 nodeId），此 props
-   * 仅为 Task 4/5 的接线面（brief 签名逐字保留）
-   */
-  readonly onDocChanged: (nodeId: number, text: string) => void;
   /** 立即保存请求（保存钮 = 原生菜单同款命令）：Workspace 接 SaveController.flushActive */
   readonly onSaveRequest?: () => void;
 }

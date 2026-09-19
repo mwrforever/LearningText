@@ -484,7 +484,7 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
       }),
     ]).finally(() => clearTimeout(dialogTimer));
     expect(message).toBe('有未保存的更改，确定退出？');
-    // 进程退出三段收敛（CI macOS 修复 round 3，round 4 收窄）：accept → forceClose 的关窗
+    // 进程退出三段收敛（CI macOS 修复 round 3，round 4 放宽）：accept → forceClose 的关窗
     // 不在 quit 流程内——darwin 的 window-all-closed 惯例不 quit（app.ts，M0 裁决），首轮被
     // preventDefault 打断的 quit 不再续行 → 进程滞留；win/linux 因该分支主动 app.quit() 幸免。
     // ① 等首轮 close 收敛，窗口 30s（round 3/4 CI 实证：mac 上「dialog 呈现 + quit 全链」
