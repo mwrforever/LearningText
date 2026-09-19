@@ -21,7 +21,8 @@ beforeAll(() => {
   db = openDatabase({ file: ':memory:' });
   runMigrations(db);
   const vfs = createVfsService(db);
-  const html = `<p>二元指数分布</p>`.padEnd(200, ' '); // 拉高 size 供 Range 断言
+  // 尾部 </body> 标记：Task 9 注入矩阵断言「接收器插其前」的锚点（Range 断言切前 10 字节，前缀不受影响）
+  const html = `<p>二元指数分布</p></body>`.padEnd(200, ' '); // 拉高 size 供 Range 断言
   vfs.createNode({ parentId: 1, name: '笔记', nodeType: 'dir' });
   vfs.createNode({
     parentId: 2,
@@ -111,10 +112,11 @@ describe('vfs:// handler 响应语义', () => {
     expect(multi.status).toBe(200);
   });
 
-  it('空文件（content NULL 行）200 空体不抛错', async () => {
+  it('空文件（content NULL 行）200 不抛错：text/html 空体仅注入接收器', async () => {
     const res = await handler(req(requestUrl('/空文件.html')));
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe('');
+    // text/html 200 全量注入接收器（Task 9 裁决 D10）：空体形态响应体 = 仅接收器脚本
+    expect(await res.text()).toContain('lt:css-swap');
     // 写路径「无内容文件」落库为空 BLOB（非 NULL）；content NULL 的活行只能直插构造
     // （同损坏行技法），覆盖空体分支的 content 缺失侧（hash 在位 → 非 500）
     db.prepare(
@@ -123,7 +125,8 @@ describe('vfs:// handler 响应语义', () => {
     ).run({ hash: 'a'.repeat(64), now: '2026-09-18T10:00:00.000+08:00' });
     const nullBody = await handler(req(requestUrl('/null体.html')));
     expect(nullBody.status).toBe(200);
-    expect(await nullBody.text()).toBe('');
+    // 同上：注入只改响应构造，不触碰 NULL content 行的读路径语义
+    expect(await nullBody.text()).toContain('lt:css-swap');
   });
 
   it('404 矩阵：不存在/目录/回收站/编码越界/host 形态——固定短语无库内信息', async () => {
@@ -189,5 +192,42 @@ describe('vfs:// handler 响应语义', () => {
     } finally {
       errSpy.mockRestore();
     }
+  });
+});
+
+// 注入矩阵（Task 9，M4 spec §5.4 裁决 D10）：接收器只读注入 text/html 200 全量响应——
+// 库内 BLOB 与 content_hash/ETag 一概不参与，「同 hash 不同响应体」由「注入恒定」消解
+describe('CSS 热替换接收器注入（M4 spec §5.4 裁决 D10）', () => {
+  it('text/html 200 注入接收器且 ETag 与注入无关；304/206/HEAD 与 css 不注入', async () => {
+    const htmlRes = await handler(req(requestUrl('/笔记/index.html')));
+    const htmlText = await htmlRes.text();
+    expect(htmlText).toContain('lt:css-swap'); // 接收器标记
+    expect(htmlText.toLowerCase().lastIndexOf('</body>')).toBeGreaterThan(
+      htmlText.indexOf('lt:css-swap'),
+    );
+    const etag = htmlRes.headers.get('etag');
+    // 304 响应体空、无注入（与 200 同 ETag）
+    const notModified = await handler(
+      req(requestUrl('/笔记/index.html'), { headers: { 'If-None-Match': etag ?? '' } }),
+    );
+    expect(await notModified.text()).toBe('');
+    // HEAD 无体（无注入可断言体为空）
+    const head = await handler(req(requestUrl('/笔记/index.html'), { method: 'HEAD' }));
+    expect(await head.text()).toBe('');
+    // 206 分片不含接收器（Range 切原体；分片命中与否随体——断言仅 206 语义已由既有用例锁定）
+    const cssRes = await handler(req(requestUrl('/style.css')));
+    expect((await cssRes.text()).includes('lt:css-swap')).toBe(false);
+  });
+
+  it('injectPreviewReceiver：有 </body> 插其前（大小写不敏感取最后一处）；无则尾部追加', async () => {
+    const { injectPreviewReceiver } = await import('../../../src/main/protocol/vfsProtocol.ts');
+    expect(injectPreviewReceiver('<html><body><p>x</p></body></html>')).toContain(
+      '<p>x</p><script',
+    );
+    expect(injectPreviewReceiver('<html><BODY></BODY></html>')).toContain('<script');
+    // 无 body 标记：原内容保持前缀原样、接收器紧随其后尾部追加
+    //（brief 原为 endsWith——接收器以闭合标签收尾，「</p><script」位于串中而非串尾，
+    // endsWith 恒假；追加语义以 startsWith 锁定，偏差证据见 task-9-report）
+    expect(injectPreviewReceiver('<p>无 body</p>').startsWith('<p>无 body</p><script')).toBe(true);
   });
 });

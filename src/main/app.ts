@@ -7,7 +7,7 @@
  */
 import path from 'node:path';
 import type Database from 'better-sqlite3';
-import { app, BrowserWindow, protocol } from 'electron';
+import { app, BrowserWindow, Menu, protocol } from 'electron';
 import { handleAppResource } from './protocol/appProtocol';
 import { createVfsProtocolHandler } from './protocol/vfsProtocol';
 import { registerIpcHandlers } from './ipc';
@@ -64,6 +64,19 @@ function createMainWindow(
   // 宪法 B.5-5：权限请求默认全部拒绝
   win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => {
     callback(false);
+  });
+  // 右键「检查元素」（FR-RENDER-05，M4 spec §5.3）：inspectElement 自动命中命中点所在
+  // 沙箱 iframe；全窗口生效不做区域细分（YAGNI）。原生 popup 不可被 Playwright 驱动——
+  // 交互验收降级为单测断言 handler 行为（与 beforeunload 同理的既定处置）。
+  win.webContents.on('context-menu', (_event, params) => {
+    void Menu.buildFromTemplate([
+      {
+        label: '检查元素',
+        click: () => {
+          win.webContents.inspectElement(params.x, params.y);
+        },
+      },
+    ]).popup({ window: win });
   });
   // close 拦截 guard（M4 spec §2.3）：未放行的首次 close 转发渲染层确认链
   attachWindowCloseGuard(win, allow);

@@ -36,10 +36,14 @@ const mocks = vi.hoisted(() => {
     loadURL: vi.fn<(url: string) => Promise<void>>(),
     wcOn: vi.fn<(event: string, listener: (...args: unknown[]) => void) => void>(),
     wcSend: vi.fn<(channel: string, payload: unknown) => void>(),
+    // 右键「检查元素」落点桩（Task 9 FR-RENDER-05）：断言以 params 坐标调用
+    wcInspectElement: vi.fn<(x: number, y: number) => void>(),
     winOn: vi.fn<(event: string, listener: (...args: unknown[]) => void) => void>(),
     winClose: vi.fn<() => void>(),
     menuBuildFromTemplate: vi.fn<(template: unknown) => unknown>(),
     menuSetApplicationMenu: vi.fn<(menu: unknown) => void>(),
+    // context-menu 弹出桩（Task 9）：原生 popup 不可被 Playwright 驱动的单测降级断言面
+    menuPopup: vi.fn<(options: unknown) => void>(),
     setWindowOpenHandler: vi.fn<(handler: () => { action: string }) => void>(),
     setPermissionRequestHandler:
       vi.fn<
@@ -71,6 +75,9 @@ const mocks = vi.hoisted(() => {
   m.createVfsService.mockImplementation(() => vfsStub);
   // 搜索工厂桩：同上，产物标记对象仅供注入链路断言（工厂本身会立刻 prepare 语句，禁触真库）
   m.createSearchService.mockImplementation(() => searchStub);
+  // context-menu「检查元素」弹出桩（Task 9）：buildFromTemplate 产物须带 popup 方法，
+  // 否则右键 handler 内 `.popup(...)` 对 undefined 取属性抛错
+  m.menuBuildFromTemplate.mockImplementation(() => ({ popup: m.menuPopup }));
   // getAllWindows 默认无窗口：broadcast 遍历空集（具体窗口断言在对应用例内覆写返回值）
   m.getAllWindows.mockImplementation(() => []);
   // BrowserWindow 以 new 调用，桩实现必须用 function 声明（箭头函数不可构造）
@@ -82,6 +89,7 @@ const mocks = vi.hoisted(() => {
       webContents: {
         on: m.wcOn,
         send: m.wcSend,
+        inspectElement: m.wcInspectElement,
         setWindowOpenHandler: m.setWindowOpenHandler,
         session: { setPermissionRequestHandler: m.setPermissionRequestHandler },
       },
@@ -174,6 +182,7 @@ describe('主进程装配 bootstrapMain', () => {
         webContents: {
           on: mocks.wcOn,
           send: mocks.wcSend,
+          inspectElement: mocks.wcInspectElement,
           setWindowOpenHandler: mocks.setWindowOpenHandler,
           session: { setPermissionRequestHandler: mocks.setPermissionRequestHandler },
         },
@@ -397,5 +406,31 @@ describe('主进程装配 bootstrapMain', () => {
     // 通道固定为 vfs:changed、载荷原样透传；每个存活窗口各收到一次
     expect(sendA).toHaveBeenCalledWith(IPC.vfsChanged, event);
     expect(sendB).toHaveBeenCalledWith(IPC.vfsChanged, event);
+  });
+
+  // context-menu「检查元素」（FR-RENDER-05，Task 9）：原生 popup 不可被 Playwright 驱动——
+  // 交互验收降级为单测断言 handler 行为（与 beforeunload 同理的既定处置，spec §9.1-7）
+  describe('context-menu 检查元素', () => {
+    it('右键构建「检查元素」菜单弹出，点击以 params 坐标调用 inspectElement', async () => {
+      bootstrapMain();
+      await flushReadyChain();
+      const call = mocks.wcOn.mock.calls.find(([event]) => event === 'context-menu');
+      if (call === undefined) {
+        throw new Error('context-menu 监听器未注册');
+      }
+      const listener = call[1] as (_event: unknown, params: { x: number; y: number }) => void;
+      listener(undefined, { x: 12, y: 34 });
+      // 应用菜单装配已占一次 buildFromTemplate，右键弹出为第二次；取最后一次（context-menu 模板）
+      expect(mocks.menuBuildFromTemplate).toHaveBeenCalledTimes(2);
+      const template = mocks.menuBuildFromTemplate.mock.calls.at(-1)?.[0] as Array<{
+        label: string;
+        click: () => void;
+      }>;
+      expect(template[0]?.label).toBe('检查元素');
+      expect(mocks.menuPopup).toHaveBeenCalledWith({ window: expect.anything() });
+      template[0]?.click();
+      expect(mocks.wcInspectElement).toHaveBeenCalledTimes(1);
+      expect(mocks.wcInspectElement).toHaveBeenCalledWith(12, 34);
+    });
   });
 });

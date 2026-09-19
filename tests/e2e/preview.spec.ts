@@ -179,13 +179,20 @@ test('连续输入最终态一致 + 未变子资源重取与校验器稳定 + NF
     '<meta charset="utf-8"><link rel="stylesheet" href="./a.css"><p id="t">最终态一二三四五六七八九十';
   const start = Date.now();
   await editor.fill(target); // fill 单次提交终值：等价高频输入的尾沿
-  await expect(page.frameLocator('iframe').locator('#t')).toHaveText('最终态一二三四五六七八九十');
+  // 接收器注入（Task 9）适配：主文档无 </body> 标记，接收器脚本尾部追加后被未闭合的
+  // <p id="t"> 吸收为子元素（HTML 解析规则：script 属 phrasing 内容可入 p），textContent
+  // 因此含脚本源码——改用 innerText（渲染可见文本，script 节点 UA 样式 display:none 不计），
+  // 「可见文本精确一致」的断言语义不变
+  await expect(page.frameLocator('iframe').locator('#t')).toHaveText('最终态一二三四五六七八九十', {
+    useInnerText: true,
+  });
   const reloadMs = Date.now() - start;
   console.log(`[perf-m3] NFR-04 预览重载端到端耗时 ${String(reloadMs)}ms（fill→首帧一致）`);
   expect(reloadMs).toBeLessThan(2000); // NFR-04 宽松上限（300ms 目标 + CI 余量），中位数报告回填
   await editor.pressSequentially('！', { delay: 10 }); // 高频输入（远小于去抖 300ms）
   await expect(page.frameLocator('iframe').locator('#t')).toHaveText(
     '最终态一二三四五六七八九十！',
+    { useInnerText: true },
   );
   const tail = vfsResponses.slice(before);
   expect(tail.filter((r) => r.status() === 200).length).toBeGreaterThanOrEqual(2); // 主文档两次刷新均 200（内容变）

@@ -29,6 +29,35 @@ function textResponse(body: string, status: number): Response {
   return new Response(body, { status, headers: { 'Access-Control-Allow-Origin': '*' } });
 }
 
+/**
+ * 预览接收器（M4 spec §5.4 裁决 D10）：css 热替换消息入口——监听 lt:css-swap，
+ * 按「href 相对解析 pathname === 消息 path」匹配 <link> 并替换为等值 <style>（滚动保持）。
+ * 注意：字符串内不得出现 </script> 序列（会在宿主页提前闭合标签），闭合标签以
+ * `'</' + 'script>'` 拼接形态落地。pathname 侧 decodeURIComponent 是硬性必需——
+ * WHATWG URL 序列化对非 ASCII 路径恒百分号编码（node 探针实证：
+ * new URL('vfs://local/笔记/a.css').pathname === '/%E7%AC%94%E8%AE%B0/a.css'），
+ * 而触发端（PreviewPanel）postMessage 的 path 为库内原始 virtualPath，不解码则
+ * CJK 路径永不命中（本项目主要场景）；解码失败由既有 try/catch 兜底静默跳过。
+ */
+const PREVIEW_RECEIVER =
+  '<script>(function(){window.addEventListener("message",function(e){var m=e.data;' +
+  'if(m&&m.type==="lt:css-swap"&&typeof m.path==="string"&&typeof m.text==="string"){var links=document.querySelectorAll(\'link[rel="stylesheet"]\');' +
+  'for(var i=0;i<links.length;i++){var href=links[i].getAttribute("href");if(href!==null){try{' +
+  'if(decodeURIComponent(new URL(href,document.baseURI).pathname)===m.path){var s=document.createElement("style");s.textContent=m.text;links[i].replaceWith(s);}}catch(_e){}}}}});})();</' +
+  'script>';
+
+/**
+ * 接收器只读注入（纯函数）：最后一个 </body>（大小写不敏感）前插入；无 body 标记尾部追加。
+ * @param htmlBody 文档 BLOB 按 UTF-8 解码出的原始 HTML 文本（text/html 200 全量响应体）
+ * @returns 注入接收器后的响应体文本（恒定输出：同输入恒同输出，消解「同 hash 不同体」）
+ */
+export function injectPreviewReceiver(htmlBody: string): string {
+  const idx = htmlBody.toLowerCase().lastIndexOf('</body>');
+  return idx === -1
+    ? htmlBody + PREVIEW_RECEIVER
+    : htmlBody.slice(0, idx) + PREVIEW_RECEIVER + htmlBody.slice(idx);
+}
+
 export function createVfsProtocolHandler(deps: {
   db: Database.Database;
 }): (request: Request) => Promise<Response> {
@@ -101,7 +130,12 @@ export function createVfsProtocolHandler(deps: {
         }),
       );
     }
-    return Promise.resolve(new Response(body, { status: 200, headers }));
+    // text/html 200 全量注入接收器（响应构造期，不改库内 BLOB、不参与 content_hash/ETag——裁决 D10）
+    const responseBody =
+      row.mime_type === 'text/html'
+        ? Buffer.from(injectPreviewReceiver(body.toString('utf8')), 'utf8')
+        : body;
+    return Promise.resolve(new Response(responseBody, { status: 200, headers }));
   }
 
   return (request: Request): Promise<Response> => {
