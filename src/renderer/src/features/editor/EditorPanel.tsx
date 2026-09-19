@@ -28,7 +28,7 @@ export interface EditorPanelProps {
    * 仅为 Task 4/5 的接线面（brief 签名逐字保留）
    */
   readonly onDocChanged: (nodeId: number, text: string) => void;
-  /** 立即保存请求（保存钮 = 原生菜单同款命令；Task 5 接 SaveController.flush，本任务 Workspace 不传） */
+  /** 立即保存请求（保存钮 = 原生菜单同款命令）：Workspace 接 SaveController.flushActive */
   readonly onSaveRequest?: () => void;
 }
 

@@ -2,13 +2,15 @@
  * 三栏工作台 + 多标签会话中枢（M4 spec §3）：tabs/activeTab 状态机（tabModel 纯函数不可变
  * 更新）+ TabSessions per-tab 会话容器；openFile 前置拦截（非文本 toast 拒开、readFile 成功
  * 才建会话与标签）。树数据/展开集/settings 去抖值照旧在此提升，TreePanel/TabBar/EditorPanel/
- * PreviewPanel 纯 props 消费（A.7-6 单向）。保存管线（SaveController）归 Task 5 实装——
- * saveControllerRef 空位先行落位接线面。壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
+ * PreviewPanel 纯 props 消费（A.7-6 单向）。保存管线（SaveController）在此装配：编辑回路
+ * edit、关标签 flush 后关、保存钮 flushActive、卸载 dispose 成对释放。壳插槽（toolbar/
+ * statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import { createEditorState } from '../editor/codemirror';
 import { EditorPanel } from '../editor/EditorPanel';
+import { SaveController } from '../editor/saveController';
 import { TabSessions } from '../editor/tabSessions';
 import { PreviewPanel } from '../preview/PreviewPanel';
 import {
@@ -21,26 +23,13 @@ import {
 import { TreePanel } from '../tree/TreePanel';
 import { showToast } from '../ui/Toast';
 import { TabBar } from './TabBar';
-import { closeTab, openTab, type TabsOp } from './tabModel';
+import { closeTab, openTab, setTabDirty, type TabsOp } from './tabModel';
 
 export interface WorkspaceProps {
   /** 全局操作条插槽（M4 原生菜单的渲染层对应面）；未注入时不渲染占位条 */
   readonly toolbarSlot?: React.ReactNode;
   /** 状态栏插槽（M4+ 保存态/进度）；同上 */
   readonly statusBarSlot?: React.ReactNode;
-}
-
-/**
- * 保存管线控制器占位结构（Task 4 仅声明 ref 空位，`?.` 空转不产生行为）：成员按 Task 5
- * 计划签名（edit/flushActive）最小声明；Task 5 落地 editor/saveController.ts 后以真实
- * class import 取代本接口，全部调用点（openFile 回路 / EditorPanel 接线）签名不变。
- */
-// TODO(save-controller): Task 5 以 editor/saveController.ts 真实类型取代本占位接口（M4 Task 5 引入）
-interface SaveController {
-  /** 文档变更入队（节点 id + 当前全文）；Task 5 起由双计时器管线调度落库 */
-  edit(nodeId: number, text: string): void;
-  /** 立即写当前激活节点（保存钮/菜单 save 命令同款语义，Task 5 接 flush） */
-  flushActive(): void;
 }
 
 export function Workspace({
@@ -51,21 +40,45 @@ export function Workspace({
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
   const [tabsOp, setTabsOp] = useState<TabsOp>({ tabs: [], activeId: null });
   const [debounceMs, setDebounceMs] = useState(300);
+  const [autoSaveMs, setAutoSaveMs] = useState(3000);
   // 标签会话容器（M4 spec §3）：TabSessions 为可变容器、随 Workspace 生命周期持有；
   // 渲染期惰性初始化单例（75647f2 先例豁免：仅首次渲染建一次，非副作用）
   const sessionsRef = useRef<TabSessions | null>(null);
   if (sessionsRef.current === null) sessionsRef.current = new TabSessions();
   const sessions = sessionsRef.current;
+  // 设置运行时镜像：SaveController 仅构造一次，deps 闭包直接捕获 state 会固化首渲染值
+  // （设置装载后陈旧）；经 effect 同步 ref，保证「调用时刻」读到最新设置（渲染期不写 ref）
+  const settingsRef = useRef({ debounceMs, autoSaveMs });
+  useEffect(() => {
+    settingsRef.current = { debounceMs, autoSaveMs };
+  }, [debounceMs, autoSaveMs]);
   // 激活标签由 tabs 状态派生（单一事实来源，禁另存副本）
   const activeTab = tabsOp.tabs.find((t) => t.meta.id === tabsOp.activeId) ?? null;
-  // 保存管线控制器空位（Task 5 实装；本任务 `?.` 空转——接线面先行落位）
+  // 保存管线控制器（M4 spec §2）：渲染期惰性初始化单例（sessionsRef 同款豁免）；
+  // deps 注入写桥与会话快照，控制器自身只持状态机与计时器句柄
   const saveControllerRef = useRef<SaveController | null>(null);
+  if (saveControllerRef.current === null) {
+    saveControllerRef.current = new SaveController({
+      debounceMs: () => settingsRef.current.debounceMs,
+      autoSaveMs: () => settingsRef.current.autoSaveMs,
+      getDoc: (id) => sessions.get(id)?.state.doc.toString() ?? null,
+      write: (id, text) =>
+        window.api
+          .writeFile({ nodeId: id, content: new TextEncoder().encode(text) })
+          .then((r) => r.ok),
+      onDirtyChange: (id, dirty) => setTabsOp((prev) => setTabDirty(prev, id, dirty)),
+    });
+  }
+  const saveController = saveControllerRef.current;
 
   // 启动装配：设置加载（失败回退默认由服务侧保证，此处仅防 IPC 层异常）+ 根 children 首拉
   useEffect(() => {
     let alive = true;
     void window.api.settingsGet().then((result) => {
-      if (alive && result.ok) setDebounceMs(result.value.preview.debounceMs);
+      if (alive && result.ok) {
+        setDebounceMs(result.value.preview.debounceMs);
+        setAutoSaveMs(result.value.editor.autoSaveMs);
+      }
     });
     void window.api.listChildren({ parentId: ROOT_ID }).then((result) => {
       if (alive && result.ok) {
@@ -142,11 +155,10 @@ export function Workspace({
 
   function onTrash(nodeId: number): void {
     void window.api.trashNode({ nodeId }).then((result) => {
-      // 标签存在则连会话一起收场（TabSessions 与标签生命周期同步，资源成对）；
+      // 标签存在则连同会话经 closeTabById 收场（flush 落库 → 管线/会话/标签同步清理，资源成对）；
       // 激活态补位由 closeTab 状态机承担（右邻优先），编辑区/预览随 activeTab 联动回落
       if (result.ok && sessions.has(nodeId)) {
-        sessions.close(nodeId);
-        setTabsOp((prev) => closeTab(prev, nodeId));
+        closeTabById(nodeId);
       }
     });
   }
@@ -177,10 +189,10 @@ export function Workspace({
           new TextDecoder().decode(result.value.content),
           node.mimeType ?? 'text/plain',
           {
-            // 库以新实例整体替换 state（A.1-9）：会话态同步 + 保存管线接线（Task 5 实装前空转）
+            // 库以新实例整体替换 state（A.1-9）：会话态同步 + 输入回路进保存管线（双计时器调度落库）
             onDocChanged: (text, state) => {
               sessions.updateState(node.id, state);
-              saveControllerRef.current?.edit(node.id, text);
+              saveController.edit(node.id, text);
             },
             onScroll: (top) => sessions.updateScroll(node.id, top),
           },
@@ -190,11 +202,29 @@ export function Workspace({
     });
   }
 
-  /** 关闭标签（TabBar onClose 入口）：会话与标签同步收场；Task 5 起关前接入 flush 管线 */
+  /**
+   * 关闭标签（TabBar/onTrash 共用入口）：先 flush 确保脏内容落库，再清管线态与会话、
+   * 摘标签（spec §2.2-5 关标签 flush 后关）；flush 遇写在途/失败态的确认放弃交互
+   * 归 M4 打磨批次，此处 flush 后即关
+   */
   function closeTabById(id: number): void {
+    saveController.flush(id);
+    saveController.tabClosed(id);
     sessions.close(id);
     setTabsOp((prev) => closeTab(prev, id));
   }
+
+  // 激活标签同步给控制器（flushActive 语义基准；tabModel 补位/聚焦后随 activeId 联动）
+  useEffect(() => {
+    saveController.setActiveNode(tabsOp.activeId);
+  }, [tabsOp.activeId, saveController]);
+
+  // 卸载清全部计时器（成对释放，宪法资源纪律）
+  useEffect(() => {
+    return () => {
+      saveController.dispose();
+    };
+  }, [saveController]);
 
   return (
     <div className="lt-workspace">
@@ -223,8 +253,8 @@ export function Workspace({
           sessions={sessions}
           activeTab={activeTab}
           debounceMs={debounceMs}
-          onDocChanged={(id, text) => saveControllerRef.current?.edit(id, text)}
-          onSaveRequest={() => saveControllerRef.current?.flushActive()}
+          onDocChanged={(id, text) => saveController.edit(id, text)}
+          onSaveRequest={() => saveController.flushActive()}
         />
       </section>
       <section className="lt-pane lt-pane-preview">
