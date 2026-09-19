@@ -214,7 +214,13 @@ describe('CSS 热替换接收器注入（M4 spec §5.4 裁决 D10）', () => {
     // HEAD 无体（无注入可断言体为空）
     const head = await handler(req(requestUrl('/笔记/index.html'), { method: 'HEAD' }));
     expect(await head.text()).toBe('');
-    // 206 分片不含接收器（Range 切原体；分片命中与否随体——断言仅 206 语义已由既有用例锁定）
+    // 206 分片不含接收器（Range 切原体）：206 侧直接断言（Task 9 评审移交收口，
+    // 断言不依赖「注入恒定」推理，实取分片体验内容）
+    const partial = await handler(
+      req(requestUrl('/笔记/index.html'), { headers: { Range: 'bytes=0-9' } }),
+    );
+    expect(partial.status).toBe(206);
+    expect((await partial.text()).includes('lt:css-swap')).toBe(false);
     const cssRes = await handler(req(requestUrl('/style.css')));
     expect((await cssRes.text()).includes('lt:css-swap')).toBe(false);
   });

@@ -63,8 +63,8 @@ test('主链路：新建目录与文件→编辑→预览渲染一致（含相�
   );
   if (!dir.ok) throw new Error('建目录失败');
   // 相对 css + root 相对 img 内联 + 内联 script（验收项 1/3）；charset meta 为真实
-  // HTML 文档惯例——协议按库内 MIME 原样下发 Content-Type（无 charset），无 meta 时
-  // Chromium 按 windows-1252 解码致非 ASCII 乱码（实跑实证，非产品缺陷）
+  // HTML 文档惯例——M4 Task 8 起协议对 text/* 追加 charset=utf-8（docs/03 §3.2，
+  // 集成侧 vfs-protocol.test 锁定），无 meta 的非 ASCII 文档不再按 windows-1252 误解码
   await seedFile(
     dir.value.id,
     'a.html',
@@ -172,7 +172,7 @@ test('localStorage 抛 SecurityError（验收项 7，隔离断言=已知边界�
 test('连续输入最终态一致 + 未变子资源重取与校验器稳定 + NFR-04 重载计时（验收项 5/6 + spec §4.4）', async () => {
   const before = vfsResponses.length;
   const editor = page.getByLabel('编辑区');
-  // charset meta 同主链路用例（协议不注入 charset，无 meta 乱码）；保留 ./a.css 引用——
+  // charset meta 同主链路用例（协议对 text/* 追加 charset=utf-8，M4 Task 8）；保留 ./a.css 引用——
   // 使未变更子资源进入重载请求面（终审 I-2 补强，断言与降级依据见 tail 段注释）；
   // <p> 不闭合——pressSequentially 在文尾续打时字符须落进 #t 内（闭合标签会把续打字符挤到段外）
   const target =
