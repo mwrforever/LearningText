@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import { EditorPanel } from '../editor/EditorPanel';
+import { TabSessions } from '../editor/tabSessions';
 import { PreviewPanel } from '../preview/PreviewPanel';
 import {
   applyBroadcast,
@@ -31,6 +32,9 @@ export function Workspace({
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
   const [selected, setSelected] = useState<NodeMeta | null>(null);
   const [debounceMs, setDebounceMs] = useState(300);
+  // 标签会话容器（M4 spec §3）：TabSessions 为可变容器、随 Workspace 生命周期持有；
+  // useState 惰性初始化保证实例稳定（渲染期禁写 ref 先例，宪法 A.1-10）
+  const [sessions] = useState(() => new TabSessions());
 
   // 启动装配：设置加载（失败回退默认由服务侧保证，此处仅防 IPC 层异常）+ 根 children 首拉
   useEffect(() => {
@@ -130,7 +134,15 @@ export function Workspace({
         />
       </aside>
       <section className="lt-pane lt-pane-editor">
-        <EditorPanel node={selected} debounceMs={debounceMs} />
+        {/* M4 Task 3 过渡桥：EditorPanel 已换会话式 props（node → activeTab+sessions）；
+            标签开启/激活换入归 Task 4（TabBar 与 openFile 前置拦截），onDocChanged/保存管线归
+            Task 5（SaveController）——本批 activeTab 恒空，编辑区显示空态占位 */}
+        <EditorPanel
+          sessions={sessions}
+          activeTab={null}
+          debounceMs={debounceMs}
+          onDocChanged={() => undefined}
+        />
       </section>
       <section className="lt-pane lt-pane-preview">
         <PreviewPanel node={selected} />
