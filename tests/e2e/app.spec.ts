@@ -2,6 +2,7 @@
 import { expect, test } from '@playwright/test';
 import { _electron as electron } from 'playwright';
 import type { ElectronApplication, Page } from 'playwright';
+import { closeAppGracefully } from './close-app';
 
 // 外层句柄命名 page 而非 window：避免遮蔽 DOM 全局 window——evaluate 回调内的
 // window 必须解析到页面全局（类型与运行时语义一致，tsconfig.test 已含全局声明）
@@ -14,7 +15,8 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await app.close();
+  // 关停前显式放行 guard（macOS quit 流程修复，见 close-app.ts 头注）
+  await closeAppGracefully(app, page);
 });
 
 test('应用窗口渲染 LearningText 标题', async () => {

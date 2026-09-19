@@ -14,6 +14,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron } from 'playwright';
 import type { ElectronApplication, Locator, Page, Response } from 'playwright';
+import { closeAppGracefully } from './close-app';
 import { DEFAULT_LAYOUT } from '../../src/shared/settings-contract';
 
 // 每 spec 独立 userData 临时目录（M3 先例）：e2e 写库不碰开发者真实数据；
@@ -143,8 +144,9 @@ test.describe('M4 主链路（出厂默认设置）', () => {
   });
 
   test.afterAll(async () => {
-    // Windows 文件锁纪律：先关应用（释放 SQLite 句柄与目录锁）再删临时目录
-    await app.close();
+    // Windows 文件锁纪律：先关应用（释放 SQLite 句柄与目录锁）再删临时目录；
+    // 关停前显式放行 guard（macOS quit 流程修复，见 close-app.ts 头注）
+    await closeAppGracefully(app, page);
     rmSync(userDataDir, { recursive: true, force: true });
   });
 
@@ -208,7 +210,8 @@ test.describe('M4 保存管线/多标签/热替换/5MB（计时调优设置）',
   });
 
   test.afterAll(async () => {
-    await app.close();
+    // 关停前显式放行 guard（macOS quit 流程修复，见 close-app.ts 头注）
+    await closeAppGracefully(app, page);
     rmSync(userDataDir, { recursive: true, force: true });
   });
 
@@ -371,7 +374,7 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
 
   test.afterAll(async () => {
     // guard 用例已终停最后一个实例（appClosedByGuard 置位），跳过二次 close
-    if (!appClosedByGuard) await app.close();
+    if (!appClosedByGuard) await closeAppGracefully(app, page);
     rmSync(userDataDir, { recursive: true, force: true });
   });
 
@@ -396,8 +399,9 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
     // 折叠树栏（折叠态本地应用与持久化一次完成）
     await page.getByLabel('折叠树栏').click();
     await expect(page.getByLabel('展开树栏')).toBeVisible();
-    // 无脏关窗：guard 直通（不弹确认链）→ 同 userData 重启（折叠态下装配信号走展开钮）
-    await app.close();
+    // 无脏关窗：guard 直通（不弹确认链）→ 同 userData 重启（折叠态下装配信号走展开钮）。
+    // 关停经 closeAppGracefully 显式放行（macOS quit 流程修复，见 close-app.ts 头注）
+    await closeAppGracefully(app, page);
     await launchApp(false);
     // 布局恢复（FR-SHELL-01）双面断言：折叠态回 UI aria + 宽度比例回 settings 读数
     await expect(page.getByLabel('展开树栏')).toBeVisible();

@@ -7,6 +7,7 @@ import path from 'node:path';
 import { expect, test } from '@playwright/test';
 import { _electron as electron } from 'playwright';
 import type { ElectronApplication, Page, Response } from 'playwright';
+import { closeAppGracefully } from './close-app';
 
 // 每 spec 独立 userData 临时目录：e2e 写库不碰开发者真实数据（M3 新增，M1 只读用例无此需求）
 let app: ElectronApplication;
@@ -28,8 +29,9 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  // Windows 文件锁纪律：先关应用（释放 SQLite 句柄与 Chromium 目录锁）再删临时目录
-  await app.close();
+  // Windows 文件锁纪律：先关应用（释放 SQLite 句柄与 Chromium 目录锁）再删临时目录；
+  // 关停前显式放行 guard（macOS quit 流程修复，见 close-app.ts 头注）
+  await closeAppGracefully(app, page);
   rmSync(userDataDir, { recursive: true, force: true });
 });
 
