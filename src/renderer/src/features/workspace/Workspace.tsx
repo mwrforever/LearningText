@@ -1,10 +1,13 @@
 /**
- * 三栏工作台（M3 spec §6/§6.1）：状态提升中枢——树数据/展开集/选中/settings 去抖值
- * 全部在此，TreePanel/EditorPanel/PreviewPanel 纯 props 消费（A.7-6 单向）。
- * 壳插槽（toolbar/statusBar）props 预留，M4 外壳批次往缝里填不重排（评审 D5 接缝）。
+ * 三栏工作台 + 多标签会话中枢（M4 spec §3）：tabs/activeTab 状态机（tabModel 纯函数不可变
+ * 更新）+ TabSessions per-tab 会话容器；openFile 前置拦截（非文本 toast 拒开、readFile 成功
+ * 才建会话与标签）。树数据/展开集/settings 去抖值照旧在此提升，TreePanel/TabBar/EditorPanel/
+ * PreviewPanel 纯 props 消费（A.7-6 单向）。保存管线（SaveController）归 Task 5 实装——
+ * saveControllerRef 空位先行落位接线面。壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
+import { createEditorState } from '../editor/codemirror';
 import { EditorPanel } from '../editor/EditorPanel';
 import { TabSessions } from '../editor/tabSessions';
 import { PreviewPanel } from '../preview/PreviewPanel';
@@ -16,6 +19,9 @@ import {
   type TreeNode,
 } from '../tree/treeModel';
 import { TreePanel } from '../tree/TreePanel';
+import { showToast } from '../ui/Toast';
+import { TabBar } from './TabBar';
+import { closeTab, openTab, type TabsOp } from './tabModel';
 
 export interface WorkspaceProps {
   /** 全局操作条插槽（M4 原生菜单的渲染层对应面）；未注入时不渲染占位条 */
@@ -24,17 +30,36 @@ export interface WorkspaceProps {
   readonly statusBarSlot?: React.ReactNode;
 }
 
+/**
+ * 保存管线控制器占位结构（Task 4 仅声明 ref 空位，`?.` 空转不产生行为）：成员按 Task 5
+ * 计划签名（edit/flushActive）最小声明；Task 5 落地 editor/saveController.ts 后以真实
+ * class import 取代本接口，全部调用点（openFile 回路 / EditorPanel 接线）签名不变。
+ */
+// TODO(save-controller): Task 5 以 editor/saveController.ts 真实类型取代本占位接口（M4 Task 5 引入）
+interface SaveController {
+  /** 文档变更入队（节点 id + 当前全文）；Task 5 起由双计时器管线调度落库 */
+  edit(nodeId: number, text: string): void;
+  /** 立即写当前激活节点（保存钮/菜单 save 命令同款语义，Task 5 接 flush） */
+  flushActive(): void;
+}
+
 export function Workspace({
   toolbarSlot = null,
   statusBarSlot = null,
 }: WorkspaceProps): React.JSX.Element {
   const [roots, setRoots] = useState<readonly TreeNode[]>([]);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
-  const [selected, setSelected] = useState<NodeMeta | null>(null);
+  const [tabsOp, setTabsOp] = useState<TabsOp>({ tabs: [], activeId: null });
   const [debounceMs, setDebounceMs] = useState(300);
   // 标签会话容器（M4 spec §3）：TabSessions 为可变容器、随 Workspace 生命周期持有；
-  // useState 惰性初始化保证实例稳定（渲染期禁写 ref 先例，宪法 A.1-10）
-  const [sessions] = useState(() => new TabSessions());
+  // 渲染期惰性初始化单例（75647f2 先例豁免：仅首次渲染建一次，非副作用）
+  const sessionsRef = useRef<TabSessions | null>(null);
+  if (sessionsRef.current === null) sessionsRef.current = new TabSessions();
+  const sessions = sessionsRef.current;
+  // 激活标签由 tabs 状态派生（单一事实来源，禁另存副本）
+  const activeTab = tabsOp.tabs.find((t) => t.meta.id === tabsOp.activeId) ?? null;
+  // 保存管线控制器空位（Task 5 实装；本任务 `?.` 空转——接线面先行落位）
+  const saveControllerRef = useRef<SaveController | null>(null);
 
   // 启动装配：设置加载（失败回退默认由服务侧保证，此处仅防 IPC 层异常）+ 根 children 首拉
   useEffect(() => {
@@ -109,15 +134,66 @@ export function Workspace({
   function onCreate(parentId: number, nodeType: 'dir' | 'file'): void {
     const name = nodeType === 'dir' ? '新建目录' : '新建文件.html';
     void window.api.createNode({ parentId, name, nodeType }).then((result) => {
-      // created 广播到达自动挂入已加载父（treeModel insert）；重名等错误 toast 归 M4，此处静默忽略
-      if (result.ok && nodeType === 'file') setSelected(result.value);
+      // created 广播到达自动挂入已加载父（treeModel insert）；重名等错误 toast 归后续批次，此处静默忽略
+      // selected→activeTab 语义迁移：新建文件即开标签，承接 M3「创建即选中」的用户预期
+      if (result.ok && nodeType === 'file') openFile(result.value);
     });
   }
 
   function onTrash(nodeId: number): void {
     void window.api.trashNode({ nodeId }).then((result) => {
-      if (result.ok && selected !== null && selected.id === nodeId) setSelected(null);
+      // 标签存在则连会话一起收场（TabSessions 与标签生命周期同步，资源成对）；
+      // 激活态补位由 closeTab 状态机承担（右邻优先），编辑区/预览随 activeTab 联动回落
+      if (result.ok && sessions.has(nodeId)) {
+        sessions.close(nodeId);
+        setTabsOp((prev) => closeTab(prev, nodeId));
+      }
     });
+  }
+
+  /**
+   * 打开文件为标签（树点选/新建文件唯一入口）：非文本前置拦截（FR-EDIT-04 归后续批次，
+   * 不读库不开标签）→ readFile 成功才建会话与标签（失败 toast）→ 同文件唯一实例仅聚焦
+   */
+  function openFile(node: NodeMeta): void {
+    if (node.mimeType === null || !isTextLike(node.mimeType)) {
+      showToast('二进制文件暂不支持编辑（FR-EDIT-04 归后续批次）');
+      return;
+    }
+    void window.api.readFile({ nodeId: node.id }).then((result) => {
+      if (!result.ok) {
+        showToast(`打开失败：${result.error.message}`);
+        return;
+      }
+      // 同文件唯一实例（tabModel openTab 幂等语义）：会话已在，聚焦既有标签即可
+      if (sessions.has(node.id)) {
+        setTabsOp((prev) => openTab(prev, node));
+        return;
+      }
+      // mimeType 已过 isTextLike 白名单，`??` 仅为可空契约的收尾窄化
+      sessions.open(
+        node.id,
+        createEditorState(
+          new TextDecoder().decode(result.value.content),
+          node.mimeType ?? 'text/plain',
+          {
+            // 库以新实例整体替换 state（A.1-9）：会话态同步 + 保存管线接线（Task 5 实装前空转）
+            onDocChanged: (text, state) => {
+              sessions.updateState(node.id, state);
+              saveControllerRef.current?.edit(node.id, text);
+            },
+            onScroll: (top) => sessions.updateScroll(node.id, top),
+          },
+        ),
+      );
+      setTabsOp((prev) => openTab(prev, node));
+    });
+  }
+
+  /** 关闭标签（TabBar onClose 入口）：会话与标签同步收场；Task 5 起关前接入 flush 管线 */
+  function closeTabById(id: number): void {
+    sessions.close(id);
+    setTabsOp((prev) => closeTab(prev, id));
   }
 
   return (
@@ -126,26 +202,33 @@ export function Workspace({
       <aside className="lt-pane lt-pane-tree">
         <TreePanel
           roots={roots}
-          selectedId={selected?.id ?? null}
+          selectedId={tabsOp.activeId}
           onToggle={onToggle}
-          onSelect={setSelected}
+          onSelect={openFile}
           onCreate={onCreate}
           onTrash={onTrash}
         />
       </aside>
       <section className="lt-pane lt-pane-editor">
-        {/* M4 Task 3 过渡桥：EditorPanel 已换会话式 props（node → activeTab+sessions）；
-            标签开启/激活换入归 Task 4（TabBar 与 openFile 前置拦截），onDocChanged/保存管线归
-            Task 5（SaveController）——本批 activeTab 恒空，编辑区显示空态占位 */}
+        {/* TabBar 仅在有标签时占位（全关回空态，M4 spec §3）；激活=仅改 activeId（tabs 不动） */}
+        {tabsOp.tabs.length > 0 ? (
+          <TabBar
+            tabs={tabsOp.tabs}
+            activeId={tabsOp.activeId}
+            onActivate={(id) => setTabsOp((prev) => ({ ...prev, activeId: id }))}
+            onClose={closeTabById}
+          />
+        ) : null}
         <EditorPanel
           sessions={sessions}
-          activeTab={null}
+          activeTab={activeTab}
           debounceMs={debounceMs}
-          onDocChanged={() => undefined}
+          onDocChanged={(id, text) => saveControllerRef.current?.edit(id, text)}
+          onSaveRequest={() => saveControllerRef.current?.flushActive()}
         />
       </section>
       <section className="lt-pane lt-pane-preview">
-        <PreviewPanel node={selected} />
+        <PreviewPanel node={activeTab?.meta ?? null} />
       </section>
       {statusBarSlot}
     </div>
@@ -169,6 +252,18 @@ const ROOT_NODE: NodeMeta = {
   createdAt: '2026-09-18T00:00:00.000+08:00',
   updatedAt: '2026-09-18T00:00:00.000+08:00',
 };
+
+/**
+ * 文本可编辑 MIME 判定（原 EditorPanel 同名函数语义逐字迁入——openFile 前置拦截唯一判定点；
+ * 主进程 isTextualMime 归写库索引域，B.2 禁跨层 import）
+ */
+function isTextLike(mimeType: string): boolean {
+  return (
+    mimeType.startsWith('text/') ||
+    mimeType === 'application/json' ||
+    mimeType === 'application/xml'
+  );
+}
 
 /** 按 id 路径复制替换节点（treeModel 同款不可变风格） */
 function replaceNode(

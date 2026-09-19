@@ -17,8 +17,11 @@ import { drawSelection, EditorView, keymap, lineNumbers } from '@codemirror/view
 import { languageFor } from './language';
 
 export interface EditorHandlers {
-  /** 文档变更回报（含 IME composition 期间——spec §4 已知边界） */
-  readonly onDocChanged: (text: string) => void;
+  /**
+   * 文档变更回报（含 IME composition 期间——spec §4 已知边界）；第二参为本次更新后的库新
+   * EditorState（Task 4 签名演进：Workspace 据此同步 TabSessions 会话态，A.1-9 整体替换）
+   */
+  readonly onDocChanged: (text: string, state: EditorState) => void;
   /** 滚动回报（会话级滚动记忆，spec §3） */
   readonly onScroll: (scrollTop: number) => void;
 }
@@ -36,7 +39,7 @@ export function editorExtensions(mimeType: string, handlers: EditorHandlers): Ex
     search(),
     ...(language === null ? [] : [language]),
     EditorView.updateListener.of((update) => {
-      if (update.docChanged) handlers.onDocChanged(update.state.doc.toString());
+      if (update.docChanged) handlers.onDocChanged(update.state.doc.toString(), update.state);
     }),
     EditorView.domEventHandlers({
       // scroll 事件不冒泡，CM6 经 scrollTargets 监听统一路由到本回调（runHandlers("scroll")）
