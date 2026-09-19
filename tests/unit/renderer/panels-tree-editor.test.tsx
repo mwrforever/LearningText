@@ -47,10 +47,14 @@ describe('TreePanel', () => {
         <TreePanel
           roots={roots}
           selectedId={null}
+          moveMode={false}
+          moveTargetId={null}
           onToggle={vi.fn()}
           onSelect={onSelect}
           onCreate={onCreate}
           onTrash={vi.fn()}
+          onRename={vi.fn()}
+          onStartMove={vi.fn()}
         />,
       );
     });

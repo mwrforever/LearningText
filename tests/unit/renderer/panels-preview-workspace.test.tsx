@@ -79,6 +79,22 @@ afterEach(() => {
   unsubscribes.length = 0;
 });
 
+/** 桩 + 捕获 onVfsChanged 订阅回调（供逐事件 dispatch 驱动广播消费链路：占位态/css 热替换/meta 同步） */
+function stubApiCaptureVfs(overrides: Partial<Record<string, unknown>> = {}): {
+  api: Record<string, ReturnType<typeof vi.fn>>;
+  vfsHandlers: Array<(b: VfsChangedBroadcast) => void>;
+} {
+  const vfsHandlers: Array<(b: VfsChangedBroadcast) => void> = [];
+  const api = stubApi({
+    onVfsChanged: vi.fn((callback: (b: VfsChangedBroadcast) => void) => {
+      vfsHandlers.push(callback);
+      return vi.fn();
+    }),
+    ...overrides,
+  }) as Record<string, ReturnType<typeof vi.fn>>;
+  return { api, vfsHandlers };
+}
+
 describe('PreviewPanel', () => {
   it('沙箱属性逐字 + src=vfs URL + 无选中占位文案', () => {
     stubApi();
@@ -112,6 +128,96 @@ describe('PreviewPanel', () => {
     expect(unsub).toBeDefined();
     // 主控裁决强化：断言 React cleanup 确实调用了退订函数，而非仅要求其存在
     expect(unsub).toHaveBeenCalled();
+  });
+
+  it('订阅挂载期一次：node 变化不退订重订（终审 M-4 收口，消丢广播微窗口）', async () => {
+    const api = stubApi() as unknown as { onVfsChanged: ReturnType<typeof vi.fn> };
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<PreviewPanel node={meta(2, 'a.html')} />);
+    });
+    await act(async () => {
+      tree.render(<PreviewPanel node={meta(3, 'b.html')} />);
+    });
+    await act(async () => {
+      tree.render(<PreviewPanel node={null} />);
+    });
+    expect(api.onVfsChanged).toHaveBeenCalledTimes(1); // 依赖恒空，不随 node 重建
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('written 命中当前节点且 getNode 反查失败 → 「文档不可用」占位；切节点复位', async () => {
+    const { vfsHandlers } = stubApiCaptureVfs({
+      getNode: vi.fn(() =>
+        Promise.resolve({ ok: false, error: { code: 'E_VFS_NOT_FOUND', message: '节点不存在' } }),
+      ),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<PreviewPanel node={meta(2, 'a.html')} />);
+    });
+    expect(container.querySelector('iframe')).not.toBeNull();
+    await act(async () => {
+      vfsHandlers[0]?.({ rev: 1, event: { type: 'written', node: meta(2, 'a.html') } });
+    });
+    // 反查失败：iframe 摘除、占位态呈现（不重载旧路径，spec §6.1）
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(container.textContent).toContain('文档不可用');
+    // 切节点即复位：占位态属上一节点的不可用事实，不沾染后续节点
+    await act(async () => {
+      tree.render(<PreviewPanel node={meta(3, 'b.html')} />);
+    });
+    expect(container.textContent).not.toContain('文档不可用');
+    expect(container.querySelector('iframe')).not.toBeNull();
+    tree.unmount();
+  });
+
+  it('written 命中当前节点且反查成功 → 不落占位，刷新链继续（iframe 保持）', async () => {
+    const { vfsHandlers } = stubApiCaptureVfs({
+      getNode: vi.fn(() => Promise.resolve({ ok: true, value: meta(2, 'a.html') })),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<PreviewPanel node={meta(2, 'a.html')} />);
+    });
+    await act(async () => {
+      vfsHandlers[0]?.({ rev: 1, event: { type: 'written', node: meta(2, 'a.html') } });
+    });
+    expect(container.querySelector('iframe')).not.toBeNull();
+    expect(container.textContent).not.toContain('文档不可用');
+    tree.unmount();
+  });
+
+  it('written 为 text/css 且非当前节点 → fetch 拉新文本 postMessage 触发热替换（载荷含 path/text）', async () => {
+    const { vfsHandlers } = stubApiCaptureVfs();
+    const fetchStub = vi.fn(() =>
+      Promise.resolve({ text: () => Promise.resolve('body{color:red}') }),
+    );
+    vi.stubGlobal('fetch', fetchStub);
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<PreviewPanel node={meta(2, 'a.html')} />);
+    });
+    const iframe = container.querySelector('iframe');
+    expect(iframe).not.toBeNull();
+    expect(iframe?.contentWindow).not.toBeNull();
+    // jsdom iframe 内容窗 postMessage 探针（测试期桩适配，先例同 stubApi 的 as 注释）
+    const postMessage = vi.spyOn(iframe?.contentWindow as Window, 'postMessage');
+    await act(async () => {
+      vfsHandlers[0]?.({
+        rev: 1,
+        event: { type: 'written', node: { ...meta(5, 'style.css'), mimeType: 'text/css' } },
+      });
+    });
+    expect(fetchStub).toHaveBeenCalledWith('vfs://local/style.css');
+    expect(postMessage).toHaveBeenCalledWith(
+      { type: 'lt:css-swap', path: '/style.css', text: 'body{color:red}' },
+      '*',
+    );
+    vi.unstubAllGlobals();
+    tree.unmount();
   });
 });
 
@@ -686,6 +792,196 @@ describe('Workspace 三栏折叠与布局记忆（M4 Task 7）', () => {
       container.querySelector('.lt-pane-preview')?.classList.contains('lt-pane-collapsed'),
     ).toBe(true);
     expect(container.querySelector('button[aria-label="展开预览栏"]')).not.toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+});
+
+// 树 rename/move 链路（M4 Task 8，spec §6.2 D8/§6.1）：重命名模态预填/成功关闭/失败 toast、
+// move 选择模式点选语义与确认载荷、renamed 广播 getNode 反查回写标签 meta（E2E 归 Task 10，
+// 此处单测断言接线；选中态=activeId 为既有锚，故源节点恒为已开标签文件）
+describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
+  /** 目录内文件 meta（parentId/virtualPath 对齐目录层级） */
+  function fileInDir(): NodeMeta {
+    return { ...meta(3, 'a.html'), parentId: 2, virtualPath: '/笔记/a.html' };
+  }
+
+  /** 装配 Workspace 并开出 a.html 标签（选中态 = activeId，rename/move 源）；返回根供卸载 */
+  async function setupWithFileTab(overrides: Partial<Record<string, unknown>> = {}): Promise<{
+    api: Record<string, ReturnType<typeof vi.fn>>;
+    vfsHandlers: Array<(b: VfsChangedBroadcast) => void>;
+    tree: ReturnType<typeof createRoot>;
+  }> {
+    const { api, vfsHandlers } = stubApiCaptureVfs({
+      listChildren: vi.fn((request: { parentId?: number }) =>
+        request.parentId === 1
+          ? Promise.resolve({ ok: true, value: [meta(2, '笔记', 'dir')] })
+          : Promise.resolve({ ok: true, value: [fileInDir()] }),
+      ),
+      readFile: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: { content: new TextEncoder().encode('<p>正文</p>'), meta: fileInDir() },
+        }),
+      ),
+      ...overrides,
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    // 展开「笔记」（dir 点选=展开）→ 点选 a.html（开标签，选中态就位）
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === '笔记')
+        ?.click();
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === 'a.html')
+        ?.click();
+    });
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    return { api, vfsHandlers, tree };
+  }
+
+  /** 按文本找钮点击（树/工具栏共用） */
+  async function clickButton(text: string): Promise<void> {
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === text)
+        ?.click();
+    });
+  }
+
+  it('重命名：模态预填当前名，确认按 trim 新名调 renameNode，成功后模态关闭', async () => {
+    const { api, tree } = await setupWithFileTab({
+      renameNode: vi.fn(() => Promise.resolve({ ok: true, value: { affectedCount: 1 } })),
+    });
+    await clickButton('重命名');
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="新名称"]');
+    expect(input?.value).toBe('a.html'); // 树内当前名预填
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, '  新名.html  ');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="确认重命名"]')?.click();
+    });
+    expect(api.renameNode).toHaveBeenCalledWith({ nodeId: 3, newName: '新名.html' });
+    expect(container.querySelector('[role="dialog"]')).toBeNull(); // 成功关闭；树/meta 归广播链
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('重命名失败：toast 呈现原因且模态保留（可改后重试）', async () => {
+    const { tree } = await setupWithFileTab({
+      renameNode: vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          error: { code: 'E_VFS_DUPLICATE_NAME', message: '同名节点已存在' },
+        }),
+      ),
+    });
+    // ToastHost 与 Workspace 同容器装配（二进制拦截用例同款结构），toast 文案断言才有落点
+    const toastRoot = createRoot(document.body);
+    await act(async () => {
+      toastRoot.render(<ToastHost />);
+    });
+    await clickButton('重命名');
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="确认重命名"]')?.click();
+    });
+    expect(document.body.textContent).toContain('重命名失败：同名节点已存在');
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull(); // 模态保留
+    act(() => {
+      tree.unmount();
+    });
+    act(() => {
+      toastRoot.unmount();
+    });
+  });
+
+  it('move 选择模式：dir 点选记账目标（data-move-target）、file 点选禁用、确认按 nodeId+targetDirId 调 moveNode', async () => {
+    const { api, tree } = await setupWithFileTab({
+      moveNode: vi.fn(() => Promise.resolve({ ok: true, value: { affectedCount: 1 } })),
+    });
+    await clickButton('移动到…');
+    const bar = (): Element | null => container.querySelector('[aria-label="移动选择模式"]');
+    const confirmBtn = (): HTMLButtonElement | null =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="确认移动"]');
+    expect(bar()).not.toBeNull();
+    expect(confirmBtn()?.disabled).toBe(true); // 目标未点选：确认禁用
+    // file 点选禁用（spec §6.2 D8）
+    const treeFileBtn = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('nav[aria-label="资源树"] button'),
+    ).find((b) => b.textContent === 'a.html');
+    expect(treeFileBtn?.disabled).toBe(true);
+    // dir 点选=选定目标：data-move-target 高亮、确认解禁
+    await clickButton('笔记');
+    const dirBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === '笔记',
+    );
+    expect(dirBtn?.getAttribute('data-move-target')).toBe('true');
+    expect(confirmBtn()?.disabled).toBe(false);
+    await act(async () => {
+      confirmBtn()?.click();
+    });
+    expect(api.moveNode).toHaveBeenCalledWith({ nodeId: 3, targetDirId: 2 });
+    expect(bar()).toBeNull(); // 成功退出模式；树/meta 归 moved 广播链
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('move 选择模式取消钮与 Esc 均退出（取消语义，不发起 moveNode）', async () => {
+    const { api, tree } = await setupWithFileTab({
+      moveNode: vi.fn(() => Promise.resolve({ ok: true, value: { affectedCount: 1 } })),
+    });
+    await clickButton('移动到…');
+    expect(container.querySelector('[aria-label="移动选择模式"]')).not.toBeNull();
+    // 取消钮退出
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="取消移动"]')?.click();
+    });
+    expect(container.querySelector('[aria-label="移动选择模式"]')).toBeNull();
+    // 再进模式后 Esc 退出（window 级 keydown 成对挂卸）
+    await clickButton('移动到…');
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(container.querySelector('[aria-label="移动选择模式"]')).toBeNull();
+    expect(api.moveNode).not.toHaveBeenCalled();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('renamed 广播 → getNode 反查回写标签 meta（同步链，spec §6.1：标签名随新鲜 meta 更新）', async () => {
+    const { api, vfsHandlers, tree } = await setupWithFileTab({
+      getNode: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: { ...fileInDir(), name: '新名.html', virtualPath: '/笔记/新名.html' },
+        }),
+      ),
+    });
+    await act(async () => {
+      // 广播主进程侧 fan-out 语义：PreviewPanel（恒挂载、先注册）与 Workspace（后注册）
+      // 各持一份订阅，逐份下发（Preview 侧对 renamed 无感知，仅 Workspace 消费）
+      vfsHandlers.forEach((handler) => {
+        handler({ rev: 1, event: { type: 'renamed', nodeId: 3, affectedCount: 1 } });
+      });
+    });
+    expect(api.getNode).toHaveBeenCalledWith({ nodeId: 3 });
+    const activeTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (b) => b.getAttribute('aria-current') === 'true',
+    );
+    expect(activeTab?.textContent).toBe('新名.html');
     act(() => {
       tree.unmount();
     });

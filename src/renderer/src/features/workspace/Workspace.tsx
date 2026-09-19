@@ -6,6 +6,8 @@
  * edit、关标签 flush 后关、保存钮 flushActive、卸载 dispose 成对释放。三栏折叠/宽度拖拽
  * （M4 spec §5.1 FR-SHELL-01）：layoutModel 纯函数换算比例，折叠与拖拽终值经 settings
  * shell 域持久化（get→merge→set 全量写回），拖拽中仅本地态防 settings 写风暴。
+ * 树 rename/move（M4 spec §6.2 D8）：重命名行内模态与 move 选择模式态在此提升；
+ * renamed/moved 广播后 getNode 反查回写标签 meta（§6.1 同步链，selected 即 activeTab）。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -20,15 +22,18 @@ import { PreviewPanel } from '../preview/PreviewPanel';
 import {
   applyBroadcast,
   collectStaleExpanded,
+  findNode,
+  isDescendant,
   makeTreeRoot,
   withChildren,
   type TreeNode,
 } from '../tree/treeModel';
+import { RenameDialog } from '../tree/RenameDialog';
 import { TreePanel } from '../tree/TreePanel';
 import { showToast } from '../ui/Toast';
 import { TabBar } from './TabBar';
 import { ratioFromPointer } from './layoutModel';
-import { MAX_TABS, closeTab, openTab, setTabDirty, type TabsOp } from './tabModel';
+import { MAX_TABS, closeTab, openTab, setTabDirty, updateTabMeta, type TabsOp } from './tabModel';
 
 export interface WorkspaceProps {
   /** 全局操作条插槽（M4 原生菜单的渲染层对应面）；未注入时不渲染占位条 */
@@ -48,6 +53,16 @@ export function Workspace({
   const [autoSaveMs, setAutoSaveMs] = useState(3000);
   // 三栏布局态（FR-SHELL-01）：折叠三态 + 宽度比例；启动时由 settingsGet 恢复（装配 effect）
   const [layout, setLayout] = useState<ShellLayout>(DEFAULT_LAYOUT);
+  // move 选择模式（M4 spec §6.2 D8）：null=未进入；targetId=已点选的目标目录（null=尚待点选）。
+  // 源节点不单独存态——进入模式要求有选中，且模式期间 file 点选禁用、dir 点选仅记账目标，
+  // 选中（activeId）不可能变化，直接以 tabsOp.activeId 为源
+  const [moveMode, setMoveMode] = useState<{ targetId: number | null } | null>(null);
+  // move 请求在途（确认钮防重复提交）
+  const [moveInFlight, setMoveInFlight] = useState(false);
+  // 行内重命名模态目标（M4 spec §6.2 D8）：null=关闭；name 取树内当前名预填
+  const [renameTarget, setRenameTarget] = useState<{ id: number; name: string } | null>(null);
+  // rename 请求在途（模态确认钮防重复提交）
+  const [renameInFlight, setRenameInFlight] = useState(false);
   // 布局实时镜像（settingsRef/tabsRef 同款同步模式）：拖拽 pointerup 持久化必须读「此刻」
   // 布局——pointermove 高频更新下事件闭包 layout 必陈旧；事件处理器内同步记账，渲染期不写
   const layoutRef = useRef<ShellLayout>(layout);
@@ -119,10 +134,20 @@ export function Workspace({
     };
   }, []);
 
-  // 树广播订阅（cleanup 成对）：结构同步 + stale 展开层重取（spec §4.3）
+  // 树广播订阅（cleanup 成对）：结构同步 + stale 展开层重取（spec §4.3）；rename/move 后
+  // meta 同步链（spec §6.1）：getNode 反查新鲜 meta 回写标签（selected 即 activeTab，
+  // 路径/预览自然新鲜）；未开标签时 updateTabMeta 按 id 精确同步、无命中即无副作用
   useEffect(() => {
     const unsubscribe = window.api.onVfsChanged((broadcast) => {
       setRoots((prev) => applyBroadcast(prev, broadcast));
+      const event = broadcast.event;
+      if (event.type === 'renamed' || event.type === 'moved') {
+        void window.api.getNode({ nodeId: event.nodeId }).then((result) => {
+          if (result.ok) {
+            setTabsOp((prev) => updateTabMeta(prev, result.value.id, result.value));
+          }
+        });
+      }
     });
     return unsubscribe;
   }, []);
@@ -194,6 +219,81 @@ export function Workspace({
       }
     });
   }
+
+  // —— 树 rename/move（M4 spec §6.2 D8）——
+  // move 模式派生量（渲染期纯读）：源 = 选中节点（模式期间选中不可变，见 moveMode 注），
+  // 目标为自身/其后代时确认禁用 + 提示（isDescendant 不含自身，自移在此并判）
+  const moveSourceId = moveMode !== null ? tabsOp.activeId : null;
+  const moveTargetId = moveMode !== null ? moveMode.targetId : null;
+  const moveInvalid =
+    moveSourceId !== null &&
+    moveTargetId !== null &&
+    (moveTargetId === moveSourceId || isDescendant(roots, moveSourceId, moveTargetId));
+
+  /**
+   * 树点选统一入口：常规模式走 openFile（开标签）；move 选择模式下 dir 点选临时变为
+   * 「选定目标」记账（file 点选已被 TreePanel 禁用），合法性判定归确认钮
+   */
+  function onSelectNode(node: NodeMeta): void {
+    if (moveMode !== null) {
+      if (node.nodeType === 'dir') setMoveMode({ targetId: node.id });
+      return;
+    }
+    openFile(node);
+  }
+
+  /** 进入 move 选择模式：目标待点选（源 = 当前选中，入口钮仅在非根选中时可达） */
+  function startMove(): void {
+    setMoveMode({ targetId: null });
+  }
+
+  /** 确认移动：目标非法/未定直接返回（钮已禁用的同源守卫）；成功退出模式，失败 toast 保留模式可重试 */
+  function confirmMove(): void {
+    if (moveSourceId === null || moveTargetId === null || moveInvalid) return;
+    setMoveInFlight(true);
+    void window.api.moveNode({ nodeId: moveSourceId, targetDirId: moveTargetId }).then((result) => {
+      setMoveInFlight(false);
+      if (result.ok) {
+        // 成功退出选择模式；树路径展示与标签 meta 由 moved 广播链刷新（spec §6.1）
+        setMoveMode(null);
+      } else {
+        showToast(`移动失败：${result.error.message}`);
+      }
+    });
+  }
+
+  /** 重命名入口（树工具栏钮）：取树内当前名预填模态；树未命中静默忽略（入口仅在树选中时可达） */
+  function onRename(id: number): void {
+    const node = findNode(roots, id);
+    if (node === null) return;
+    setRenameTarget({ id, name: node.meta.name });
+  }
+
+  /** 确认重命名：成功关闭模态，失败 toast 保留模态可改后重试；树/meta 由 renamed 广播链刷新 */
+  function confirmRename(newName: string): void {
+    if (renameTarget === null) return;
+    setRenameInFlight(true);
+    void window.api.renameNode({ nodeId: renameTarget.id, newName }).then((result) => {
+      setRenameInFlight(false);
+      if (result.ok) {
+        setRenameTarget(null);
+      } else {
+        showToast(`重命名失败：${result.error.message}`);
+      }
+    });
+  }
+
+  // move 选择模式 Esc 退出（spec §6.2 D8）：keydown 监听随模式进出成对挂卸
+  useEffect(() => {
+    if (moveMode === null) return undefined;
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setMoveMode(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [moveMode]);
 
   /**
    * 打开文件为标签（树点选/新建文件唯一入口）：非文本前置拦截（FR-EDIT-04 归后续批次，
@@ -394,11 +494,42 @@ export function Workspace({
             <TreePanel
               roots={roots}
               selectedId={tabsOp.activeId}
+              moveMode={moveMode !== null}
+              moveTargetId={moveTargetId}
               onToggle={onToggle}
-              onSelect={openFile}
+              onSelect={onSelectNode}
               onCreate={onCreate}
               onTrash={onTrash}
+              onRename={onRename}
+              onStartMove={startMove}
             />
+            {/* move 选择模式操作条（spec §6.2 D8）：目标未定/自身或后代/在途时确认禁用；
+                Esc 或取消退出。目标非法提示就地呈现（不占 toast 生命周期） */}
+            {moveMode !== null ? (
+              <div className="lt-move-bar" role="group" aria-label="移动选择模式">
+                {moveInvalid ? <span className="lt-move-hint">不能移动到自身或其后代</span> : null}
+                <button
+                  type="button"
+                  aria-label="确认移动"
+                  disabled={moveTargetId === null || moveInvalid || moveInFlight}
+                  onClick={confirmMove}
+                >
+                  确认移动
+                </button>
+                <button type="button" aria-label="取消移动" onClick={() => setMoveMode(null)}>
+                  取消
+                </button>
+              </div>
+            ) : null}
+            {/* 行内重命名模态（spec §6.2 D8）：预填当前名，确认/取消经 RenameDialog 回传 */}
+            {renameTarget !== null ? (
+              <RenameDialog
+                nodeName={renameTarget.name}
+                inFlight={renameInFlight}
+                onConfirm={confirmRename}
+                onCancel={() => setRenameTarget(null)}
+              />
+            ) : null}
           </aside>
         )}
         {/* 树分隔条（可拖拽调宽；树栏折叠时收窄条、不响应拖拽，比例维持记忆值） */}

@@ -61,8 +61,13 @@ export function createVfsProtocolHandler(deps: {
     }
     const body = row.content ?? Buffer.alloc(0); // 空文件 content NULL 形态 → 空体（200 合法）
     const etag = etagOf(row.content_hash);
+    // text/* 附加 charset=utf-8（库内容恒 UTF-8 写入，docs/03 §3.2；终审 M-5 修非 ASCII 乱码）。
+    // 仅改响应头：库内 BLOB、content_hash/ETag 一概不参与，304 命中不受影响
+    const contentType = row.mime_type.startsWith('text/')
+      ? `${row.mime_type}; charset=utf-8`
+      : row.mime_type;
     const headers: Record<string, string> = {
-      'Content-Type': row.mime_type,
+      'Content-Type': contentType,
       ETag: etag,
       'Cache-Control': 'no-cache',
       // opaque origin 沙箱文档的 fetch 带 Origin: null 走 CORS（spec §2.3）；无凭据请求通配无泄露面

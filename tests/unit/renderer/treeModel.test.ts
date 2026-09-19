@@ -6,6 +6,7 @@ import {
   applyBroadcast,
   collectStaleExpanded,
   findNode,
+  isDescendant,
   makeTreeRoot,
   withChildren,
 } from '../../../src/renderer/src/features/tree/treeModel';
@@ -71,5 +72,28 @@ describe('treeModel applyBroadcast', () => {
     expect(collectStaleExpanded(after, new Set([1, 2]))).toEqual([2]); // 已展开的 stale 节点待重取
     const purged = applyBroadcast(tree, bcast({ type: 'purged', nodeId: 2, purgedCount: 2 }));
     expect(purged).toHaveLength(0);
+  });
+});
+
+// move 目标合法性判定（M4 spec §6.2 D8）：后代（含多级）命中为真、自身/兄弟/祖先为假、
+// 祖先不存在为假——Workspace 确认移动钮禁用态的唯一判定来源
+describe('treeModel isDescendant', () => {
+  it('直接子级与多级后代命中为真；自身、兄弟、祖先为假；祖先缺失为假', () => {
+    // 结构：根(1) → 笔记(2) → 年度(4) → a.html(3)；兄弟目录(5)——dirNode 助手仅一层，
+    // 多级结构用 makeTreeRoot/withChildren 显式构造
+    const tree = [
+      withChildren(makeTreeRoot({ ...meta(2, 1, '笔记'), nodeType: 'dir' }), [
+        withChildren(makeTreeRoot({ ...meta(4, 2, '年度'), nodeType: 'dir' }), [
+          makeTreeRoot(meta(3, 4, 'a.html')),
+        ]),
+      ]),
+      makeTreeRoot({ ...meta(5, 1, '兄弟'), nodeType: 'dir' }),
+    ];
+    expect(isDescendant(tree, 2, 4)).toBe(true); // 直接子级
+    expect(isDescendant(tree, 2, 3)).toBe(true); // 多级后代
+    expect(isDescendant(tree, 2, 2)).toBe(false); // 自身不算后代（自移判定在调用方另判）
+    expect(isDescendant(tree, 2, 5)).toBe(false); // 兄弟
+    expect(isDescendant(tree, 4, 2)).toBe(false); // 祖先非后代
+    expect(isDescendant(tree, 99, 3)).toBe(false); // 祖先 id 不存在
   });
 });

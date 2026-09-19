@@ -38,6 +38,12 @@ beforeAll(() => {
   vfs.createNode({ parentId: 1, name: '空文件.html', nodeType: 'file' }); // content NULL 形态
   vfs.createNode({
     parentId: 1,
+    name: 'pic.png',
+    nodeType: 'file',
+    content: new Uint8Array([0x89, 0x50, 0x4e, 0x47]), // PNG 魔数占位：charset 边界（二进制不加）断言用
+  });
+  vfs.createNode({
+    parentId: 1,
     name: '回收.html',
     nodeType: 'file',
     content: new Uint8Array(Buffer.from('<p>x</p>', 'utf8')),
@@ -48,17 +54,21 @@ beforeAll(() => {
 });
 
 describe('vfs:// handler 响应语义', () => {
-  it('活文件 200：MIME/ETag/no-cache/CORS 齐，html 带 CSP，css 不带', async () => {
+  it('活文件 200：text/* MIME 附 charset、二进制原样，ETag/no-cache/CORS 齐，html 带 CSP，css 不带', async () => {
     const res = await handler(req(requestUrl('/style.css')));
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toBe('text/css');
+    // text/* 附加 charset=utf-8（库内容恒 UTF-8 写入，docs/03 §3.2；终审 M-5）
+    expect(res.headers.get('content-type')).toBe('text/css; charset=utf-8');
     expect(res.headers.get('access-control-allow-origin')).toBe('*');
     expect(res.headers.get('cache-control')).toBe('no-cache');
     expect(res.headers.get('etag')).toMatch(/^W\/"[0-9a-f]+"$/i);
     expect(res.headers.get('content-security-policy')).toBeNull();
     expect(await res.text()).toBe('body{}');
+    // charset 仅限 text/*：二进制 MIME 按库内值原样下发（策略边界锚）
+    const pngRes = await handler(req(requestUrl('/pic.png')));
+    expect(pngRes.headers.get('content-type')).toBe('image/png');
     const htmlRes = await handler(req(requestUrl('/笔记/index.html')));
-    expect(htmlRes.headers.get('content-type')).toBe('text/html');
+    expect(htmlRes.headers.get('content-type')).toBe('text/html; charset=utf-8');
     expect(htmlRes.headers.get('content-security-policy')).toContain('connect-src vfs:');
   });
 
@@ -140,10 +150,10 @@ describe('vfs:// handler 响应语义', () => {
     expect(viaDotFile.status).toBe(200); // 归一等价 '/笔记/index.html'
   });
 
-  it('HEAD：200 头齐无体', async () => {
+  it('HEAD：200 头齐无体（charset 同 200 语义）', async () => {
     const res = await handler(req(requestUrl('/style.css'), { method: 'HEAD' }));
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toBe('text/css');
+    expect(res.headers.get('content-type')).toBe('text/css; charset=utf-8');
     expect(await res.text()).toBe('');
   });
 

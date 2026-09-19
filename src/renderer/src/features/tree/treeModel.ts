@@ -32,6 +32,28 @@ export function findNode(roots: readonly TreeNode[], id: number): TreeNode | nul
   return null;
 }
 
+/**
+ * 判定 candidateId 是否为 ancestorId 的后代（不含自身，多级命中；M4 spec §6.2 D8
+ * move 目标合法性判定用）。祖先 id 不在树中（未加载/不存在）恒 false——保守放行，
+ * 自身同移与越界交由主进程 E_VFS_INVALID_MOVE 兜底
+ */
+export function isDescendant(
+  roots: readonly TreeNode[],
+  ancestorId: number,
+  candidateId: number,
+): boolean {
+  const ancestor = findNode(roots, ancestorId);
+  if (ancestor === null) return false;
+  const walk = (nodes: readonly TreeNode[]): boolean => {
+    for (const n of nodes) {
+      if (n.meta.id === candidateId) return true;
+      if (walk(n.children)) return true;
+    }
+    return false;
+  };
+  return walk(ancestor.children);
+}
+
 /** 收集「stale 且已展开」的节点 id——组件据此重取 children（expanded 集合 UI 态外部传入） */
 export function collectStaleExpanded(
   roots: readonly TreeNode[],
