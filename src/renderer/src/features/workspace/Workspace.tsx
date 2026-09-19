@@ -3,10 +3,14 @@
  * 更新）+ TabSessions per-tab 会话容器；openFile 前置拦截（非文本 toast 拒开、readFile 成功
  * 才建会话与标签）。树数据/展开集/settings 去抖值照旧在此提升，TreePanel/TabBar/EditorPanel/
  * PreviewPanel 纯 props 消费（A.7-6 单向）。保存管线（SaveController）在此装配：编辑回路
- * edit、关标签 flush 后关、保存钮 flushActive、卸载 dispose 成对释放。壳插槽（toolbar/
- * statusBar）props 预留不动（评审 D5）。
+ * edit、关标签 flush 后关、保存钮 flushActive、卸载 dispose 成对释放。三栏折叠/宽度拖拽
+ * （M4 spec §5.1 FR-SHELL-01）：layoutModel 纯函数换算比例，折叠与拖拽终值经 settings
+ * shell 域持久化（get→merge→set 全量写回），拖拽中仅本地态防 settings 写风暴。
+ * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
+import { DEFAULT_LAYOUT } from '../../../../shared/settings-contract';
+import type { ShellLayout } from '../../../../shared/settings-contract';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import { createEditorState } from '../editor/codemirror';
 import { EditorPanel } from '../editor/EditorPanel';
@@ -23,6 +27,7 @@ import {
 import { TreePanel } from '../tree/TreePanel';
 import { showToast } from '../ui/Toast';
 import { TabBar } from './TabBar';
+import { ratioFromPointer } from './layoutModel';
 import { MAX_TABS, closeTab, openTab, setTabDirty, type TabsOp } from './tabModel';
 
 export interface WorkspaceProps {
@@ -41,6 +46,11 @@ export function Workspace({
   const [tabsOp, setTabsOp] = useState<TabsOp>({ tabs: [], activeId: null });
   const [debounceMs, setDebounceMs] = useState(300);
   const [autoSaveMs, setAutoSaveMs] = useState(3000);
+  // 三栏布局态（FR-SHELL-01）：折叠三态 + 宽度比例；启动时由 settingsGet 恢复（装配 effect）
+  const [layout, setLayout] = useState<ShellLayout>(DEFAULT_LAYOUT);
+  // 布局实时镜像（settingsRef/tabsRef 同款同步模式）：拖拽 pointerup 持久化必须读「此刻」
+  // 布局——pointermove 高频更新下事件闭包 layout 必陈旧；事件处理器内同步记账，渲染期不写
+  const layoutRef = useRef<ShellLayout>(layout);
   // 标签会话容器（M4 spec §3）：TabSessions 为可变容器、随 Workspace 生命周期持有；
   // 渲染期惰性初始化单例（75647f2 先例豁免：仅首次渲染建一次，非副作用）
   const sessionsRef = useRef<TabSessions | null>(null);
@@ -89,6 +99,9 @@ export function Workspace({
       if (alive && result.ok) {
         setDebounceMs(result.value.preview.debounceMs);
         setAutoSaveMs(result.value.editor.autoSaveMs);
+        // 布局记忆恢复（FR-SHELL-01）：ref 同步记账（后续拖拽持久化以恢复值为基准）
+        layoutRef.current = result.value.shell.layout;
+        setLayout(result.value.shell.layout);
       }
     });
     void window.api.listChildren({ parentId: ROOT_ID }).then((result) => {
@@ -240,6 +253,62 @@ export function Workspace({
     setTabsOp((prev) => closeTab(prev, id));
   }
 
+  /**
+   * 布局本地应用（FR-SHELL-01）：仅更新本地态，不触发持久化。拖拽 pointermove 高频路径
+   * 专用——若每次移动都 get→merge→set 写设置将造成 settings 写风暴；ref 先行同步记账，
+   * 保证 pointerup 持久化读到最终比例（不依赖 React 提交时序）
+   */
+  function applyLayout(patch: Partial<ShellLayout>): void {
+    layoutRef.current = { ...layoutRef.current, ...patch };
+    setLayout(layoutRef.current);
+  }
+
+  /**
+   * 布局持久化：get→merge→set 全量写回（Task 1 settings 全量读写语义，shell 域整体替换，
+   * preview/editor 域原样保留）；get 失败静默放弃本次写回（服务侧默认值兜底，无本地可回退态）
+   */
+  function persistLayout(next: ShellLayout): void {
+    void window.api.settingsGet().then((r) => {
+      if (r.ok) void window.api.settingsSet({ ...r.value, shell: { layout: next } });
+    });
+  }
+
+  /** 折叠切换统一入口（单击语义，无高频风险）：本地态与持久化一次完成 */
+  function updateLayout(patch: Partial<ShellLayout>): void {
+    applyLayout(patch);
+    persistLayout(layoutRef.current);
+  }
+
+  /**
+   * 分隔条拖拽（树/预览共用，side 定方向）：pointermove 仅本地态（写风暴防护，见 applyLayout），
+   * pointerup 一次性持久化；监听器 window 级成对移除（资源成对纪律）。树栏偏移取容器左缘、
+   * 预览栏取右缘镜像，换算与钳制归 layoutModel 纯函数
+   */
+  function onDividerPointerDown(
+    side: 'tree' | 'preview',
+    e: React.PointerEvent<HTMLDivElement>,
+  ): void {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const host = e.currentTarget.parentElement;
+    if (host === null) return;
+    const onMove = (move: PointerEvent): void => {
+      const rect = host.getBoundingClientRect();
+      const offset = side === 'tree' ? move.clientX - rect.left : rect.right - move.clientX;
+      applyLayout(
+        side === 'tree'
+          ? { treeWidthRatio: ratioFromPointer(rect.width, offset) }
+          : { previewWidthRatio: ratioFromPointer(rect.width, offset) },
+      );
+    };
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      persistLayout(layoutRef.current);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+
   // 激活标签同步给控制器（flushActive 语义基准；tabModel 补位/聚焦后随 activeId 联动）
   useEffect(() => {
     saveController.setActiveNode(tabsOp.activeId);
@@ -283,40 +352,143 @@ export function Workspace({
     };
   }, [saveController]);
 
+  // —— 渲染段：grid 模板列内联（M4 spec §5.1 D5）——
+  // 列序：树 | 树分隔条 | 编辑器前分隔条（固定宽）| 编辑器（1fr 自适应占余）| 预览分隔条 | 预览；
+  // 折叠栏收窄条（8px，仅展开钮可视），编辑器折叠收 0px（容器 display:none 保持挂载，保存管线照常）
+  const gridColumns = [
+    layout.treeCollapsed ? '8px' : `${(layout.treeWidthRatio * 100).toFixed(2)}%`,
+    layout.treeCollapsed ? '8px' : '4px', // 分隔条
+    '4px', // 编辑器前分隔条（固定宽）
+    layout.editorCollapsed ? '0px' : '1fr',
+    layout.previewCollapsed ? '8px' : '4px',
+    layout.previewCollapsed ? '8px' : `${(layout.previewWidthRatio * 100).toFixed(2)}%`,
+  ].join(' ');
+
   return (
     <div className="lt-workspace">
       {toolbarSlot}
-      <aside className="lt-pane lt-pane-tree">
-        <TreePanel
-          roots={roots}
-          selectedId={tabsOp.activeId}
-          onToggle={onToggle}
-          onSelect={openFile}
-          onCreate={onCreate}
-          onTrash={onTrash}
+      {/* 三栏网格容器（内联列模板；工具栏/状态栏插槽留在外层，不占三栏轨道） */}
+      <div className="lt-panes" style={{ gridTemplateColumns: gridColumns }}>
+        {layout.treeCollapsed ? (
+          <aside className="lt-pane lt-pane-tree lt-pane-collapsed">
+            <button
+              type="button"
+              aria-label="展开树栏"
+              onClick={() => updateLayout({ treeCollapsed: false })}
+            >
+              »
+            </button>
+          </aside>
+        ) : (
+          <aside className="lt-pane lt-pane-tree">
+            <div className="lt-pane-titlebar">
+              <span>资源树</span>
+              <button
+                type="button"
+                aria-label="折叠树栏"
+                onClick={() => updateLayout({ treeCollapsed: true })}
+              >
+                «
+              </button>
+            </div>
+            <TreePanel
+              roots={roots}
+              selectedId={tabsOp.activeId}
+              onToggle={onToggle}
+              onSelect={openFile}
+              onCreate={onCreate}
+              onTrash={onTrash}
+            />
+          </aside>
+        )}
+        {/* 树分隔条（可拖拽调宽；树栏折叠时收窄条、不响应拖拽，比例维持记忆值） */}
+        <div
+          className="lt-divider lt-divider-tree"
+          role="separator"
+          aria-orientation="vertical"
+          onPointerDown={layout.treeCollapsed ? undefined : (e) => onDividerPointerDown('tree', e)}
         />
-      </aside>
-      <section className="lt-pane lt-pane-editor">
-        {/* TabBar 仅在有标签时占位（全关回空态，M4 spec §3）；激活=仅改 activeId（tabs 不动） */}
-        {tabsOp.tabs.length > 0 ? (
-          <TabBar
-            tabs={tabsOp.tabs}
-            activeId={tabsOp.activeId}
-            onActivate={(id) => setTabsOp((prev) => ({ ...prev, activeId: id }))}
-            onClose={closeTabById}
+        {/* 编辑器前分隔条（固定 4px 装饰轨）：编辑器折叠时承载展开钮——折叠容器 display:none
+            的唯一展开回口（轨道 0px 内不放交互元素） */}
+        {layout.editorCollapsed ? (
+          <div className="lt-divider lt-divider-editor lt-divider-editor-toggle">
+            <button
+              type="button"
+              aria-label="展开编辑器"
+              onClick={() => updateLayout({ editorCollapsed: false })}
+            >
+              »
+            </button>
+          </div>
+        ) : (
+          <div className="lt-divider lt-divider-editor" aria-hidden="true" />
+        )}
+        <section
+          className={`lt-pane lt-pane-editor${layout.editorCollapsed ? ' lt-pane-collapsed' : ''}`}
+          style={layout.editorCollapsed ? { display: 'none' } : undefined}
+        >
+          <div className="lt-pane-titlebar">
+            <span>编辑器</span>
+            <button
+              type="button"
+              aria-label="折叠编辑器"
+              onClick={() => updateLayout({ editorCollapsed: true })}
+            >
+              «
+            </button>
+          </div>
+          {/* TabBar 仅在有标签时占位（全关回空态，M4 spec §3）；激活=仅改 activeId（tabs 不动） */}
+          {tabsOp.tabs.length > 0 ? (
+            <TabBar
+              tabs={tabsOp.tabs}
+              activeId={tabsOp.activeId}
+              onActivate={(id) => setTabsOp((prev) => ({ ...prev, activeId: id }))}
+              onClose={closeTabById}
+            />
+          ) : null}
+          <EditorPanel
+            sessions={sessions}
+            activeTab={activeTab}
+            debounceMs={debounceMs}
+            onDocChanged={(id, text) => saveController.edit(id, text)}
+            onSaveRequest={() => saveController.flushActive()}
           />
-        ) : null}
-        <EditorPanel
-          sessions={sessions}
-          activeTab={activeTab}
-          debounceMs={debounceMs}
-          onDocChanged={(id, text) => saveController.edit(id, text)}
-          onSaveRequest={() => saveController.flushActive()}
+        </section>
+        {/* 预览分隔条（可拖拽调宽；预览栏折叠时同理不响应拖拽） */}
+        <div
+          className="lt-divider lt-divider-preview"
+          role="separator"
+          aria-orientation="vertical"
+          onPointerDown={
+            layout.previewCollapsed ? undefined : (e) => onDividerPointerDown('preview', e)
+          }
         />
-      </section>
-      <section className="lt-pane lt-pane-preview">
-        <PreviewPanel node={activeTab?.meta ?? null} />
-      </section>
+        {layout.previewCollapsed ? (
+          <section className="lt-pane lt-pane-preview lt-pane-collapsed">
+            <button
+              type="button"
+              aria-label="展开预览栏"
+              onClick={() => updateLayout({ previewCollapsed: false })}
+            >
+              «
+            </button>
+          </section>
+        ) : (
+          <section className="lt-pane lt-pane-preview">
+            <div className="lt-pane-titlebar">
+              <span>预览</span>
+              <button
+                type="button"
+                aria-label="折叠预览栏"
+                onClick={() => updateLayout({ previewCollapsed: true })}
+              >
+                »
+              </button>
+            </div>
+            <PreviewPanel node={activeTab?.meta ?? null} />
+          </section>
+        )}
+      </div>
       {statusBarSlot}
     </div>
   );

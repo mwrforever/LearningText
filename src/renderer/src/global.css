@@ -7,3 +7,18 @@ body {
     'Microsoft YaHei',
     sans-serif;
 }
+
+/* 三栏工作台网格（M4 FR-SHELL-01）：列模板（折叠窄条/宽度比例/分隔条）由 Workspace 内联
+   注入 gridTemplateColumns，此处仅承载网格显示基线；样式经 class，无新 CSP 面 */
+.lt-workspace {
+  display: grid;
+}
+
+.lt-panes {
+  display: grid;
+}
+
+/* 折叠窄条：仅保留展开钮可视，残留内容溢出隐藏（比例列/分隔条轨由内联模板决定） */
+.lt-pane-collapsed {
+  overflow: hidden;
+}

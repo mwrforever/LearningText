@@ -5,7 +5,7 @@ import { act } from 'react';
 import { EditorView } from '@codemirror/view';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_SETTINGS } from '../../../src/shared/settings-contract';
+import { DEFAULT_LAYOUT, DEFAULT_SETTINGS } from '../../../src/shared/settings-contract';
 import type { ShellCommand } from '../../../src/shared/shell-contract';
 import type { NodeMeta, VfsChangedBroadcast } from '../../../src/shared/vfs-contract';
 import { PreviewPanel } from '../../../src/renderer/src/features/preview/PreviewPanel';
@@ -53,6 +53,7 @@ function stubApi(overrides: Partial<Record<string, unknown>> = {}): Record<strin
       return unsub;
     }),
     settingsGet: vi.fn(() => Promise.resolve({ ok: true, value: DEFAULT_SETTINGS })),
+    settingsSet: vi.fn(() => Promise.resolve({ ok: true, value: DEFAULT_SETTINGS })),
     onVfsChanged: vi.fn((callback: (b: VfsChangedBroadcast) => void) => {
       // 主控裁决强化：退订函数为 vi.fn 桩，卸载后可断言 cleanup 确实调用（仅「存在」断言无法暴露漏 cleanup）
       const unsub = vi.fn(() => {
@@ -548,6 +549,143 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
       (b) => b.getAttribute('aria-current') === 'true',
     );
     expect(active?.textContent).toBe(`f${MAX_TABS}.html`);
+    act(() => {
+      tree.unmount();
+    });
+  });
+});
+
+// 三栏折叠与布局记忆（M4 Task 7，FR-SHELL-01）：折叠/展开经 aria-label 锚点驱动，
+// 折叠态经折叠类名与内联样式断言（jsdom 无布局引擎，不碰 getBoundingClientRect 实测值；
+// 拖拽几何换算本体已在 layoutModel 纯函数单测覆盖，此处只验接线）
+describe('Workspace 三栏折叠与布局记忆（M4 Task 7）', () => {
+  /** 按 aria-label 找钮点击（折叠/展开钮无文本语义，统一走可访问名锚点） */
+  async function clickAriaLabel(label: string): Promise<void> {
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)?.click();
+    });
+  }
+
+  it('折叠树栏：容器带折叠类、窄条展开钮反向出现；settingsSet 以 get→merge→set 全量写回 shell.layout', async () => {
+    const api = stubApi() as unknown as { settingsSet: ReturnType<typeof vi.fn> };
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await clickAriaLabel('折叠树栏');
+    const treePane = container.querySelector('.lt-pane-tree');
+    expect(treePane?.classList.contains('lt-pane-collapsed')).toBe(true);
+    expect(container.querySelector('button[aria-label="展开树栏"]')).not.toBeNull();
+    // 全量写回语义：get 到的设置原样保留 preview/editor 域，仅 shell.layout 换为折叠态
+    expect(api.settingsSet).toHaveBeenCalledWith({
+      ...DEFAULT_SETTINGS,
+      shell: { layout: { ...DEFAULT_LAYOUT, treeCollapsed: true } },
+    });
+    // 反向展开：折叠类摘除、窄条展开钮消失
+    await clickAriaLabel('展开树栏');
+    expect(container.querySelector('.lt-pane-tree')?.classList.contains('lt-pane-collapsed')).toBe(
+      false,
+    );
+    expect(container.querySelector('button[aria-label="展开树栏"]')).toBeNull();
+    expect(api.settingsSet).toHaveBeenLastCalledWith({
+      ...DEFAULT_SETTINGS,
+      shell: { layout: { ...DEFAULT_LAYOUT, treeCollapsed: false } },
+    });
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('折叠编辑器：容器隐藏（display:none + 折叠类）但 EditorPanel 保持挂载，保存态照常呈现', async () => {
+    stubApi({
+      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
+      readFile: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: { content: new TextEncoder().encode('<p>正文</p>'), meta: meta(3, 'a.html') },
+        }),
+      ),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    // 先开标签让 CM 会话就绪：编辑器折叠后视图 DOM 必须仍在（保存管线照常的结构前提）
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === 'a.html')
+        ?.click();
+    });
+    expect(container.querySelector('.cm-editor')).not.toBeNull();
+    await clickAriaLabel('折叠编辑器');
+    const editorPane = container.querySelector<HTMLElement>('.lt-pane-editor');
+    expect(editorPane?.classList.contains('lt-pane-collapsed')).toBe(true);
+    expect(editorPane?.style.display).toBe('none');
+    // 保持挂载证据：CM 视图与保存态文案仍在 DOM（容器隐藏非卸载，spec §5.1）
+    expect(container.querySelector('.cm-editor')).not.toBeNull();
+    expect(container.querySelector('.lt-editor-bar')?.textContent).toContain('已保存');
+    // 展开回显：隐藏样式摘除、视图无重挂（doc 无损的结构面）
+    await clickAriaLabel('展开编辑器');
+    expect(container.querySelector<HTMLElement>('.lt-pane-editor')?.style.display).toBe('');
+    expect(container.querySelector('.cm-editor')).not.toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('折叠预览栏：iframe 摘除、窄条展开钮出现；展开后预览回归', async () => {
+    stubApi({
+      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
+      readFile: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: { content: new TextEncoder().encode('<p>正文</p>'), meta: meta(3, 'a.html') },
+        }),
+      ),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === 'a.html')
+        ?.click();
+    });
+    expect(container.querySelector('iframe')).not.toBeNull();
+    await clickAriaLabel('折叠预览栏');
+    expect(
+      container.querySelector('.lt-pane-preview')?.classList.contains('lt-pane-collapsed'),
+    ).toBe(true);
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(container.querySelector('button[aria-label="展开预览栏"]')).not.toBeNull();
+    await clickAriaLabel('展开预览栏');
+    expect(container.querySelector('iframe')).not.toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('启动恢复：settingsGet 返回的 shell.layout 折叠态直接呈现（布局记忆）', async () => {
+    stubApi({
+      settingsGet: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: {
+            ...DEFAULT_SETTINGS,
+            shell: { layout: { ...DEFAULT_LAYOUT, previewCollapsed: true } },
+          },
+        }),
+      ),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    expect(
+      container.querySelector('.lt-pane-preview')?.classList.contains('lt-pane-collapsed'),
+    ).toBe(true);
+    expect(container.querySelector('button[aria-label="展开预览栏"]')).not.toBeNull();
     act(() => {
       tree.unmount();
     });
