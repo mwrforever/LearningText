@@ -38,6 +38,10 @@ export function editorExtensions(mimeType: string, handlers: EditorHandlers): Ex
     syntaxHighlighting(defaultHighlightStyle),
     search(),
     ...(language === null ? [] : [language]),
+    // 可访问标签挂 contentDOM（contenteditable 文本录入元素本体）——M3 textarea
+    // aria-label="编辑区" 的 CM 对应物（preview.spec getByLabel('编辑区')+fill 断言面；
+    // 宿主 div 不可编辑，挂载层标签会使 fill 拒绝操作）
+    EditorView.contentAttributes.of({ 'aria-label': '编辑区' }),
     EditorView.updateListener.of((update) => {
       if (update.docChanged) handlers.onDocChanged(update.state.doc.toString(), update.state);
     }),
