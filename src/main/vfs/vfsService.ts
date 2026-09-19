@@ -42,6 +42,12 @@ export function createVfsService(db: Database.Database) {
   const stmtIdByPath = db.prepare<string, { id: number }>(
     'SELECT id FROM node WHERE virtual_path = ? AND deleted_at IS NULL',
   );
+  // 单节点元数据反查（M4 vfs:get）：不取 content 列，meta 查询禁止物化 50MB 级 BLOB
+  // （与 Task 7 评审「避免 BLOB 行二次物化」同一口径）
+  const stmtMetaById = db.prepare<number, NodeRow>(
+    `SELECT id, parent_id, node_type, name, virtual_path, mime_type, size, created_at, updated_at
+     FROM node WHERE id = ? AND deleted_at IS NULL`,
+  );
   // SELECT * 的行含 deleted_at/content 等列，interface 只声明消费字段（结构类型兼容）；
   // 完整行类型在 NodeRow 之上附加回收站判定与内容列，requireRow 原样保留该形态，
   // 读内容路径直接消费 content 列，避免 BLOB 行二次物化（Task 7 评审遗留项的最小修复）
@@ -131,6 +137,19 @@ export function createVfsService(db: Database.Database) {
       }
       // requireRow 已带 content 完整列，直接消费；单行 BLOB 物化在 50MB 上限内可接受（spec §7.3）
       return { content: new Uint8Array(row.content ?? Buffer.alloc(0)), meta: toNodeMeta(row) };
+    },
+
+    /**
+     * 按 nodeId 反查节点元数据（M4 vfs:get，spec §6.1）：rename/move 后渲染端 meta 新鲜化基座。
+     * 未删除校验内联在语句 WHERE 中；未命中抛 E_VFS_NOT_FOUND，由 IPC handler 层转 Result DTO。
+     */
+    getNode(request: NodeIdRequest): NodeMeta {
+      const row = stmtMetaById.get(request.nodeId);
+      // 块语句形式为 v8 块级覆盖提供独立范围（单行 if+throw 的真值分支无法被覆盖工具归因）
+      if (row === undefined) {
+        throw new AppError(E_VFS_NOT_FOUND, '节点不存在或已在回收站');
+      }
+      return toNodeMeta(row);
     },
 
     /** 建目录/文件（FR-VFS-01）：名称校验 → 重名预查 → 单事务落库 + FTS */

@@ -50,6 +50,7 @@ const mocks = vi.hoisted(() => {
           readonly search: unknown;
           readonly settings: unknown;
           readonly broadcast: (event: unknown) => void;
+          readonly requestClose: () => void;
         }) => void
       >(),
   };
@@ -198,6 +199,9 @@ describe('主进程装配 bootstrapMain', () => {
     // 设置服务走真实现（仅读 userData 下几 KB JSON，不触 SQLite）：断言注入链路完整（M3 spec §5）
     expect(ipcDeps?.settings).toEqual(expect.anything());
     expect(ipcDeps?.broadcast).toEqual(expect.any(Function));
+    // requestClose 占位接线（M4 spec §2.3，Task 6 替换为真实关闭）：
+    // deps 必须携带可调用实现，且占位阶段调用为无操作不抛错
+    expect(() => ipcDeps?.requestClose()).not.toThrow();
     // vfs 服务由开库句柄构建（装配顺序：开库 → 迁移 → 服务工厂 → IPC 注册）
     expect(mocks.createVfsService).toHaveBeenCalledWith(mocks.openDatabase.mock.results[0]?.value);
     // 搜索服务同一开库句柄构建（M2 spec §7.3：单例连接，服务禁自行开连接）

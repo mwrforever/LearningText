@@ -141,3 +141,33 @@ describe('readFile', () => {
     expect(meta).toMatchObject({ id, name: 'broken.html' });
   });
 });
+
+describe('getNode', () => {
+  it('按 nodeId 反查未删除节点完整元数据（M4 vfs:get：rename/move 后 meta 新鲜化基座）', () => {
+    const id = seed(1, 'n.html', 'file', Buffer.from('<p>1</p>'));
+    expect(vfs.getNode({ nodeId: id })).toMatchObject({
+      id,
+      parentId: 1,
+      nodeType: 'file',
+      name: 'n.html',
+      virtualPath: '/n.html',
+      mimeType: 'text/html',
+      size: 8,
+    });
+  });
+
+  it('不存在/已在回收站 → E_VFS_NOT_FOUND（meta 反查不取回收站行）', () => {
+    expect(() => vfs.getNode({ nodeId: 9999 })).toThrow(AppError);
+    const id = seed(1, 'gone.html', 'file', Buffer.from('1'));
+    db.prepare('UPDATE node SET deleted_at = ? WHERE id = ?').run(
+      '2026-09-16T11:00:00.000+08:00',
+      id,
+    );
+    try {
+      vfs.getNode({ nodeId: id });
+      expect.unreachable('应拒绝');
+    } catch (e) {
+      expect((e as AppError).code).toBe(E_VFS_NOT_FOUND);
+    }
+  });
+});

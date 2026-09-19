@@ -36,4 +36,11 @@ export const IPC = {
   settingsSet: 'settings:set',
   /** 主→渲染：树变更广播（事务提交成功后发出，宪法 B.3-4） */
   vfsChanged: 'vfs:changed',
+  // —— 外壳域（M4）：命名 <域>:<动作>（宪法 B.2-5）——
+  /** 主→渲染：菜单/窗口命令（ShellCommand 可辨识联合，shell-contract 单一来源） */
+  shellCommand: 'shell:command',
+  /** 渲染→主：guard 确认后强制关闭（spec §2.3 放行唯一通道） */
+  shellForceClose: 'shell:force-close',
+  /** 按 nodeId 反查节点 meta（rename/move 后路径新鲜化，spec §6.1） */
+  vfsGet: 'vfs:get',
 } as const;

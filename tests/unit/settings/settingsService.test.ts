@@ -1,10 +1,11 @@
-// 设置服务（spec §5）：启动读缓存、损坏/版本不识别 warn 回退默认、set 原子写、get 恒不抛
+// 设置服务（M3 spec §5 / M4 spec §7）：启动读缓存（v1 静默迁移 v2）、损坏/版本不识别 warn
+// 回退默认、set 原子写、get 恒不抛
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSettingsService } from '../../../src/main/settings/settingsService';
-import { DEFAULT_SETTINGS } from '../../../src/shared/settings-contract';
+import { DEFAULT_SETTINGS, migrateV1ToV2 } from '../../../src/shared/settings-contract';
 
 let dir: string;
 let file: string;
@@ -34,20 +35,34 @@ describe('settingsService', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('schemaVersion 不识别 warn 回退默认（v2 文件对 v1 闸即旧版）', () => {
-    writeFileSync(file, JSON.stringify({ schemaVersion: 2, preview: { debounceMs: 100 } }), 'utf8');
+  it('schemaVersion 不识别（v3）warn 回退默认', () => {
+    writeFileSync(file, JSON.stringify({ schemaVersion: 3, preview: { debounceMs: 100 } }), 'utf8');
     const s = createSettingsService({ settingsFile: file });
     expect(s.get()).toEqual(DEFAULT_SETTINGS);
     expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 
   it('合法文件加载进缓存；set 更新缓存并落盘', () => {
-    writeFileSync(file, JSON.stringify({ schemaVersion: 1, preview: { debounceMs: 500 } }), 'utf8');
+    writeFileSync(
+      file,
+      JSON.stringify({ ...DEFAULT_SETTINGS, preview: { debounceMs: 500 } }),
+      'utf8',
+    );
     const s = createSettingsService({ settingsFile: file });
     expect(s.get().preview.debounceMs).toBe(500);
-    const next = { schemaVersion: 1 as const, preview: { debounceMs: 1500 } };
+    const next = { ...DEFAULT_SETTINGS, preview: { debounceMs: 1500 } };
     expect(s.set(next)).toEqual(next);
     expect(s.get()).toEqual(next);
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(next);
+  });
+
+  it('v1 文件启动静默迁移：get 得 v2 全量 + 原子回写 + info 一次', () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    writeFileSync(file, JSON.stringify({ schemaVersion: 1, preview: { debounceMs: 500 } }), 'utf8');
+    const s = createSettingsService({ settingsFile: file });
+    expect(s.get()).toEqual(migrateV1ToV2({ schemaVersion: 1, preview: { debounceMs: 500 } }));
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(s.get()); // 回写落盘
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+    infoSpy.mockRestore();
   });
 });

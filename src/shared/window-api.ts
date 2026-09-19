@@ -1,5 +1,6 @@
 import type { Result } from './result';
 import type { SearchQueryRequest, SearchQueryResponse } from './search-contract';
+import type { ShellCommand } from './shell-contract';
 import type { SettingsData } from './settings-contract';
 import type {
   AffectedResponse,
@@ -40,6 +41,11 @@ export interface WindowApi {
   // —— 设置域（M3）：全量读写（spec §5）——
   settingsGet(): Promise<Result<SettingsData>>;
   settingsSet(request: SettingsData): Promise<Result<SettingsData>>;
+  // —— 外壳域（M4）：菜单命令订阅 + guard 放行 ——
+  onShellCommand(callback: (command: ShellCommand) => void): () => void;
+  forceClose(): Promise<Result<null>>;
+  // —— VFS 补充（M4）：nodeId → NodeMeta 反查（未找到 E_VFS_NOT_FOUND）——
+  getNode(request: NodeIdRequest): Promise<Result<NodeMeta>>;
   /** 订阅树变更广播，返回取消订阅函数 */
   onVfsChanged(callback: (broadcast: VfsChangedBroadcast) => void): () => void;
 }

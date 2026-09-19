@@ -6,6 +6,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
 import { IPC } from '../shared/ipc';
 import type { Result } from '../shared/result';
+import type { ShellCommand } from '../shared/shell-contract';
 import type { VfsChangedBroadcast } from '../shared/vfs-contract';
 import type { WindowApi } from '../shared/window-api';
 
@@ -25,6 +26,14 @@ const api: WindowApi = {
   searchQuery: (request) => ipcRenderer.invoke(IPC.searchQuery, request),
   settingsGet: () => ipcRenderer.invoke(IPC.settingsGet, null),
   settingsSet: (request) => ipcRenderer.invoke(IPC.settingsSet, request),
+  getNode: (request) => ipcRenderer.invoke(IPC.vfsGet, request),
+  forceClose: () => ipcRenderer.invoke(IPC.shellForceClose, null),
+  /** 订阅外壳命令：同 onVfsChanged 先例，包装内部消化 ipcRenderer */
+  onShellCommand: (callback) => {
+    const listener = (_event: IpcRendererEvent, value: ShellCommand): void => callback(value);
+    ipcRenderer.on(IPC.shellCommand, listener);
+    return () => ipcRenderer.removeListener(IPC.shellCommand, listener);
+  },
   /** 订阅树变更广播：包装内部消化 ipcRenderer 并返回取消订阅函数（禁透传原始回调） */
   onVfsChanged: (callback) => {
     // 剥离 event 首参后仅回传业务载荷，渲染层不感知 ipcRenderer

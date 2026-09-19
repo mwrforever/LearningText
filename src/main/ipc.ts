@@ -52,6 +52,8 @@ export interface IpcHandlerDeps {
   readonly settings: SettingsService;
   /** 主→渲染广播（app.ts 提供：遍历窗口 webContents.send）；必须在事务提交后调用 */
   readonly broadcast: (broadcast: VfsChangedBroadcast) => void;
+  /** guard 确认后强制关闭（app.ts 提供：置放行标记 + win.close()） */
+  readonly requestClose: () => void;
 }
 
 /** origin 白名单判定（B.5-6）：senderFrame 可能为 null，null/空串/非白名单一律拒绝 */
@@ -197,6 +199,13 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       result: deps.vfs.resolvePath(q),
     })),
   );
+  // 单节点反查（M4 spec §6.1）：纯读无写事务，返回对象无 event 键 → 不广播
+  ipcMain.handle(
+    IPC.vfsGet,
+    handleWith(deps, NodeIdRequestSchema, (data: NodeIdRequest) => ({
+      result: deps.vfs.getNode(data),
+    })),
+  );
   // 搜索通道纯读、无写事务：返回对象无 event 键 → handleWith 守卫不广播（spec §1）
   ipcMain.handle(
     IPC.searchQuery,
@@ -213,5 +222,13 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     handleWith(deps, SettingsSchema, (data: SettingsData) => ({
       result: deps.settings.set(data) satisfies SettingsData,
     })),
+  );
+  // —— 外壳域（M4）：guard 放行唯一通道（spec §2.3）——
+  ipcMain.handle(
+    IPC.shellForceClose,
+    handleWith(deps, z.null(), () => {
+      deps.requestClose();
+      return { result: null };
+    }),
   );
 }

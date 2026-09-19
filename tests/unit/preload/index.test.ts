@@ -1,5 +1,5 @@
-// preload 桥单元测试：仅暴露具名 api、ping 与 vfs 十通道与 search/settings 通道走类型化通道、
-// 广播订阅剥离 event 首参（宪法 A.7-4 / B.5 桥接面最小化）
+// preload 桥单元测试：仅暴露具名 api、ping 与 vfs 十通道与 search/settings/vfs:get/shell
+// 通道走类型化通道、广播订阅剥离 event 首参（宪法 A.7-4 / B.5 桥接面最小化）
 import { describe, expect, it, vi } from 'vitest';
 
 /** exposeInMainWorld 注册到渲染层的 api 形态（与 src/shared/window-api.ts 契约对应） */
@@ -18,11 +18,14 @@ interface ExposedApi {
   searchQuery(request: unknown): Promise<unknown>;
   settingsGet(request: unknown): Promise<unknown>;
   settingsSet(request: unknown): Promise<unknown>;
+  getNode(request: unknown): Promise<unknown>;
+  forceClose(request: unknown): Promise<unknown>;
+  onShellCommand(callback: (event: unknown) => void): () => void;
   onVfsChanged(callback: (event: unknown) => void): () => void;
 }
 
-/** vfs 十通道与 search/settings 通道的 invoke 包装方法名（ping 与订阅通道单独用例覆盖） */
-type InvokeMethod = Exclude<keyof ExposedApi, 'ping' | 'onVfsChanged'>;
+/** invoke 类通道的包装方法名（ping 与两个订阅通道单独用例覆盖） */
+type InvokeMethod = Exclude<keyof ExposedApi, 'ping' | 'onVfsChanged' | 'onShellCommand'>;
 
 const mocks = vi.hoisted(() => ({
   exposeInMainWorld: vi.fn<(name: string, api: ExposedApi) => void>(),
@@ -66,6 +69,9 @@ describe('preload 桥注册', () => {
       'searchQuery',
       'settingsGet',
       'settingsSet',
+      'getNode',
+      'forceClose',
+      'onShellCommand',
       'onVfsChanged',
     ]);
   });
@@ -79,10 +85,10 @@ describe('preload 桥注册', () => {
     expect(mocks.invoke).toHaveBeenCalledWith(IPC.systemPing, null);
   });
 
-  it('vfs 十通道与 search/settings 通道的 invoke 包装：通道名常量与载荷原样透传（不感知通道字符串）', async () => {
+  it('invoke 类通道的包装：通道名常量与载荷原样透传（不感知通道字符串）', async () => {
     const payload = { nodeId: 3 };
     // 通道名必须取自 shared 常量，方法与通道一一对应（契约 window-api.ts）；
-    // settingsGet 无参沿 system:ping 先例固定发 null，其余通道载荷原样透传
+    // settingsGet/forceClose 无参沿 system:ping 先例固定发 null，其余通道载荷原样透传
     const channelCases: Array<[InvokeMethod, string, unknown]> = [
       ['listChildren', IPC.vfsList, payload],
       ['createNode', IPC.vfsCreate, payload],
@@ -97,6 +103,8 @@ describe('preload 桥注册', () => {
       ['searchQuery', IPC.searchQuery, payload],
       ['settingsGet', IPC.settingsGet, null],
       ['settingsSet', IPC.settingsSet, payload],
+      ['getNode', IPC.vfsGet, payload],
+      ['forceClose', IPC.shellForceClose, null],
     ];
     mocks.invoke.mockResolvedValue({ ok: true, value: null });
     for (const [method, channel, request] of channelCases) {
@@ -123,5 +131,24 @@ describe('preload 桥注册', () => {
     // 退订必须移除同一个监听器实例，避免泄漏
     unsubscribe();
     expect(mocks.removeListener).toHaveBeenCalledWith(IPC.vfsChanged, listener);
+  });
+
+  it('onShellCommand 订阅：剥离 event 首参仅回传命令载荷，退订移除同一监听器', () => {
+    const callback = vi.fn<(command: unknown) => void>();
+    const unsubscribe = exposedApi.onShellCommand(callback);
+    // 订阅固定挂在 shell:command 通道上；取末次注册规避与 onVfsChanged 用例的调用历史叠加
+    const onCall = mocks.on.mock.calls.at(-1);
+    expect(onCall?.[0]).toBe(IPC.shellCommand);
+    const listener = onCall?.[1];
+    if (listener === undefined) {
+      throw new Error('onShellCommand 未注册监听器');
+    }
+    // 模拟主进程命令推送：首个参数为 IpcRendererEvent 形态，必须被剥离后不透传
+    listener({ sender: 'ipc-event' }, { type: 'save' });
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith({ type: 'save' });
+    // 退订必须移除同一个监听器实例，避免泄漏
+    unsubscribe();
+    expect(mocks.removeListener).toHaveBeenCalledWith(IPC.shellCommand, listener);
   });
 });

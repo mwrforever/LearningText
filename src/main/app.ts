@@ -126,7 +126,15 @@ export function bootstrapMain(): void {
           win.webContents.send(IPC.vfsChanged, payload);
         }
       };
-      registerIpcHandlers({ allowedOrigins: allowed, vfs, search, settings, broadcast });
+      // requestClose 占位：Task 6 接真实拦截（close guard 置放行标记 + win.close()）后替换
+      registerIpcHandlers({
+        allowedOrigins: allowed,
+        vfs,
+        search,
+        settings,
+        broadcast,
+        requestClose: () => {},
+      });
       createMainWindow(devServerUrl, allowed);
     })
     .catch((e: unknown) => {

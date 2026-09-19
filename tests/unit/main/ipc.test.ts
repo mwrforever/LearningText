@@ -17,8 +17,10 @@ import {
   E_IPC_BAD_PAYLOAD,
   E_IPC_FORBIDDEN_ORIGIN,
   E_STORE_INTERNAL,
+  E_VFS_NOT_FOUND,
 } from '../../../src/shared/errors';
 import { AppError } from '../../../src/shared/result';
+import type { NodeMeta } from '../../../src/shared/vfs-contract';
 import { registerIpcHandlers } from '../../../src/main/ipc';
 import type { VfsService } from '../../../src/main/vfs/vfsService';
 import type { SearchService } from '../../../src/main/search/searchService';
@@ -42,6 +44,7 @@ function makeVfsStub(): VfsService {
     restoreNode: vi.fn(),
     purgeNode: vi.fn(),
     resolvePath: vi.fn(() => ({ nodeId: 2 })),
+    getNode: vi.fn(() => ({ id: 2, parentId: 1 })),
   } as unknown as VfsService;
 }
 
@@ -69,6 +72,7 @@ describe('system:ping 入口校验', () => {
       search: makeSearchStub(),
       settings: makeSettingsStub(),
       broadcast: vi.fn(),
+      requestClose: vi.fn(),
     });
   });
 
@@ -133,6 +137,7 @@ describe('vfs 通道接线', () => {
       search: makeSearchStub(),
       settings: makeSettingsStub(),
       broadcast,
+      requestClose: vi.fn(),
     });
     const okResult = handlers.get(IPC.vfsResolve)?.(fakeEvent('app://bundle'), {
       virtualPath: '/a',
@@ -169,6 +174,7 @@ describe('vfs 通道接线', () => {
       search: makeSearchStub(),
       settings: makeSettingsStub(),
       broadcast,
+      requestClose: vi.fn(),
     });
     handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
@@ -196,6 +202,7 @@ describe('vfs 通道接线', () => {
       search: makeSearchStub(),
       settings: makeSettingsStub(),
       broadcast,
+      requestClose: vi.fn(),
     });
     const dup = handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
@@ -223,6 +230,7 @@ describe('vfs 通道接线', () => {
       search: makeSearchStub(),
       settings: makeSettingsStub(),
       broadcast,
+      requestClose: vi.fn(),
     });
     const r = handlers.get(IPC.vfsList)?.(fakeEvent('http://evil'), { parentId: 1 }) as {
       ok: boolean;
@@ -261,6 +269,7 @@ describe('vfs 通道接线', () => {
       search: makeSearchStub(),
       settings: makeSettingsStub(),
       broadcast,
+      requestClose: vi.fn(),
     });
 
     const read = handlers.get(IPC.vfsRead)?.(fakeEvent('app://bundle'), { nodeId: 5 }) as {
@@ -352,6 +361,7 @@ describe('search 通道接线', () => {
       search,
       settings: makeSettingsStub(),
       broadcast,
+      requestClose: vi.fn(),
     });
     const okResult = handlers.get(IPC.searchQuery)?.(fakeEvent('app://bundle'), {
       keyword: '指数',
@@ -377,6 +387,7 @@ describe('search 通道接线', () => {
       search,
       settings: makeSettingsStub(),
       broadcast,
+      requestClose: vi.fn(),
     });
     const forbidden = handlers.get(IPC.searchQuery)?.(fakeEvent('http://evil'), {
       keyword: 'x',
@@ -408,6 +419,7 @@ describe('settings 通道接线', () => {
       search: makeSearchStub(),
       settings,
       broadcast,
+      requestClose: vi.fn(),
     });
     const ok = handlers.get(IPC.settingsGet)?.(fakeEvent('app://bundle'), null) as {
       ok: boolean;
@@ -430,18 +442,92 @@ describe('settings 通道接线', () => {
       search: makeSearchStub(),
       settings,
       broadcast,
+      requestClose: vi.fn(),
     });
+    // M4 起 settings schema 为 v2：合法载荷以出厂默认为底、仅改写 debounceMs
     const r = handlers.get(IPC.settingsSet)?.(fakeEvent('app://bundle'), {
-      schemaVersion: 1,
+      ...DEFAULT_SETTINGS,
       preview: { debounceMs: 1500 },
     }) as { ok: boolean; value: { preview: { debounceMs: number } } };
     expect(r.value.preview.debounceMs).toBe(1500);
     const bad = handlers.get(IPC.settingsSet)?.(fakeEvent('app://bundle'), {
-      schemaVersion: 1,
+      ...DEFAULT_SETTINGS,
       preview: { debounceMs: 99 },
     }) as { ok: boolean; error: { code: string } };
     expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
     expect(broadcast).not.toHaveBeenCalled();
+  });
+});
+
+// vfs:get 通道：单节点反查（rename/move 后 meta 新鲜化基座，M4 spec §6.1）
+describe('vfs:get 通道接线', () => {
+  it('getNode 命中返回 NodeMeta；未找到透传 E_VFS_NOT_FOUND', () => {
+    handlers.clear();
+    const vfs = makeVfsStub();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs,
+      search: makeSearchStub(),
+      settings: makeSettingsStub(),
+      broadcast: vi.fn(),
+      requestClose: vi.fn(),
+    });
+    // 桩返回服务层 NodeMeta（Result 包装由 handleWith 统一完成，同既有桩形态）
+    const meta: NodeMeta = {
+      id: 2,
+      parentId: 1,
+      nodeType: 'file',
+      name: 'a.html',
+      virtualPath: '/a.html',
+      mimeType: 'text/html',
+      size: 1,
+      createdAt: 't',
+      updatedAt: 't',
+    };
+    vfs.getNode = vi.fn(() => meta);
+    const ok = handlers.get(IPC.vfsGet)?.(fakeEvent('app://bundle'), { nodeId: 2 }) as {
+      ok: boolean;
+      value: { id: number };
+    };
+    expect(ok.ok).toBe(true);
+    expect(ok.value.id).toBe(2);
+    // 未找到：服务层抛 AppError，handler 转换为 err(E_VFS_NOT_FOUND) 保真透传
+    vfs.getNode = vi.fn(() => {
+      throw new AppError(E_VFS_NOT_FOUND, '不存在');
+    });
+    const miss = handlers.get(IPC.vfsGet)?.(fakeEvent('app://bundle'), { nodeId: 99 }) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(miss.ok).toBe(false);
+    expect(miss.error.code).toBe(E_VFS_NOT_FOUND);
+  });
+});
+
+// shell:force-close：guard 放行唯一通道（M4 spec §2.3）
+describe('shell:force-close 接线', () => {
+  it('payload 非 null 拒 E_IPC_BAD_PAYLOAD；合法调用转发 deps.requestClose', () => {
+    handlers.clear();
+    const requestClose = vi.fn();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      settings: makeSettingsStub(),
+      broadcast: vi.fn(),
+      requestClose,
+    });
+    const bad = handlers.get(IPC.shellForceClose)?.(fakeEvent('app://bundle'), { x: 1 }) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    const ok = handlers.get(IPC.shellForceClose)?.(fakeEvent('app://bundle'), null) as {
+      ok: boolean;
+    };
+    expect(ok.ok).toBe(true);
+    expect(requestClose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -455,6 +541,7 @@ describe('广播版本号 rev', () => {
       search: makeSearchStub(),
       settings: makeSettingsStub(),
       broadcast,
+      requestClose: vi.fn(),
     });
     handlers.get(IPC.vfsWrite)?.(fakeEvent('app://bundle'), {
       nodeId: 2,
