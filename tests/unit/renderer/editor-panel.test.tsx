@@ -120,6 +120,54 @@ describe('EditorPanel（CodeMirror 内核）', () => {
     });
     const content = container.querySelector('.cm-content');
     expect(content?.textContent).toBe('甲');
+    // 光标随会话态保留：切回后 selection 恢复到 dispatch 时的 cursor(1)（评审 Minor-1）
+    const viewBack = mountedView(container);
+    expect(viewBack?.state.doc.toString()).toBe('甲');
+    expect(viewBack?.state.selection.main.head).toBe(1);
+    tree.unmount();
+  });
+
+  it('同 id 重渲染（dirty 翻转换新对象）不回灌陈旧会话态：未回写输入保留且不重复回报', () => {
+    // setTabDirty/updateTabMeta 均以新对象替换同 id TabState——此时视图本就持有最新权威态，
+    // 若无条件 setState 会以切签时陈旧态覆盖输入，并经 updateListener 以旧文本再触发回报
+    // （评审 Important-1 回归：Task 5 SaveController.edit 将收到回退文本）
+    const sessions = new TabSessions();
+    const onDocChanged = vi.fn();
+    sessions.open(
+      2,
+      createEditorState('', 'text/plain', {
+        onDocChanged: (t) => onDocChanged(2, t),
+        onScroll: () => {},
+      }),
+    );
+    const tree = createRoot(container);
+    act(() => {
+      tree.render(
+        <EditorPanel
+          sessions={sessions}
+          activeTab={{ meta: meta(2, 'a.txt'), dirty: false }}
+          debounceMs={300}
+          onDocChanged={onDocChanged}
+        />,
+      );
+    });
+    const view = mountedView(container);
+    act(() => {
+      view?.dispatch({ changes: { from: 0, insert: '甲' } });
+    });
+    expect(onDocChanged).toHaveBeenCalledTimes(1);
+    act(() => {
+      tree.render(
+        <EditorPanel
+          sessions={sessions}
+          activeTab={{ meta: meta(2, 'a.txt'), dirty: true }}
+          debounceMs={300}
+          onDocChanged={onDocChanged}
+        />,
+      );
+    });
+    expect(container.querySelector('.cm-content')?.textContent).toBe('甲');
+    expect(onDocChanged).toHaveBeenCalledTimes(1);
     tree.unmount();
   });
 

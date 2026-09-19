@@ -69,11 +69,14 @@ export function EditorPanel({
     } else {
       const prevId = activeNodeIdRef.current;
       if (prevId !== null && prevId !== activeTab.meta.id) {
+        // 仅换签才换入：同 id 重渲染（setTabDirty/updateTabMeta 换新对象）时视图本身持有
+        // 最新权威态，此处 setState 会以切签时的陈旧会话态覆盖未回写输入，并经 updateListener
+        // 以旧文本再触发 docChanged（评审 Important-1：草稿丢失/陈旧写入）
         sessions.updateState(prevId, view.state);
         sessions.updateScroll(prevId, view.scrollDOM.scrollTop);
+        view.setState(session.state);
+        view.scrollDOM.scrollTop = session.scrollTop;
       }
-      view.setState(session.state);
-      view.scrollDOM.scrollTop = session.scrollTop;
     }
     activeNodeIdRef.current = activeTab.meta.id;
     return undefined;
