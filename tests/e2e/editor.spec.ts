@@ -97,18 +97,35 @@ async function openInTree(name: string): Promise<void> {
   await treeNodes().getByRole('button', { name }).click();
 }
 
+/**
+ * 全选键位（CI macOS 修复 round 2，根因 1）：macOS 全选是 Cmd（Playwright 键名 Meta），
+ * Ctrl+A 在 mac 无 CM/浏览器绑定 → 全选失效 → 后续键入变光标处插入污染 doc——按运行
+ * 平台分支（keyboard 归属测试进程同平台，映射一致）
+ */
+function pressSelectAll(): Promise<void> {
+  return page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
+}
+
+/**
+ * 行尾键位（同上根因 1）：macOS 的 End 是滚动语义、光标不动，行尾 = Cmd+Right
+ * （Playwright 键名 Meta+ArrowRight）——按运行平台分支
+ */
+function pressEnd(): Promise<void> {
+  return page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowRight' : 'End');
+}
+
 /** 聚焦编辑区（CM6 contenteditable，实现注②直取 .cm-content）并把光标移到行尾后键入追加；
- * 本 spec 的编辑对象均为单行文档，End 即文档末尾 */
+ * 本 spec 的编辑对象均为单行文档，行尾键即文档末尾 */
 async function typeAtEnd(text: string): Promise<void> {
   await page.locator('.cm-content').click();
-  await page.keyboard.press('End');
+  await pressEnd();
   await page.keyboard.type(text);
 }
 
 /** 整文档替换输入：全选后重打（保存管线用例的确定性编辑形态，预览断言锚定替换后的元素） */
 async function replaceDoc(text: string): Promise<void> {
   await page.locator('.cm-content').click();
-  await page.keyboard.press('Control+a');
+  await pressSelectAll();
   await page.keyboard.type(text);
 }
 
@@ -256,7 +273,7 @@ test.describe('M4 保存管线/多标签/热替换/5MB（计时调优设置）',
     await seedFile(1, '挂起.html', '<p id="a">a</p>');
     await openInTree('挂起.html');
     await page.locator('.cm-content').click();
-    await page.keyboard.press('Control+a');
+    await pressSelectAll();
     // 连续键入 12 字符 × 220ms ≈ 2.6s：相邻间隔 220ms < 去抖 2000ms（尾沿永不触发），
     // 总时长 > autoSaveMs 1000ms（挂起计时先到）——打字中途必有一次强制写。键入时序下
     // 挂起写快照恰为前 5 个字符（第 6 键在 t≈1100ms 晚于写触发 t=1000ms）
@@ -425,21 +442,51 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
     expect(await clickMenuById('menu-new-file')).toBe(true);
     await expect(page.getByRole('tab', { name: /新建文件\.html/ })).toBeVisible();
     await typeAtEnd('未保存的草稿');
+    // 前置证据断言（CI macOS 修复 round 2 证据化加固 1）：脏态成立才有资格测 guard——
+    // 若此步失败即坐实「typeAtEnd 键位失效致输入未落 doc」（根因 2 可能 A），与「confirm
+    // 原生框弹出但 Playwright 无法接管」（可能 B）二分可判
+    await expect(page.getByRole('tab', { name: /新建文件\.html/ })).toHaveText(/未保存/, {
+      timeout: 5000,
+    });
     // guard 选型 D3：close 拦截 → confirm-close 命令 → 渲染层 window.confirm——
-    // confirm 可被 Playwright dialog 事件驱动（beforeunload 原生消息盒不可驱动，故弃）
+    // confirm 可被 Playwright dialog 事件驱动（beforeunload 原生消息盒不可驱动，故弃）。
+    // 时序：先发起 close（guard 链的触发器——确认框仅在 close 尝试被拦截时弹出），再竞速
+    // 等确认框。证据化加固 2：15s 竞速——超时报错即「确认框未弹出/未被接管」（可能 B 候选
+    // 留证），不吃满用例 60s 超时。close 的失败由下方 exitCode 断言兜底判定，此处吞掉
+    // 避免 15s 竞速已失败的场合残留悬挂 rejection
     const dialogMessage = new Promise<string>((resolve) => {
       page.once('dialog', (dialog) => {
         void dialog.accept();
         resolve(dialog.message());
       });
     });
-    // 有脏关窗：确认放行后窗口关闭、进程退出——close 返回即退出证据（guard 未放行则
-    // 窗口拒绝关闭、close 超时失败）。进程句柄先行捕获：close 后 ElectronApplication
-    // 已解绑，process() 不可再调用
     const proc = app.process();
-    await app.close();
+    const closePromise = app.close().catch(() => undefined);
+    let dialogTimer: NodeJS.Timeout | undefined;
+    const message = await Promise.race([
+      dialogMessage,
+      new Promise<never>((_, reject) => {
+        dialogTimer = setTimeout(
+          () =>
+            reject(new Error('guard 确认框 15s 未弹出/未被接管（macOS 平台限制候选，报告留证）')),
+          15000,
+        );
+      }),
+    ]).finally(() => clearTimeout(dialogTimer));
+    expect(message).toBe('有未保存的更改，确定退出？');
+    // 证据化加固 3：close 30s 竞速，超时强杀兜底——保证 worker teardown 不挂满 60s。
+    // 强杀路径与正常退出同置位 appClosedByGuard（实例已终停，afterAll 跳过、重试轮补启）
+    let closeTimer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      closePromise,
+      new Promise<void>((resolve) => {
+        closeTimer = setTimeout(() => {
+          proc.kill();
+          resolve();
+        }, 30000);
+      }),
+    ]).finally(() => clearTimeout(closeTimer));
     appClosedByGuard = true;
-    expect(await dialogMessage).toBe('有未保存的更改，确定退出？');
     expect(proc.exitCode).toBe(0);
   });
 });
