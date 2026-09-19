@@ -61,3 +61,18 @@
   3. **corsEnabled 特权 + 主文档 connect-src（7d729e5）**：vfs scheme 特权补 `corsEnabled: true`——Blink 的 CORS scheme 白名单不含自定义 scheme，缺它一切跨源 `fetch('vfs://…')` 在网络栈前即被拒、响应侧 ACAO:* 无从生效；主文档 CSP 追加 `connect-src vfs:`——缺它 fetch 被 `default-src 'self'` 回落拦截；spec §2.4 勘误。为什么：E2E console 探针分别坐实 CSP 回落拦截与 CORS scheme 白名单拒绝两条独立拦截面。
 - **Task 8 E2E 实跑暴露三缺陷（各一句）**：缺陷 1——主文档 CSP 缺 `connect-src vfs:`，主 frame fetch 全拦，index.html 追加修复（f84d2bc）；缺陷 2——Blink 空 host「首段提为 host」致 iframe/`location.replace` 请求 URL 变形、vfs 资源导航链路全 404，固定 host `vfs://local` 约定修复（f84d2bc）；缺陷 3——vfs 特权缺 `corsEnabled: true` 致跨源 fetch 网络栈前拒绝，app.ts 特权一行修复（7d729e5）。
 - **TASK.md 登记台收尾**：M3 触碰条目清零——待调研项删「`protocol.handle` API 细则（vfs:// 落地）」（spec §2.4 + Task 4 实测定档收口）、待撰写 spec 删「docs/06 预览管线详细设计」（spec 定稿，用户已书面评审确认）；执行项登记追加 M4「预览外壳批次」（FR-SHELL-01 折叠/记忆 + FR-SHELL-02 原生菜单快捷键 + P1 三项 + 编辑区 unsaved-guard）。
+
+## 2026-09-19
+
+- **M4 编辑器与保存管线里程碑定稿（SDD 执行 Task 1-10 完毕，Task 11 收尾）**：spec `docs/superpowers/specs/2026-09-18-编辑器与保存管线-design.md` 与实施计划 `docs/superpowers/plans/2026-09-18-M4-编辑器.md` 定稿并全部落地。要点：
+  - **CodeMirror 6 换芯（FR-EDIT-01/03）**：8 包精确版本锁定（state 6.7.5 / view 6.43.12 / commands 6.11.1 / language 6.12.4 / search 6.7.2 / lang-html 6.4.12 / lang-css 6.3.1 / lang-javascript 6.2.5，实查零漂移）；curated 扩展工厂（行号/撤销/自绘选区/自动缩进/括号匹配/查找替换 + contentAttributes 可访问标签「编辑区」，换芯丢失项已随 8036250 恢复）；MIME→语言映射 html/css/js 开箱高亮；EditorState 不可变、per-tab 会话式换芯（state + scrollTop 随签切换换入换出，同 id 重渲染不回灌陈旧态）；
+  - **单写管线双计时器语义（FR-EDIT-02）**：`reduceSave` 纯状态机——尾沿去抖（debounceMs）+ 最长挂起强制落库（autoSaveMs = 最长相邻写间隔，连续输入不致无限延迟落库）；写串行（在途期间记挂起、完成后续写）、失败按 autoSaveMs 重试不自旋、flush 三态（脏→立即写 / 在途→转挂起 / 净→no-op）、关标签 flush；
+  - **settings schemaVersion 1→2 additive 迁移**：新增 `editor.autoSaveMs`（默认 3000）与 `shell.layout`（三栏折叠三态 + 树/预览宽度比例）；装载链 v2 直读 → v1 静默迁移（preview 保留用户值、新域补出厂默认）原子回写 → 损坏/不识别版本 warn 回退默认值，不阻断启动；`preview.debounceMs` 语义不变；
+  - **原生菜单与命令单通道（FR-SHELL-02）**：`createMenuTemplate`（新建文件 Ctrl+N / 新建目录 Ctrl+Shift+N / 保存 Ctrl+S；「快速打开」「全局搜索」「导入/导出」disabled 占位待 M5 启用）经既有 `shell:command` 单通道转发渲染层，快捷键由 accelerator 承载；
+  - **编辑区 unsaved-guard 选型（spec D3）**：主进程 close 事件拦截（放行标记 + 重入直通）+ 渲染层 `window.confirm` 确认链（「有未保存的更改，确定退出？」）——弃 `beforeunload`：其原生弹窗不可被 Playwright 驱动，confirm 走 `page.on('dialog')` E2E 可驱动；
+  - **三栏折叠与宽度记忆（FR-SHELL-01）**：指针比例纯函数 + settings `shell.layout` 持久化（折叠切换即时持久化、拖拽 pointerup 一次性持久化防写风暴），重启恢复折叠态与分隔比例；
+  - **树 rename/move UI 与 meta 同步**：重命名模态 + 移动选择模式（目录点选高亮选定、自身/后代非法拦截、Esc 取消）；rename/move 成功广播后 `vfs:get` 反查同步标签 meta（TabBar 名/预览路径联动）；目录作为 rename/move 源的选中语义扩展与 move 引导文案登记 M5（见 `TASK.md`）；
+  - **协议 charset**：`text/*` 响应 Content-Type 附加 `; charset=utf-8`（二进制原样；BLOB/ETag/304/Range 语义不变）；
+  - **CSS 热替换（FR-RENDER-07）与 DevTools（FR-RENDER-05）**：热替换全链——PreviewPanel written(css)→fetch 新文本→postMessage `lt:css-swap`，协议层对 text/html 200 全量响应只读注入接收器（不改 BLOB/不参与 ETag；CJK 路径经 decodeURIComponent 命中——WHATWG URL pathname 恒百分号编码，逐字匹配对中文库永不命中，探针实证后修复）；DevTools 右键「检查元素」（`webContents.inspectElement`，原生 popup 不可被 Playwright 驱动、验收降级单测留证）；
+  - **验收与实测**：E2E 18/18 全绿（app 2 + editor 9 + preview 7）；NFR/FR-EDIT-01「文件 ≤ 5MB 打开 < 1s」E2E 计时中位 ≈170ms（6 样本 123–177ms，远优于目标）；滚动同步（FR-RENDER-06）为预览 P1 唯一余项，归 M5；
+  - `TASK.md` 登记台收尾：删「预览外壳批次」「预览打磨批次」两行（M4 完成）；预览 P1 三项收敛为「滚动同步（FR-RENDER-06）归 M5」一行；追加「搜索 UI 批次」归 M5；M2 deferred 四条核对（M4 未触碰 search 契约/搜索服务/片段渲染，保留登记）；新增「树目录 rename/move 选中语义扩展」「move 模式状态条引导文案」「settingsService `set` 日志域摘要化」三项；待回填登记 FR-EDIT-01 实测值（见上条）。
