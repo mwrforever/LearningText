@@ -26,5 +26,15 @@ export async function closeAppGracefully(app: ElectronApplication, page: Page): 
   } finally {
     clearTimeout(timer);
   }
-  await app.close();
+  // close 10s 竞速 + 吞错（CI macOS 修复 round 4 teardown 防护）：用例已终停实例的场合
+  // （如 guard 用例已自行驱动退出），app.close() 对已 closed 的 ElectronApplication 等待
+  // 永不到来的退出事件而挂起（round 4 CI 实证 afterAll 拖满 60s 的挂点）——竞速上界保证
+  // afterAll 不拖时；进程终止事实由用例内断言与进程自身退出兜底
+  let closeTimer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    app.close().catch(() => undefined),
+    new Promise<void>((resolve) => {
+      closeTimer = setTimeout(() => resolve(), 10000);
+    }),
+  ]).finally(() => clearTimeout(closeTimer));
 }
