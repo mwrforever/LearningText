@@ -26,6 +26,8 @@ export default defineConfig({
           // 渲染层组件测试含 JSX，需同时匹配 .test.tsx（宪法 A.6-1 命名约定不变）
           include: ['tests/unit/**/*.test.ts', 'tests/unit/**/*.test.tsx'],
           environment: 'node',
+          // 全局 setup：jsdom 量测 API stub 等（node/jsdom 双环境共用，环境守卫见 setup 文件）
+          setupFiles: ['tests/unit/setup.ts'],
         },
       },
       {

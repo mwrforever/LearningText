@@ -474,18 +474,28 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
       }),
     ]).finally(() => clearTimeout(dialogTimer));
     expect(message).toBe('有未保存的更改，确定退出？');
-    // 证据化加固 3：close 30s 竞速，超时强杀兜底——保证 worker teardown 不挂满 60s。
-    // 强杀路径与正常退出同置位 appClosedByGuard（实例已终停，afterAll 跳过、重试轮补启）
-    let closeTimer: NodeJS.Timeout | undefined;
-    await Promise.race([
-      closePromise,
-      new Promise<void>((resolve) => {
-        closeTimer = setTimeout(() => {
-          proc.kill();
-          resolve();
-        }, 30000);
-      }),
-    ]).finally(() => clearTimeout(closeTimer));
+    // 进程退出三段收敛（CI macOS 修复 round 3）：accept → forceClose 的关窗不在 quit 流程内
+    // ——darwin 的 window-all-closed 惯例不 quit（app.ts，M0 裁决），首轮被 preventDefault
+    // 打断的 quit 不再续行 → 进程滞留；win/linux 因该分支主动 app.quit() 幸免。
+    // ① 等首轮 close 收敛（5s）；② 未退则经主进程显式补一轮 app.quit()——allowClose 已置位、
+    // 窗口已关，quit 直通且三平台语义统一退出（exitCode 保持 0 不洗绿），再等 10s；
+    // ③ 仍未退才 kill（防御末级，worker teardown 不挂满 60s；exitCode 断言将如实失败）。
+    // 各路径同置位 appClosedByGuard（实例已终停，afterAll 跳过、重试轮补启）
+    const waitForExit = (ms: number): Promise<'exit' | 'timeout'> => {
+      let timer: NodeJS.Timeout | undefined;
+      return Promise.race([
+        closePromise.then(() => 'exit' as const),
+        new Promise<'timeout'>((resolve) => {
+          timer = setTimeout(() => resolve('timeout'), ms);
+        }),
+      ]).finally(() => clearTimeout(timer));
+    };
+    if ((await waitForExit(5000)) === 'timeout') {
+      await app.evaluate(({ app }) => void app.quit());
+      if ((await waitForExit(10000)) === 'timeout') {
+        proc.kill();
+      }
+    }
     appClosedByGuard = true;
     expect(proc.exitCode).toBe(0);
   });
