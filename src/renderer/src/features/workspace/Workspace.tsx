@@ -23,7 +23,7 @@ import {
 import { TreePanel } from '../tree/TreePanel';
 import { showToast } from '../ui/Toast';
 import { TabBar } from './TabBar';
-import { closeTab, openTab, setTabDirty, type TabsOp } from './tabModel';
+import { MAX_TABS, closeTab, openTab, setTabDirty, type TabsOp } from './tabModel';
 
 export interface WorkspaceProps {
   /** 全局操作条插槽（M4 原生菜单的渲染层对应面）；未注入时不渲染占位条 */
@@ -52,6 +52,17 @@ export function Workspace({
   useEffect(() => {
     settingsRef.current = { debounceMs, autoSaveMs };
   }, [debounceMs, autoSaveMs]);
+  // tabsOp 实时镜像：openFile 的 readFile 回调属异步续体，闭包 tabsOp 必陈旧（快速连点
+  // 时中间态丢失）——触顶判定读 ref（settingsRef 同款同步模式），保证回调执行时刻读最新标签数
+  const tabsRef = useRef(tabsOp);
+  useEffect(() => {
+    tabsRef.current = tabsOp;
+  }, [tabsOp]);
+  // 全局脏态镜像：confirm-close 判定用（shell 命令回调持稳态引用，禁闭包 tabsOp）
+  const dirtyRef = useRef(false);
+  useEffect(() => {
+    dirtyRef.current = tabsOp.tabs.some((t) => t.dirty);
+  }, [tabsOp]);
   // 激活标签由 tabs 状态派生（单一事实来源，禁另存副本）
   const activeTab = tabsOp.tabs.find((t) => t.meta.id === tabsOp.activeId) ?? null;
   // 保存管线控制器（M4 spec §2）：渲染期惰性初始化单例（sessionsRef 同款豁免）；
@@ -153,6 +164,14 @@ export function Workspace({
     });
   }
 
+  /**
+   * 菜单命令入口（M4 spec §5.2，与树工具栏新建钮共用 onCreate 语义）：无树上下文时
+   * 落根目录新建；新建文件经 onCreate 的创建即开标签回路呈现为标签
+   */
+  function createInContext(nodeType: 'dir' | 'file'): void {
+    onCreate(ROOT_ID, nodeType);
+  }
+
   function onTrash(nodeId: number): void {
     void window.api.trashNode({ nodeId }).then((result) => {
       // 标签存在则连同会话经 closeTabById 收场（flush 落库 → 管线/会话/标签同步清理，资源成对）；
@@ -180,6 +199,13 @@ export function Workspace({
       // 同文件唯一实例（tabModel openTab 幂等语义）：会话已在，聚焦既有标签即可
       if (sessions.has(node.id)) {
         setTabsOp((prev) => openTab(prev, node));
+        return;
+      }
+      // 同开上限护栏（spec §3「同开上限 20（超限提示先关）」）：必须先判满再建会话——
+      // openTab 触顶静默拒开，若先 sessions.open 会残留无标签的孤儿会话（悬挂会话时序
+      // 缺陷）；判定读 tabsRef 实时态，闭包 tabsOp 在并发续体下必陈旧
+      if (tabsRef.current.tabs.length >= MAX_TABS) {
+        showToast(`最多同时打开 ${MAX_TABS} 个标签，请先关闭部分标签`);
         return;
       }
       // mimeType 已过 isTextLike 白名单，`??` 仅为可空契约的收尾窄化
@@ -218,6 +244,37 @@ export function Workspace({
   useEffect(() => {
     saveController.setActiveNode(tabsOp.activeId);
   }, [tabsOp.activeId, saveController]);
+
+  // 外壳命令订阅（cleanup 成对）：菜单命令 dispatch + 关窗确认链（spec §2.3/§5.2）；
+  // switch 四分支穷举 ShellCommand 联合（宪法 A.1-4，never 兜底由穷举性承担）
+  useEffect(() => {
+    return window.api.onShellCommand((command) => {
+      switch (command.type) {
+        case 'save':
+          // 菜单「保存」/Ctrl+S：立即写激活标签（管线 flush 语义，无激活为 no-op）
+          saveController.flushActive();
+          break;
+        case 'new-file':
+          createInContext('file');
+          break;
+        case 'new-dir':
+          createInContext('dir');
+          break;
+        case 'confirm-close':
+          // 关窗确认链（spec §2.3）：无脏直接放行 forceClose；有脏弹原生 confirm，
+          // 用户确认才放行（取消则留在应用）。放行动作即 shell:force-close，
+          // 主进程 requestClose 置 allowClose 标记后重入 close 直通
+          if (!dirtyRef.current) {
+            void window.api.forceClose();
+            return;
+          }
+          if (window.confirm('有未保存的更改，确定退出？')) {
+            void window.api.forceClose();
+          }
+          break;
+      }
+    });
+  }, [saveController]);
 
   // 卸载清全部计时器（成对释放，宪法资源纪律）
   useEffect(() => {
@@ -284,8 +341,8 @@ const ROOT_NODE: NodeMeta = {
 };
 
 /**
- * 文本可编辑 MIME 判定（原 EditorPanel 同名函数语义逐字迁入——openFile 前置拦截唯一判定点；
- * 主进程 isTextualMime 归写库索引域，B.2 禁跨层 import）
+ * 文本可编辑 MIME 判定（M3 textarea 版 EditorPanel 同名函数语义迁入——openFile 前置拦截
+ * 唯一判定点；主进程 isTextualMime 归写库索引域，B.2 禁跨层 import）
  */
 function isTextLike(mimeType: string): boolean {
   return (

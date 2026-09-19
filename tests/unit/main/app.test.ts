@@ -35,6 +35,11 @@ const mocks = vi.hoisted(() => {
     BrowserWindow: vi.fn<(options: unknown) => { loadURL: (url: string) => Promise<void> }>(),
     loadURL: vi.fn<(url: string) => Promise<void>>(),
     wcOn: vi.fn<(event: string, listener: (...args: unknown[]) => void) => void>(),
+    wcSend: vi.fn<(channel: string, payload: unknown) => void>(),
+    winOn: vi.fn<(event: string, listener: (...args: unknown[]) => void) => void>(),
+    winClose: vi.fn<() => void>(),
+    menuBuildFromTemplate: vi.fn<(template: unknown) => unknown>(),
+    menuSetApplicationMenu: vi.fn<(menu: unknown) => void>(),
     setWindowOpenHandler: vi.fn<(handler: () => { action: string }) => void>(),
     setPermissionRequestHandler:
       vi.fn<
@@ -72,8 +77,11 @@ const mocks = vi.hoisted(() => {
   m.BrowserWindow.mockImplementation(function () {
     return {
       loadURL: m.loadURL,
+      on: m.winOn,
+      close: m.winClose,
       webContents: {
         on: m.wcOn,
+        send: m.wcSend,
         setWindowOpenHandler: m.setWindowOpenHandler,
         session: { setPermissionRequestHandler: m.setPermissionRequestHandler },
       },
@@ -98,6 +106,11 @@ vi.mock('electron', () => ({
   },
   // 静态方法 getAllWindows 挂在构造器上（broadcast 遍历窗口用，宪法 B.3-4）
   BrowserWindow: Object.assign(mocks.BrowserWindow, { getAllWindows: mocks.getAllWindows }),
+  // 应用菜单装配面（M4 spec §5.2）：bootstrapMain 建窗后 installApplicationMenu 一次
+  Menu: {
+    buildFromTemplate: mocks.menuBuildFromTemplate,
+    setApplicationMenu: mocks.menuSetApplicationMenu,
+  },
 }));
 vi.mock('../../../src/main/ipc', () => ({ registerIpcHandlers: mocks.registerIpcHandlers }));
 vi.mock('../../../src/main/store/db', () => ({ openDatabase: mocks.openDatabase }));
@@ -156,8 +169,11 @@ describe('主进程装配 bootstrapMain', () => {
     mocks.BrowserWindow.mockImplementation(function () {
       return {
         loadURL: mocks.loadURL,
+        on: mocks.winOn,
+        close: mocks.winClose,
         webContents: {
           on: mocks.wcOn,
+          send: mocks.wcSend,
           setWindowOpenHandler: mocks.setWindowOpenHandler,
           session: { setPermissionRequestHandler: mocks.setPermissionRequestHandler },
         },
@@ -199,9 +215,25 @@ describe('主进程装配 bootstrapMain', () => {
     // 设置服务走真实现（仅读 userData 下几 KB JSON，不触 SQLite）：断言注入链路完整（M3 spec §5）
     expect(ipcDeps?.settings).toEqual(expect.anything());
     expect(ipcDeps?.broadcast).toEqual(expect.any(Function));
-    // requestClose 占位接线（M4 spec §2.3，Task 6 替换为真实关闭）：
-    // deps 必须携带可调用实现，且占位阶段调用为无操作不抛错
-    expect(() => ipcDeps?.requestClose()).not.toThrow();
+    // close 拦截 guard 接线（M4 spec §2.3）：未放行的首次 close 一律拦截
+    // 并经窗口自身 webContents 下发 confirm-close 命令（渲染层确认链入口）
+    const closeCall = mocks.winOn.mock.calls.find(([event]) => event === 'close');
+    if (closeCall === undefined) {
+      throw new Error('窗口未注册 close 拦截 guard');
+    }
+    const closeListener = closeCall[1] as (event: { preventDefault: () => void }) => void;
+    const blocked = { preventDefault: vi.fn() };
+    closeListener(blocked);
+    expect(blocked.preventDefault).toHaveBeenCalledTimes(1);
+    expect(mocks.wcSend).toHaveBeenCalledWith(IPC.shellCommand, { type: 'confirm-close' });
+    // requestClose 真实现（M4 spec §2.3，Task 1 占位升级）：置放行标记后
+    // 触发主窗口 close 重入（guard 确认链主进程侧收口）
+    ipcDeps?.requestClose();
+    expect(mocks.winClose).toHaveBeenCalledTimes(1);
+    // 放行标记已置位：再次 close 不再拦截（直通，窗口得以真正关闭）
+    const passed = { preventDefault: vi.fn() };
+    closeListener(passed);
+    expect(passed.preventDefault).not.toHaveBeenCalled();
     // vfs 服务由开库句柄构建（装配顺序：开库 → 迁移 → 服务工厂 → IPC 注册）
     expect(mocks.createVfsService).toHaveBeenCalledWith(mocks.openDatabase.mock.results[0]?.value);
     // 搜索服务同一开库句柄构建（M2 spec §7.3：单例连接，服务禁自行开连接）
@@ -227,6 +259,8 @@ describe('主进程装配 bootstrapMain', () => {
       },
     });
     expect(mocks.loadURL).toHaveBeenCalledWith('app://bundle/index.html');
+    // 应用菜单装配一次（M4 spec §5.2：模板构建与菜单设置各一次，命令经 shell:command 下发）
+    expect(mocks.menuSetApplicationMenu).toHaveBeenCalledTimes(1);
   });
 
   it('开发模式：origin 白名单含 dev server，窗口加载 dev server 地址', async () => {

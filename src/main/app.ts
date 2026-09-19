@@ -20,20 +20,27 @@ import { createSearchService } from './search/searchService';
 import { createSettingsService } from './settings/settingsService';
 import { IPC } from '../shared/ipc';
 import type { VfsChangedBroadcast } from '../shared/vfs-contract';
+import { attachWindowCloseGuard, installApplicationMenu } from './menu/menu';
+import type { BrowserWindow as BrowserWindowType } from 'electron';
 
 const APP_ORIGIN = 'app://bundle';
 
 /**
- * 创建主窗口并按运行模式加载页面，同时装配窗口安全基线三件套（宪法 B.5-4/5）。
+ * 创建主窗口并按运行模式加载页面，同时装配窗口安全基线三件套（宪法 B.5-4/5）
+ * 与 close 拦截 guard（M4 spec §2.3）。
  * @param devServerUrl Vite dev server 地址（来源：主进程环境变量 VITE_DEV_SERVER_URL，
  *   仅主进程读取，A.2-2）；undefined 表示生产模式，加载 app:// 产物页。
  * @param allowedOrigins 导航放行的 origin 白名单（与 IPC 校验同一份，来源：
  *   whenReady 内按运行模式计算的 allowed，B.5-6）。
+ * @param allow guard 放行标记（与 requestClose 共享同一对象引用）：false 时首次
+ *   close 一律拦截并下发 confirm-close 命令，置 true 后重入 close 直通。
+ * @returns 窗口实例（供 winRef 持有，requestClose 经其触发 close 重入）。
  */
 function createMainWindow(
   devServerUrl: string | undefined,
   allowedOrigins: readonly string[],
-): void {
+  allow: { value: boolean },
+): BrowserWindowType {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -58,12 +65,15 @@ function createMainWindow(
   win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => {
     callback(false);
   });
+  // close 拦截 guard（M4 spec §2.3）：未放行的首次 close 转发渲染层确认链
+  attachWindowCloseGuard(win, allow);
   // 开发模式加载 dev server，生产加载 app:// 自定义协议（禁 loadURL 任意外部 URL）
   if (devServerUrl !== undefined) {
     void win.loadURL(devServerUrl);
   } else {
     void win.loadURL(APP_ORIGIN + '/index.html');
   }
+  return win;
 }
 
 /**
@@ -126,16 +136,26 @@ export function bootstrapMain(): void {
           win.webContents.send(IPC.vfsChanged, payload);
         }
       };
-      // requestClose 占位：Task 6 接真实拦截（close guard 置放行标记 + win.close()）后替换
+      // guard 放行标记（forceClose 唯一写点）：requestClose 置位后重入 close 直通
+      const allowClose = { value: false };
+      // 窗口句柄引用：闭包捕获须先于 registerIpcHandlers 声明（requestClose 引用 winRef）
+      const winRef: { current: BrowserWindowType | null } = { current: null };
       registerIpcHandlers({
         allowedOrigins: allowed,
         vfs,
         search,
         settings,
         broadcast,
-        requestClose: () => {},
+        // guard 确认链主进程侧（M4 spec §2.3）：置放行标记后主动触发 close 重入，
+        // close 事件二次进入时经 allowClose 直通、窗口得以真正关闭
+        requestClose: () => {
+          allowClose.value = true;
+          winRef.current?.close();
+        },
       });
-      createMainWindow(devServerUrl, allowed);
+      winRef.current = createMainWindow(devServerUrl, allowed, allowClose);
+      // 应用菜单装配（M4 spec §5.2）：窗口创建后一次（命令经 shell:command 下发渲染层）
+      installApplicationMenu();
     })
     .catch((e: unknown) => {
       // 装配失败禁止带伤运行（B.3-1）

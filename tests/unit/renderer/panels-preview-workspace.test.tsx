@@ -2,6 +2,7 @@
 // PreviewPanel：src 初值/沙箱属性/订阅 cleanup；Workspace：启动装配（resolve+listChildren+settingsGet）
 // 与广播→树刷新、stale 重取的接线（决策逻辑本体已在 Task 5 单测，此处验证 wiring 成对）
 import { act } from 'react';
+import { EditorView } from '@codemirror/view';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../../src/shared/settings-contract';
@@ -9,6 +10,7 @@ import type { ShellCommand } from '../../../src/shared/shell-contract';
 import type { NodeMeta, VfsChangedBroadcast } from '../../../src/shared/vfs-contract';
 import { PreviewPanel } from '../../../src/renderer/src/features/preview/PreviewPanel';
 import { ToastHost } from '../../../src/renderer/src/features/ui/Toast';
+import { MAX_TABS } from '../../../src/renderer/src/features/workspace/tabModel';
 import { Workspace } from '../../../src/renderer/src/features/workspace/Workspace';
 
 function meta(id: number, name: string, type: 'dir' | 'file' = 'file'): NodeMeta {
@@ -38,9 +40,10 @@ function stubApi(overrides: Partial<Record<string, unknown>> = {}): Record<strin
       Promise.resolve({ ok: true, value: { content: new Uint8Array(), meta: meta(2, 'x.html') } }),
     ),
     writeFile: vi.fn(() => Promise.resolve({ ok: true, value: meta(2, 'x.html') })),
-    // M4 契约补员：nodeId 反查（Task 8 rename/move 同步链）与 shell 命令订阅（Task 6 接线），
-    // Workspace 本批挂载路径未调用，桩按契约形态预留（M3 最小注入先例的同批契约面）
+    // M4 契约补员：nodeId 反查（Task 8 rename/move 同步链）为后续挂载路径预留；
+    // shell 命令订阅/forceClose 已入挂载路径（Task 6 外壳命令链），桩按契约形态注入
     getNode: vi.fn(() => Promise.resolve({ ok: true, value: meta(2, 'x.html') })),
+    forceClose: vi.fn(() => Promise.resolve({ ok: true, value: null })),
     onShellCommand: vi.fn((callback: (command: ShellCommand) => void) => {
       // 退订函数为 vi.fn 桩，卸载后可断言 cleanup 确实调用（同 onVfsChanged 强化先例）
       const unsub = vi.fn(() => {
@@ -315,6 +318,236 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
         ?.click();
     });
     expect(api.readFile).toHaveBeenCalledTimes(2);
+    act(() => {
+      tree.unmount();
+    });
+  });
+});
+
+// 外壳命令 dispatch + 关窗确认链（M4 Task 6，spec §2.3/§5.2）：命令经 onShellCommand
+// 订阅回调驱动（E2E 归 Task 10，此处单测断言 handler 行为）
+describe('Workspace 外壳命令链（M4 Task 6）', () => {
+  interface ShellCapture {
+    api: Record<string, ReturnType<typeof vi.fn>>;
+    handlers: Array<(command: ShellCommand) => void>;
+    unsub: ReturnType<typeof vi.fn>;
+  }
+
+  /** 捕获 onShellCommand 订阅回调（供逐命令 dispatch）与退订桩（cleanup 断言） */
+  function captureShell(overrides: Partial<Record<string, unknown>> = {}): ShellCapture {
+    const handlers: Array<(command: ShellCommand) => void> = [];
+    const unsub = vi.fn();
+    const api = stubApi({
+      onShellCommand: vi.fn((callback: (command: ShellCommand) => void) => {
+        handlers.push(callback);
+        return unsub;
+      }),
+      ...overrides,
+    }) as Record<string, ReturnType<typeof vi.fn>>;
+    return { api, handlers, unsub };
+  }
+
+  /** jsdom 无真实键入：CM6 官方静态 API findFromDOM 取视图实例（editor-panel 同款先例） */
+  function mountedView(root: HTMLElement): EditorView | null {
+    const editorDom = root.querySelector<HTMLDivElement>('.cm-editor');
+    return editorDom === null ? null : EditorView.findFromDOM(editorDom);
+  }
+
+  /** 按文本找按钮并点击（树点选/工具栏共用助手） */
+  async function clickButton(text: string): Promise<void> {
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === text)
+        ?.click();
+    });
+  }
+
+  it('订阅 cleanup 成对：卸载必调用退订函数（宪法资源纪律）', async () => {
+    const { api, unsub } = captureShell();
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    expect(api.onShellCommand).toHaveBeenCalledTimes(1);
+    act(() => {
+      tree.unmount();
+    });
+    expect(unsub).toHaveBeenCalled();
+  });
+
+  it('save 命令 → flushActive 立即写激活标签（不等尾沿去抖）', async () => {
+    const { api, handlers } = captureShell({
+      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
+      readFile: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: { content: new TextEncoder().encode(''), meta: meta(3, 'a.html') },
+        }),
+      ),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await clickButton('a.html');
+    const view = mountedView(container);
+    expect(view).not.toBeNull();
+    await act(async () => {
+      view?.dispatch({ changes: { from: 0, insert: '甲' } });
+    });
+    // 去抖窗口（300ms）远未到期：此刻不应有写发生，证明写确由 save 命令触发
+    expect(api.writeFile).not.toHaveBeenCalled();
+    await act(async () => {
+      handlers[0]?.({ type: 'save' });
+    });
+    expect(api.writeFile).toHaveBeenCalledWith({
+      nodeId: 3,
+      content: new TextEncoder().encode('甲'),
+    });
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('confirm-close 无脏直接 forceClose，不弹确认框', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    try {
+      const { api, handlers } = captureShell();
+      const tree = createRoot(container);
+      await act(async () => {
+        tree.render(<Workspace />);
+      });
+      await act(async () => {
+        handlers[0]?.({ type: 'confirm-close' });
+      });
+      expect(api.forceClose).toHaveBeenCalledTimes(1);
+      expect(confirmSpy).not.toHaveBeenCalled();
+      act(() => {
+        tree.unmount();
+      });
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('confirm-close 有脏弹确认框：取消留在应用、确认后放行 forceClose', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    try {
+      const { api, handlers } = captureShell({
+        listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
+        readFile: vi.fn(() =>
+          Promise.resolve({
+            ok: true,
+            value: { content: new TextEncoder().encode(''), meta: meta(3, 'a.html') },
+          }),
+        ),
+      });
+      const tree = createRoot(container);
+      await act(async () => {
+        tree.render(<Workspace />);
+      });
+      await clickButton('a.html');
+      await act(async () => {
+        mountedView(container)?.dispatch({ changes: { from: 0, insert: '甲' } });
+      });
+      // 取消分支：确认框出现但拒绝 → 不放行
+      await act(async () => {
+        handlers[0]?.({ type: 'confirm-close' });
+      });
+      expect(confirmSpy).toHaveBeenCalledWith('有未保存的更改，确定退出？');
+      expect(api.forceClose).not.toHaveBeenCalled();
+      // 确认分支：再次 confirm-close，用户确认 → 放行
+      confirmSpy.mockReturnValue(true);
+      await act(async () => {
+        handlers[0]?.({ type: 'confirm-close' });
+      });
+      expect(api.forceClose).toHaveBeenCalledTimes(1);
+      act(() => {
+        tree.unmount();
+      });
+    } finally {
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it('new-file/new-dir 命令 → 根目录新建；new-file 创建即开标签、new-dir 不开', async () => {
+    const { api, handlers } = captureShell();
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await act(async () => {
+      handlers[0]?.({ type: 'new-dir' });
+    });
+    expect(api.createNode).toHaveBeenCalledWith({
+      parentId: 1,
+      name: '新建目录',
+      nodeType: 'dir',
+    });
+    await act(async () => {
+      handlers[0]?.({ type: 'new-file' });
+    });
+    expect(api.createNode).toHaveBeenCalledWith({
+      parentId: 1,
+      name: '新建文件.html',
+      nodeType: 'file',
+    });
+    // 创建即开标签回路（onCreate 同款语义）：读库建会话 + 标签呈现
+    expect(api.readFile).toHaveBeenCalledWith({ nodeId: 3 });
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('MAX_TABS 触顶：toast 提示先关且不开标签；释放槽位后可再开（无悬挂会话）', async () => {
+    const files = Array.from({ length: MAX_TABS + 1 }, (_, i) => ({
+      ...meta(10 + i, `f${i}.html`),
+      mimeType: 'text/plain',
+    }));
+    const api = stubApi({
+      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: files })),
+      readFile: vi.fn((request: { nodeId: number }) =>
+        Promise.resolve({
+          ok: true,
+          value: {
+            content: new TextEncoder().encode('文'),
+            meta: files.find((f) => f.id === request.nodeId) ?? files[0],
+          },
+        }),
+      ),
+    }) as unknown as { readFile: ReturnType<typeof vi.fn> };
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(
+        <>
+          <Workspace />
+          <ToastHost />
+        </>,
+      );
+    });
+    // 依次开满 20 个标签
+    for (let i = 0; i < MAX_TABS; i += 1) {
+      await clickButton(`f${i}.html`);
+    }
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(MAX_TABS);
+    expect(api.readFile).toHaveBeenCalledTimes(MAX_TABS);
+    // 触顶再点第 21 个：toast 拒开、标签数不变（超限提示先关，spec §3）
+    await clickButton(`f${MAX_TABS}.html`);
+    expect(container.textContent).toContain(`最多同时打开 ${MAX_TABS} 个标签，请先关闭部分标签`);
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(MAX_TABS);
+    expect(api.readFile).toHaveBeenCalledTimes(MAX_TABS + 1); // 判定在 readFile 回调内：读库发生但不开标签
+    // 释放一个槽位后再点：正常开签（触顶尝试未残留孤儿会话，回路完整）
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="关闭标签 f0.html"]')?.click();
+    });
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(MAX_TABS - 1);
+    await clickButton(`f${MAX_TABS}.html`);
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(MAX_TABS);
+    const active = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (b) => b.getAttribute('aria-current') === 'true',
+    );
+    expect(active?.textContent).toBe(`f${MAX_TABS}.html`);
     act(() => {
       tree.unmount();
     });
