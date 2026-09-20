@@ -1,3 +1,5 @@
+/* Task 2 移除：本文件经 styles/theme.css 过渡 @import 保持生效（E2E 布局依赖），
+   Task 2 将内容迁入 theme.css 后删除该 @import 行与本文件 */
 body {
   margin: 0;
   font-family:

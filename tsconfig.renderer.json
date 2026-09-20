@@ -7,6 +7,13 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "types": ["vite/client"],
+    // shadcn components.json aliases 对齐的路径映射（与 vite.config resolve.alias 双写）
+    "paths": {
+      "@components": ["./src/renderer/src/components"],
+      "@components/*": ["./src/renderer/src/components/*"],
+      "@lib": ["./src/renderer/src/lib"],
+      "@lib/*": ["./src/renderer/src/lib/*"]
+    },
     "noEmit": true
   },
   "include": ["src/renderer/**/*"]
