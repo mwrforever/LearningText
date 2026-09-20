@@ -12,6 +12,9 @@
  * 标题栏「搜索」钮/菜单 Ctrl+Shift+F 进入 search 态、「回收站」钮进入 trash 态、返回钮/Esc
  * 退出；search/trash 内容由对应面板数据自持渲染，树数据（roots/expanded）挂在 Workspace
  * 不随态销毁（spec §2.2 切回保持展开态）。呈现面（标题栏 + 三态分发）由 TreePane 插槽承载。
+ * 搜索结果树侧定位（spec §2.2 评审 fix）：revealInTree 按 virtualPath 逐段 resolvePath 求
+ * 祖先链 → 逐层 listChildren 就地装载 → 展开集合并入 + reveal 选中覆盖（activeId 变化即
+ * 回落）；「点击定位打开」= 树侧展开 + openFile，「在树中显示」= 定位 + 关搜索态回树。
  * 最近打开与工作区恢复（M5 批次②）：openFile 成功（聚焦/新建两会话分支）记录 recent 域
  * （去重置顶，时刻由写入方补）；trash/purge 广播后对 recent 逐个验活剔除；启动时按
  * workspace 域恢复标签（planWorkspaceRestore 失效剔除 + active 右邻继承，恢复式打开豁免
@@ -96,6 +99,10 @@ export function Workspace({
   // 'trash'=回收站；search/trash 面板数据自持（各自挂载首拉 + 域广播重拉），Workspace
   // 只负责态切换与退出通道（返回钮 / Esc / 菜单命令），不代理其数据拉取
   const [view, setView] = useState<TreePaneView>('tree');
+  // 树内定位选中覆盖（M5 Task 7 评审 fix，spec §2.2「在树中显示/定位打开」）：M4 架构
+  // selected 即 activeTab，reveal 不开标签但需树内高亮——以覆盖值临时接管 TreePanel 的
+  // selectedId；activeId 一变（开标签/切签/关签补位）即回落，用户焦点变化优先于 reveal 残留
+  const [revealSelectionId, setRevealSelectionId] = useState<number | null>(null);
   // 快速打开浮层开关（M5 批次① Task 6）：唯一写入口是 shell:command dispatch（菜单
   // Ctrl+P），点选/取消由浮层经 onOpenChange 回传收口
   const [quickOpen, setQuickOpen] = useState(false);
@@ -124,6 +131,11 @@ export function Workspace({
   useEffect(() => {
     dirtyRef.current = tabsOp.tabs.some((t) => t.dirty);
   }, [tabsOp]);
+  // reveal 选中覆盖回收：activeId 变化即用户改变焦点（开签/切签/关签补位），覆盖值让位
+  //（初始挂载同样触发一次，值为 null 无副作用）
+  useEffect(() => {
+    setRevealSelectionId(null);
+  }, [tabsOp.activeId]);
   // —— 最近打开 / 工作区会话持久化（M5 批次②，settings recent/workspace 域）——
   // 设置写串行链：recent/workspace 域全部写经「get→merge→set」promise 链逐笔串行——启动
   // 恢复期多个记录点近同时完成，裸并发各自 get 读到同一旧值、后写覆盖先写丢条目；串行化
@@ -328,6 +340,42 @@ export function Workspace({
         closeTabById(nodeId);
       }
     });
+  }
+
+  /**
+   * 树侧定位（spec §2.2 两条路径共用：点击「定位打开」的树侧展开 + 「在树中显示」）：
+   * 按命中 virtualPath 逐段 resolvePath 求祖先链 id → 逐层 listChildren 就地补拉子级
+   * （树懒加载语义：仅并入展开集不会自动装载未加载层，须 onToggle 同款 withChildren 回写；
+   * 层间 await 串行，保证下层 graft 时上层 children 已入 React updater 队列）→ 展开集合
+   * 并入 + reveal 选中覆盖。祖先段解析失败静默跳过（容错不抛错，后续层级照常）。
+   * 目录命中连同其自身展开（子级可见——「展开选中」），文件命中展开至父级止。
+   * 消费形态：onOpen 为 fire-and-forget（openFile 并行，开签后 activeId 变化自动收走
+   * 覆盖选中）；onReveal 在其完成后由调用侧 setView('tree') 回树。
+   */
+  async function revealInTree(node: NodeMeta): Promise<void> {
+    setRevealSelectionId(node.id);
+    const segments = node.virtualPath.split('/').filter((segment) => segment !== '');
+    const levels = node.nodeType === 'dir' ? segments.length : segments.length - 1;
+    const expandIds = new Set<number>();
+    for (let level = 1; level <= levels; level += 1) {
+      const path = `/${segments.slice(0, level).join('/')}`;
+      const resolved = await window.api.resolvePath({ virtualPath: path });
+      if (!resolved.ok) continue;
+      const ancestorId = resolved.value.nodeId;
+      expandIds.add(ancestorId);
+      const children = await window.api.listChildren({ parentId: ancestorId });
+      if (children.ok) {
+        setRoots((prev) =>
+          replaceNode(prev, ancestorId, (n) =>
+            withChildren(
+              n,
+              children.value.map((meta) => makeTreeRoot(meta)),
+            ),
+          ),
+        );
+      }
+    }
+    setExpanded((prev) => new Set([...prev, ...expandIds]));
   }
 
   /**
@@ -750,7 +798,7 @@ export function Workspace({
               <>
                 <TreePanel
                   roots={roots}
-                  selectedId={tabsOp.activeId}
+                  selectedId={revealSelectionId ?? tabsOp.activeId}
                   moveMode={moveMode !== null}
                   moveTargetId={moveTargetId}
                   onToggle={onToggle}
@@ -804,11 +852,19 @@ export function Workspace({
               </>
             }
             searchContent={
-              // search 态：搜索面板数据自持（查询态在面板内部）；点选走 openFile 统一入口
-              //（大文件/二进制拦截与 recent 记录一并生效）；「在树中显示」= 退出搜索态回树
+              // search 态：搜索面板数据自持（查询态在面板内部）。点选=定位打开（spec §2.2）：
+              // 树侧展开（revealInTree）+ openFile 统一入口（大文件/二进制拦截与 recent 记录
+              // 一并生效，开签后 activeId 变化自动收走 reveal 覆盖选中）；「在树中显示」=
+              // revealInTree 定位 + 关搜索态回树（不开标签，目录结果的有效动作）
               <SearchPanel
-                onOpen={(node) => void openFile(node)}
-                onReveal={() => setView('tree')}
+                onOpen={(node) => {
+                  void revealInTree(node);
+                  void openFile(node);
+                }}
+                onReveal={(node) => {
+                  void revealInTree(node);
+                  setView('tree');
+                }}
               />
             }
             trashContent={

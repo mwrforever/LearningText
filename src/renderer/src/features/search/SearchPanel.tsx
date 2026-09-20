@@ -44,7 +44,7 @@ const HIT_MARK_CLASS = 'bg-primary/15 text-foreground rounded-xs';
 export interface SearchPanelProps {
   /** 点选命中：打开目标节点（文件走 openFile 统一入口，大文件/二进制拦截一并生效） */
   onOpen(node: NodeMeta): void;
-  /** 「在树中显示」：消费侧退出搜索态回树（spec §2.2 关闭搜索态并展开选中的最小面） */
+  /** 「在树中显示」：消费侧树侧定位（祖先链展开 + 选中）并退出搜索态回树（spec §2.2） */
   onReveal(node: NodeMeta): void;
 }
 
