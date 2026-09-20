@@ -26,12 +26,12 @@ export function TabBar({ tabs, activeId, onActivate, onClose }: TabBarProps): Re
             type="button"
             role="tab"
             aria-current={tab.meta.id === activeId ? 'true' : undefined}
-            className="flex items-center gap-1.5 whitespace-nowrap rounded-sm px-2 py-1 text-xs text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground aria-current:bg-background aria-current:font-medium aria-current:text-foreground"
+            className="flex items-center gap-1 whitespace-nowrap rounded-sm px-2 py-1 text-xs text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground aria-current:bg-background aria-current:font-medium aria-current:text-foreground"
             onClick={() => onActivate(tab.meta.id)}
           >
             {tab.meta.name}
             {tab.dirty ? (
-              <span className="text-[10px] text-destructive" aria-label="未保存">
+              <span className="text-xs text-destructive" aria-label="未保存">
                 未保存
               </span>
             ) : null}

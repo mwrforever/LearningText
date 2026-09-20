@@ -92,7 +92,7 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
   const actionTarget = props.selectedId;
   return (
     <nav aria-label="资源树" className="flex min-h-0 flex-1 flex-col">
-      <div className="lt-tree-toolbar flex flex-wrap items-center gap-1 border-b border-border px-2 py-1.5">
+      <div className="lt-tree-toolbar flex flex-wrap items-center gap-1 border-b border-border px-2 py-1">
         <button
           type="button"
           className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"

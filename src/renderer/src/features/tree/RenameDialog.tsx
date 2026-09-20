@@ -23,7 +23,7 @@ export function RenameDialog({
     // 视口居中浮层卡片形态（设计系统文档 §7.4 裁决：保留容器 Tailwind 化，不迁 shadcn Dialog
     // ——radix 依赖与焦点陷阱行为面均超本批次边界）；role/aria 锚点零变更
     <div
-      className="lt-rename fixed left-1/2 top-1/2 z-50 flex w-80 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-lg border border-border bg-popover p-3 shadow-md duration-240 animate-in fade-in zoom-in-95"
+      className="lt-rename fixed left-1/2 top-1/2 z-50 flex w-80 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-lg border border-border bg-popover p-4 shadow-md duration-240 animate-in fade-in zoom-in-95"
       role="dialog"
       aria-label="重命名"
     >

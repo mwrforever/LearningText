@@ -532,7 +532,7 @@ export function Workspace({
                 Esc 或取消退出。目标非法提示就地呈现（不占 toast 生命周期） */}
             {moveMode !== null ? (
               <div
-                className="lt-move-bar flex flex-wrap items-center gap-2 border-t border-border bg-muted/50 px-2 py-1.5"
+                className="lt-move-bar flex flex-wrap items-center gap-2 border-t border-border bg-muted/50 px-2 py-1"
                 role="group"
                 aria-label="移动选择模式"
               >
@@ -657,7 +657,7 @@ export function Workspace({
                 className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
                 onClick={() => updateLayout({ previewCollapsed: true })}
               >
-                «
+                »
               </button>
             </div>
             <PreviewPanel node={activeTab?.meta ?? null} />
