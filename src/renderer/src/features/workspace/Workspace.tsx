@@ -26,9 +26,9 @@
  * 结果/最近打开双源数据自持在 QuickOpenDialog。
  * 设置页（M5 批次③ Task 8）：settingsOpen 全屏覆盖态（非 view 三态枚举——覆盖于工作台之上，
  * 关闭后工作台状态原样还原），入口 = 状态栏「设置」钮 + 菜单 'open-settings' 命令；主题装配
- * 在此收口（意图 → resolveTheme 解析 → documentElement .dark 切换 + 全部会话状态以新外观
- * 重建，system 态经 matchMedia 监听，cleanup 成对摘除）；字号/去抖/自动保存表单即改即存——
- * 经既有串行写链（get→merge→set）落盘，失败 toast 回滚显示。
+ * 在此收口（意图 → resolveTheme 解析 → documentElement .dark 切换 + resolvedTheme props 传导
+ * EditorPanel 同 state 重配，system 态经 matchMedia 监听，cleanup 成对摘除）；字号/去抖/自动
+ * 保存表单即改即存——经既有串行写链（get→merge→set）落盘，失败 toast 回滚显示。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -116,18 +116,11 @@ export function Workspace({
   // 设置覆盖层开关（M5 批次③ Task 8）：入口 = 状态栏「设置」钮 + 菜单 'open-settings' 命令；
   // 非 view 三态枚举成员——覆盖于工作台之上、关闭后工作台状态原样还原
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // 外观域（M5 批次③ Task 8）：意图（持久化值）与解析结果（驱动 .dark 类与编辑器主题）。
-  // 解析初值 light——spec §4.3 D10「首帧默认 light，装配后切换，闪变定档为已知边界」
+  // 外观域（M5 批次③ Task 8）：意图（持久化值）与解析结果（驱动 .dark 类与编辑器主题
+  // props）。解析初值 light——spec §4.3 D10「首帧默认 light，装配后切换，闪变定档为已知边界」
   const [themeIntent, setThemeIntent] = useState<ThemeIntent>('system');
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light');
   const [editorFontSize, setEditorFontSize] = useState(14);
-  // 外观实时镜像：matchMedia change 监听回调持稳态引用（主题 effect deps 仅 themeIntent，
-  // 监听不随字号变更重挂），事件时刻经 ref 读最新字号重建会话（settingsRef 同款同步模式，
-  // 渲染期不写 ref）
-  const appearanceRef = useRef({ fontSize: editorFontSize });
-  useEffect(() => {
-    appearanceRef.current = { fontSize: editorFontSize };
-  }, [editorFontSize]);
   // 布局实时镜像（settingsRef/tabsRef 同款同步模式）：拖拽 pointerup 持久化必须读「此刻」
   // 布局——pointermove 高频更新下事件闭包 layout 必陈旧；事件处理器内同步记账，渲染期不写
   const layoutRef = useRef<ShellLayout>(layout);
@@ -196,8 +189,8 @@ export function Workspace({
       if (alive && result.ok) {
         setDebounceMs(result.value.preview.debounceMs);
         setAutoSaveMs(result.value.editor.autoSaveMs);
-        // 外观域装载（M5 Task 8）：意图/字号进 state，.dark 切换与会话外观重建由主题装配
-        // effect 派生应用（意图变化即重跑）
+        // 外观域装载（M5 Task 8）：意图/字号进 state，.dark 切换与编辑器外观重配由主题装配
+        // effect / EditorPanel 外观 props 派生应用（意图变化即重跑）
         setThemeIntent(result.value.appearance.theme);
         setEditorFontSize(result.value.appearance.editorFontSize);
         // 布局记忆恢复（FR-SHELL-01）：ref 同步记账（后续拖拽持久化以恢复值为基准）
@@ -443,13 +436,15 @@ export function Workspace({
     void enqueueSettingsWrite(apply);
   }
 
-  // —— 主题装配与外观应用（M5 批次③ Task 8，spec §4.3 D10）——
+  // —— 主题装配（M5 批次③ Task 8，spec §4.3 D10）——
 
   /**
    * 主题装配 effect：意图 → resolveTheme 解析 → documentElement .dark 切换（设计系统文档
-   * §八双主题唯一开关）→ 全部会话状态以新外观重建；system 态经 matchMedia 监听跟随系统
-   * 偏好，监听随 effect 进出成对挂卸。应用动作全部同步完成、先于 setResolvedTheme 触发的
-   * 换入提交——EditorPanel 换入 effect（子先父后）总能看到已重建的会话状态。
+   * §八双主题唯一开关）；编辑器侧外观经 resolvedTheme props 传导至 EditorPanel 的外观
+   * compartment 同 state 重配（doc/undo/光标/滚动全保留）。system 态经 matchMedia 监听
+   * 跟随系统偏好，监听随 effect 进出成对挂卸。评审 Minor 1 守卫：解析主题与字号均未变化
+   * 时 setResolvedTheme bail-out → EditorPanel 外观 props 不变 → 零重配派发（显式
+   * light/dark 下系统偏好翻转不再触发编辑器换装）。
    */
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -457,7 +452,6 @@ export function Workspace({
       const resolved = resolveTheme(themeIntent, media.matches);
       // .dark 挂文档根元素：语义变量与 dark: 变体全站即时生效（切换零重排）
       document.documentElement.classList.toggle('dark', resolved === 'dark');
-      rebuildSessionsForAppearance(resolved, appearanceRef.current.fontSize);
       // 值不变时返回原 state 触发 bail-out，避免无谓提交（首次装配同值亦不产生第二次渲染）
       setResolvedTheme((prev) => (prev === resolved ? prev : resolved));
     };
@@ -466,45 +460,13 @@ export function Workspace({
     return () => {
       media.removeEventListener('change', applyTheme);
     };
-    // rebuildSessionsForAppearance 为组件内函数声明（每次渲染重建），其依赖（sessions/
-    // tabsRef/saveController/appearanceRef）均为稳定引用，效果等价于 effect 期实例
   }, [themeIntent]);
-
-  /**
-   * 外观重建（spec §4.3 D10「切主题全标签 view 重建」）：以新主题/字号重建全部会话状态
-   * （扩展集含外观——doc/光标由旧态透传，撤销历史随状态重建归零，已知边界）。仅允许在
-   * 事件处理器 / effect 回调内同步调用（渲染期禁副作用）；标签清单读 tabsRef 实时镜像
-   * （事件闭包 tabsOp 必陈旧，openFile 触顶判定同款纪律）。EditorPanel 经 state 实例
-   * 同一性感知重建并 setState 换入（M4 习语：会话态为唯一权威）。
-   */
-  function rebuildSessionsForAppearance(theme: 'light' | 'dark', fontSize: number): void {
-    for (const tab of tabsRef.current.tabs) {
-      const session = sessions.get(tab.meta.id);
-      if (session === undefined) continue;
-      sessions.updateState(
-        tab.meta.id,
-        createEditorState({
-          doc: session.state.doc,
-          mimeType: tab.meta.mimeType ?? 'text/plain',
-          selection: session.state.selection,
-          handlers: {
-            onDocChanged: (text, state) => {
-              sessions.updateState(tab.meta.id, state);
-              saveController.edit(tab.meta.id, text);
-            },
-            onScroll: (top) => sessions.updateScroll(tab.meta.id, top),
-          },
-          appearance: { theme, fontSize },
-        }),
-      );
-    }
-  }
 
   // —— 设置页表单回调（M5 批次③ Task 8）：即改即存 + 失败 toast 回滚显示 ——
 
   /**
-   * 主题意图变更：意图入 state（.dark 切换与会话重建由主题装配 effect 派生应用，回滚亦
-   * 同路径逆放）；持久化失败 toast 后回滚意图
+   * 主题意图变更：意图入 state（.dark 切换与编辑器外观重配由主题装配 effect 派生应用，
+   * 回滚亦同路径逆放）；持久化失败 toast 后回滚意图
    */
   function changeThemeIntent(intent: ThemeIntent): void {
     const previous = themeIntent;
@@ -520,13 +482,9 @@ export function Workspace({
     });
   }
 
-  /**
-   * 编辑器字号变更：先以新字号同步重建全部会话（单提交内 EditorPanel 即感知换入——若经
-   * effect 重建会晚于子组件换入 effect 一个提交）；持久化失败 toast 后回滚显示并逆重建
-   */
+  /** 编辑器字号变更：状态即改即存（EditorPanel 经外观 props 变化同 state 重配），失败回滚显示 */
   function changeEditorFontSize(fontSize: number): void {
     const previous = editorFontSize;
-    rebuildSessionsForAppearance(resolvedTheme, fontSize);
     setEditorFontSize(fontSize);
     void enqueueSettingsWrite((settings) => ({
       ...settings,
@@ -534,7 +492,6 @@ export function Workspace({
     })).then((ok) => {
       if (!ok) {
         showToast('设置保存失败，已恢复原值');
-        rebuildSessionsForAppearance(resolvedTheme, previous);
         setEditorFontSize(previous);
       }
     });

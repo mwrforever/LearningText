@@ -3,13 +3,16 @@
  * （doc/undo/光标跨标签保留）；props 面自 M3 textarea 占位演进为会话式（node → activeTab+sessions，
  * 工作台三栏结构与 shell 插槽不重排——M3 接缝语义兑现）。二进制/空态在 Workspace.openFile
  * 前置拦截（非文本不开标签），本组件不再有二进制分支（无死分支纪律）。
- * M5 批次③ Task 8：外观联动——theme/editorFontSize 变化时 Workspace 以新扩展集重建会话
- * 状态，本组件经 state 实例同一性感知后 setState 换入（滚动保留、doc/光标透传）。
+ * M5 批次③ Task 8：外观联动——theme/editorFontSize 变化经外观 compartment reconfigure
+ * effect 同 state 重配（doc/undo/光标/滚动全保留，CM6 官方习语；评审 Important fix round 1
+ * 弃用 EditorState 整体重建——该路径丢失撤销历史）；切签换入后无条件对齐外观（非激活标签
+ * 的 state compartment 内容可能滞后于当前外观）。
  * 渲染期零副作用：view 生命周期与会话换入全在 effect（75647f2 渲染期禁写 ref 先例）。
  */
 import { useEffect, useRef } from 'react';
 import { EditorView } from '@codemirror/view';
 import type { TabState } from '../workspace/tabModel';
+import { appearanceReconfigureEffect } from './codemirror';
 import { TabSessions } from './tabSessions';
 // 空绑定 type import：把 window-api.ts 的全局 Window.api 声明拉入渲染层编译程序
 import type {} from '../../../../shared/window-api';
@@ -25,12 +28,12 @@ export interface EditorPanelProps {
    */
   readonly debounceMs: number;
   /**
-   * 界面主题解析结果（M5 Task 8）：驱动语法主题换入（dark → one-dark / light → 照旧）——
-   * Workspace 以新外观重建会话状态后，本组件经 state 实例同一性感知并 setState 换入；
-   * 缺省 light（出厂默认，测试桩场景同值）
+   * 界面主题解析结果（M5 Task 8）：变化即对本视图 dispatch 外观 compartment reconfigure
+   * effect（dark → one-dark / light → 照旧，同 state 重配保 doc/undo）；缺省 light
+   * （出厂默认，测试桩场景同值）
    */
   readonly theme?: 'light' | 'dark';
-  /** 编辑器字号 px（CM 根节点 font-size；字号变更同走 view 重建换入；缺省 14 出厂默认） */
+  /** 编辑器字号 px（CM 根节点 font-size；变更同走 compartment 重配；缺省 14 出厂默认） */
   readonly editorFontSize?: number;
   /** 立即保存请求（保存钮 = 原生菜单同款命令）：Workspace 接 SaveController.flushActive */
   readonly onSaveRequest?: () => void;
@@ -46,9 +49,8 @@ export function EditorPanel({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const activeNodeIdRef = useRef<number | null>(null);
-  // 上次应用的外观镜像：外观换入需「外观 props 变化 + 会话状态实例替换」双信号同时成立——
-  // 仅凭实例不同会误伤 M4 评审 Important-1 防线（同 id 重渲染时视图为权威，会话态因测试桩
-  // 或未回写输入滞后是合法态，不得以陈旧态覆盖视图）
+  // 上次应用的外观镜像：同 id 重渲染仅在外观信号变化时派发 reconfigure（评审 Minor 1 守卫——
+  // 解析主题与字号均未变化即零派发，M4 评审 Important-1 的「视图为权威」同 id 防线不变）
   const lastAppearanceRef = useRef<{ theme: 'light' | 'dark'; fontSize: number }>({
     theme,
     fontSize: editorFontSize,
@@ -59,7 +61,7 @@ export function EditorPanel({
   // 复用——先回写会话再销毁，下次激活由会话 state 重建（doc/undo/滚动无损，A.1-9 资源成对）
   useEffect(() => {
     const view = viewRef.current;
-    // 外观变化先记账（早于各分支早退）：后续提交据此判定是否处于外观重建窗口
+    // 外观变化先记账（早于各分支早退）：后续提交据此判定是否需要同 state 重配
     const appearanceChanged =
       lastAppearanceRef.current.theme !== theme ||
       lastAppearanceRef.current.fontSize !== editorFontSize;
@@ -78,6 +80,7 @@ export function EditorPanel({
     const session = sessions.get(activeTab.meta.id);
     if (session === undefined) return undefined;
     if (view === null) {
+      // 首挂建 view：openFile 以当前外观构造会话 state（compartment 内容即当前值），无需对齐
       const created = new EditorView({
         parent: hostRef.current ?? undefined,
         state: session.state,
@@ -94,14 +97,17 @@ export function EditorPanel({
         sessions.updateScroll(prevId, view.scrollDOM.scrollTop);
         view.setState(session.state);
         view.scrollDOM.scrollTop = session.scrollTop;
-      } else if (appearanceChanged && session.state !== view.state) {
-        // 外观重建换入（M5 Task 8，spec §4.3 D10）：Workspace 在主题/字号变更时以新扩展集
-        // 同步重建全部会话状态——「外观 props 变化 + state 实例替换」双信号即重建换入窗口；
-        // 滚动记忆保留，doc/光标由重建态透传承载，撤销历史随状态重建归零（view 重建机制的
-        // 已知边界，spec 明示「主题切换 = EditorView 重建」）
-        const scrollTop = view.scrollDOM.scrollTop;
-        view.setState(session.state);
-        view.scrollDOM.scrollTop = scrollTop;
+        // 换入态可能错过非激活期的外观变更（state compartment 内容不可内省），无条件对齐：
+        // 同 state 重配无 doc 变更、不进撤销栈（重配值与当前一致时为等价 no-op transaction）
+        view.dispatch({
+          effects: appearanceReconfigureEffect(lastAppearanceRef.current),
+        });
+      } else if (appearanceChanged) {
+        // 外观同 state 重配（M5 Task 8，spec §4.3 D10 两半：重建生效 + 保 doc/undo）——
+        // doc/光标/滚动/撤销历史全保留，仅外观 compartment 片段替换（fix round 1 起）
+        view.dispatch({
+          effects: appearanceReconfigureEffect(lastAppearanceRef.current),
+        });
       }
     }
     activeNodeIdRef.current = activeTab.meta.id;

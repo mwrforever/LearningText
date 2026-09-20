@@ -2,6 +2,7 @@
 // CodeMirror 内核冒烟（宪法 A.6-2）：view 生命周期成对、输入回报 doc、会话切换保 doc/undo/光标、
 // 二进制/空态占位。CM6 在 jsdom 无布局引擎：断言只碰 state/doc 层，不碰坐标类 API。
 import { act } from 'react';
+import { isolateHistory, undo } from '@codemirror/commands';
 import { EditorSelection } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { createRoot } from 'react-dom/client';
@@ -310,10 +311,10 @@ describe('EditorPanel（CodeMirror 内核）', () => {
     expect(onScroll).toHaveBeenCalledTimes(1);
     tree.unmount();
   });
-  it('字号/主题 props 变化 → 外观重建的会话状态经同一性感知换入（doc/光标保留、不误报变更）', () => {
-    // M5 Task 8：Workspace 以新扩展集重建会话状态（此处 updateState 模拟其事件处理器内
-    // 同步重建语义），EditorPanel 在外观 props 变化的提交内感知 state 实例替换并换入——
-    // 视图态随之更新且内容零丢失；换入不触发 docChanged（不误入保存管线）
+  it('字号/主题 props 变化 → 外观 compartment 同 state 重配：doc/光标实例保留、不误报变更', () => {
+    // M5 Task 8（评审 Important fix round 1）：外观变更经 compartment reconfigure 在既有
+    // state 内重配——doc Text 实例同一（非 EditorState 重建）、光标保留、不触发 docChanged
+    //（不误入保存管线）；重配事务产生新 state 实例（A.1-9 transaction 语义）
     const sessions = new TabSessions();
     const onDocChanged = vi.fn();
     sessions.open(
@@ -339,18 +340,11 @@ describe('EditorPanel（CodeMirror 内核）', () => {
     });
     const view = mountedView(container);
     if (!view) throw new Error('视图未挂载');
-    const before = view.state;
     act(() => {
       view.dispatch({ changes: { from: 0, insert: '丙' }, selection: EditorSelection.cursor(1) });
     });
-    const rebuilt = createEditorState({
-      doc: view.state.doc,
-      selection: view.state.selection,
-      mimeType: 'text/plain',
-      handlers: { onDocChanged: (t) => onDocChanged(t), onScroll: () => {} },
-      appearance: { theme: 'dark', fontSize: 20 },
-    });
-    sessions.updateState(2, rebuilt);
+    const before = view.state;
+    const beforeDoc = view.state.doc;
     act(() => {
       tree.render(
         <EditorPanel
@@ -364,10 +358,67 @@ describe('EditorPanel（CodeMirror 内核）', () => {
     });
     const after = mountedView(container);
     expect(after).not.toBeNull();
-    expect(after?.state).not.toBe(before); // 新状态实例已换入（外观重建生效）
-    expect(after?.state.doc.toString()).toBe('丙'); // 内容零丢失
-    expect(after?.state.selection.main.head).toBe(1); // 光标由重建态透传
-    expect(onDocChanged).toHaveBeenCalledTimes(1); // 换入不重复回报（不误触发保存管线）
+    expect(after?.state.doc).toBe(beforeDoc); // doc 实例同一——同 state 重配，非重建
+    expect(after?.state.doc.toString()).toBe('丙'); // 内容保留
+    expect(after?.state.selection.main.head).toBe(1); // 光标保留
+    expect(after?.state).not.toBe(before); // 重配经 transaction 产生新 state 实例（A.1-9）
+    expect(onDocChanged).toHaveBeenCalledTimes(1); // 重配不重复回报（不误触发保存管线）
+    tree.unmount();
+  });
+
+  it('外观变更后撤销栈保留：可 undo 回变更前文档（history 面断言，评审 Important 配套背书）', () => {
+    // spec §4.3 D10「保 doc/undo」两半的历史面验证：主题+字号双变更（compartment 重配）
+    // 之后，撤销深度无损——变更后新输入仍可一路 undo 越过外观变更点回到变更前文档
+    const sessions = new TabSessions();
+    sessions.open(
+      2,
+      createEditorState({
+        doc: '',
+        mimeType: 'text/plain',
+        handlers: { onDocChanged: () => {}, onScroll: () => {} },
+        appearance: { theme: 'light', fontSize: 14 },
+      }),
+    );
+    const tree = createRoot(container);
+    act(() => {
+      tree.render(
+        <EditorPanel
+          sessions={sessions}
+          activeTab={{ meta: meta(2, 'a.txt'), dirty: false }}
+          debounceMs={300}
+          theme="light"
+          editorFontSize={14}
+        />,
+      );
+    });
+    const view = mountedView(container);
+    if (!view) throw new Error('视图未挂载');
+    act(() => {
+      view.dispatch({ changes: { from: 0, insert: '甲' } }); // 变更前进撤销栈
+    });
+    act(() => {
+      tree.render(
+        <EditorPanel
+          sessions={sessions}
+          activeTab={{ meta: meta(2, 'a.txt'), dirty: false }}
+          debounceMs={300}
+          theme="dark"
+          editorFontSize={20}
+        />,
+      );
+    });
+    act(() => {
+      view.dispatch({
+        changes: { from: 1, insert: '乙' }, // 外观变更后继续输入（尾插，doc=甲乙）
+        annotations: isolateHistory.of('full'), // 独立撤销组：与变更前输入不合并，断言粒度锁定
+      });
+    });
+    expect(view.state.doc.toString()).toBe('甲乙');
+    act(() => {
+      // CM6 命令习语：undo({ state, dispatch })——撤销栈未被外观变更清空
+      expect(undo({ state: view.state, dispatch: view.dispatch })).toBe(true);
+    });
+    expect(view.state.doc.toString()).toBe('甲'); // 越过外观变更点回到变更前文档
     tree.unmount();
   });
 });
