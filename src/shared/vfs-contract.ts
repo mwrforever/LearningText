@@ -33,6 +33,22 @@ export const NodeMetaSchema = z.object({
   updatedAt: z.string(),
 });
 
+/**
+ * 回收站条目读模型（M5 批次②）：业务节点 meta + 删除时刻（本地 ISO，与库 deleted_at 同源）。
+ * 归位 vfs-contract 的裁决：通道属 VFS 域（vfs:list-trashed，B.2-5 命名），trash 请求
+ * （NodeIdRequest）与 trash 域广播事件（trashed/restored/purged）均已在本文——单一来源就近，
+ * 不另立 trash-contract 碎片化契约（检索/设置等独立域才各自建文件）。
+ */
+export interface TrashedNodeMeta {
+  readonly meta: NodeMeta;
+  readonly deletedAt: string;
+}
+
+export const TrashedNodeMetaSchema = z.object({
+  meta: NodeMetaSchema,
+  deletedAt: z.string(),
+});
+
 /** 50MB 单文件上限（docs/03 §3.2-3），服务层写入前校验 */
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 

@@ -14,6 +14,7 @@ interface ExposedApi {
   trashNode(request: unknown): Promise<unknown>;
   restoreNode(request: unknown): Promise<unknown>;
   purgeNode(request: unknown): Promise<unknown>;
+  listTrashed(request: unknown): Promise<unknown>;
   resolvePath(request: unknown): Promise<unknown>;
   searchQuery(request: unknown): Promise<unknown>;
   settingsGet(request: unknown): Promise<unknown>;
@@ -65,6 +66,7 @@ describe('preload 桥注册', () => {
       'trashNode',
       'restoreNode',
       'purgeNode',
+      'listTrashed',
       'resolvePath',
       'searchQuery',
       'settingsGet',
@@ -99,6 +101,8 @@ describe('preload 桥注册', () => {
       ['trashNode', IPC.vfsTrash, payload],
       ['restoreNode', IPC.vfsRestore, payload],
       ['purgeNode', IPC.vfsPurge, payload],
+      // 无参通道沿 settingsGet 先例固定发 null（回收站列表，M5 批次②）
+      ['listTrashed', IPC.vfsListTrashed, null],
       ['resolvePath', IPC.vfsResolve, payload],
       ['searchQuery', IPC.searchQuery, payload],
       ['settingsGet', IPC.settingsGet, null],

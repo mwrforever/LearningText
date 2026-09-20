@@ -193,6 +193,12 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       };
     }),
   );
+  // 回收站列表（M5 批次②）：纯读无写事务 → 返回对象无 event 键 → 不广播（B.3-4）；
+  // 无参通道载荷固定 null 照 settingsGet 先例（NodeIdRequest 不适用）
+  ipcMain.handle(
+    IPC.vfsListTrashed,
+    handleWith(deps, z.null(), () => ({ result: deps.vfs.listTrashed() })),
+  );
   ipcMain.handle(
     IPC.vfsResolve,
     handleWith(deps, ResolvePathRequestSchema, (q: ResolvePathRequest) => ({

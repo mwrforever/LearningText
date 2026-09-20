@@ -8,6 +8,8 @@
  * shell 域持久化（get→merge→set 全量写回），拖拽中仅本地态防 settings 写风暴。
  * 树 rename/move（M4 spec §6.2 D8）：重命名行内模态与 move 选择模式态在此提升；
  * renamed/moved 广播后 getNode 反查回写标签 meta（§6.1 同步链，selected 即 activeTab）。
+ * 树栏三态视图容器（M5 批次②）：view 'tree'|'trash' 切换（search 态归 Task 7）——
+ * 工具栏「回收站」钮进入、返回钮/Esc 退出；trash 态由 TrashPanel 数据自持渲染。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -30,6 +32,7 @@ import {
 } from '../tree/treeModel';
 import { RenameDialog } from '../tree/RenameDialog';
 import { TreePanel } from '../tree/TreePanel';
+import { TrashPanel } from '../trash/TrashPanel';
 import { showToast } from '../ui/Toast';
 import { TabBar } from './TabBar';
 import { ratioFromPointer } from './layoutModel';
@@ -63,6 +66,10 @@ export function Workspace({
   const [renameTarget, setRenameTarget] = useState<{ id: number; name: string } | null>(null);
   // rename 请求在途（模态确认钮防重复提交）
   const [renameInFlight, setRenameInFlight] = useState(false);
+  // 树栏视图态（M5 批次②三态容器，本任务先立 trash 态最小切换，search 态归 Task 7）：
+  // 'tree'=资源树 / 'trash'=回收站；回收站面板数据自持（挂载首拉 + trash 域广播重拉），
+  // Workspace 只负责态切换与退出通道（返回钮 / Esc），不代理其数据拉取
+  const [view, setView] = useState<'tree' | 'trash'>('tree');
   // 布局实时镜像（settingsRef/tabsRef 同款同步模式）：拖拽 pointerup 持久化必须读「此刻」
   // 布局——pointermove 高频更新下事件闭包 layout 必陈旧；事件处理器内同步记账，渲染期不写
   const layoutRef = useRef<ShellLayout>(layout);
@@ -295,6 +302,18 @@ export function Workspace({
     };
   }, [moveMode]);
 
+  // trash 态 Esc 返回资源树（M5 批次②）：与 moveMode Esc 同款 window 级成对挂卸
+  useEffect(() => {
+    if (view !== 'trash') return undefined;
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setView('tree');
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [view]);
+
   /**
    * 打开文件为标签（树点选/新建文件唯一入口）：非文本前置拦截（FR-EDIT-04 归后续批次，
    * 不读库不开标签）→ 大小三分支前置判定（spec §2.4 裁决 D7：渲染层以 meta.size 前置判定，
@@ -505,70 +524,103 @@ export function Workspace({
           </aside>
         ) : (
           <aside className="lt-pane lt-pane-tree flex min-h-0 min-w-0 flex-col bg-background">
+            {/* 树栏标题栏随视图态换题与操作（三态容器，M5 批次②）：tree 态提供回收站入口，
+                trash 态提供返回口；折叠钮两态常驻（布局行为与视图态正交） */}
             <div className="lt-pane-titlebar flex h-8 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
-              <span className="text-xs font-medium text-muted-foreground">资源树</span>
-              <button
-                type="button"
-                aria-label="折叠树栏"
-                className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-                onClick={() => updateLayout({ treeCollapsed: true })}
-              >
-                «
-              </button>
-            </div>
-            <TreePanel
-              roots={roots}
-              selectedId={tabsOp.activeId}
-              moveMode={moveMode !== null}
-              moveTargetId={moveTargetId}
-              onToggle={onToggle}
-              onSelect={onSelectNode}
-              onCreate={onCreate}
-              onTrash={onTrash}
-              onRename={onRename}
-              onStartMove={startMove}
-            />
-            {/* move 选择模式操作条（spec §6.2 D8）：目标未定/自身或后代/在途时确认禁用；
-                Esc 或取消退出。目标非法提示就地呈现（不占 toast 生命周期） */}
-            {moveMode !== null ? (
-              <div
-                className="lt-move-bar flex flex-wrap items-center gap-2 border-t border-border bg-muted/50 px-2 py-1"
-                role="group"
-                aria-label="移动选择模式"
-              >
-                {moveInvalid ? (
-                  <span className="lt-move-hint text-xs text-destructive">
-                    不能移动到自身或其后代
-                  </span>
-                ) : null}
+              <span className="text-xs font-medium text-muted-foreground">
+                {view === 'trash' ? '回收站' : '资源树'}
+              </span>
+              <div className="flex items-center gap-1">
+                {view === 'trash' ? (
+                  <button
+                    type="button"
+                    aria-label="返回资源树"
+                    className="inline-flex h-5 items-center justify-center rounded-sm px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+                    onClick={() => setView('tree')}
+                  >
+                    返回
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    aria-label="打开回收站"
+                    className="inline-flex h-5 items-center justify-center rounded-sm px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+                    onClick={() => setView('trash')}
+                  >
+                    回收站
+                  </button>
+                )}
                 <button
                   type="button"
-                  aria-label="确认移动"
-                  disabled={moveTargetId === null || moveInvalid || moveInFlight}
-                  className="inline-flex h-6 items-center justify-center rounded-sm bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors duration-100 hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-40"
-                  onClick={confirmMove}
+                  aria-label="折叠树栏"
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+                  onClick={() => updateLayout({ treeCollapsed: true })}
                 >
-                  确认移动
-                </button>
-                <button
-                  type="button"
-                  aria-label="取消移动"
-                  className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-                  onClick={() => setMoveMode(null)}
-                >
-                  取消
+                  «
                 </button>
               </div>
-            ) : null}
-            {/* 行内重命名模态（spec §6.2 D8）：预填当前名，确认/取消经 RenameDialog 回传 */}
-            {renameTarget !== null ? (
-              <RenameDialog
-                nodeName={renameTarget.name}
-                inFlight={renameInFlight}
-                onConfirm={confirmRename}
-                onCancel={() => setRenameTarget(null)}
-              />
-            ) : null}
+            </div>
+            {view === 'trash' ? (
+              // trash 态：回收站面板整体替换树内容（move 选择条/重命名模态同属树态，不渲染）；
+              // 面板数据自持（首拉 + trash 域广播重拉），随态卸载即退订
+              <TrashPanel />
+            ) : (
+              <>
+                <TreePanel
+                  roots={roots}
+                  selectedId={tabsOp.activeId}
+                  moveMode={moveMode !== null}
+                  moveTargetId={moveTargetId}
+                  onToggle={onToggle}
+                  onSelect={onSelectNode}
+                  onCreate={onCreate}
+                  onTrash={onTrash}
+                  onRename={onRename}
+                  onStartMove={startMove}
+                />
+                {/* move 选择模式操作条（spec §6.2 D8）：目标未定/自身或后代/在途时确认禁用；
+                    Esc 或取消退出。目标非法提示就地呈现（不占 toast 生命周期） */}
+                {moveMode !== null ? (
+                  <div
+                    className="lt-move-bar flex flex-wrap items-center gap-2 border-t border-border bg-muted/50 px-2 py-1"
+                    role="group"
+                    aria-label="移动选择模式"
+                  >
+                    {moveInvalid ? (
+                      <span className="lt-move-hint text-xs text-destructive">
+                        不能移动到自身或其后代
+                      </span>
+                    ) : null}
+                    <button
+                      type="button"
+                      aria-label="确认移动"
+                      disabled={moveTargetId === null || moveInvalid || moveInFlight}
+                      className="inline-flex h-6 items-center justify-center rounded-sm bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors duration-100 hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-40"
+                      onClick={confirmMove}
+                    >
+                      确认移动
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="取消移动"
+                      className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => setMoveMode(null)}
+                    >
+                      取消
+                    </button>
+                  </div>
+                ) : null}
+                {/* 行内重命名模态（spec §6.2 D8）：预填当前名，确认/取消经 RenameDialog 回传 */}
+                {renameTarget !== null ? (
+                  <RenameDialog
+                    nodeName={renameTarget.name}
+                    inFlight={renameInFlight}
+                    onConfirm={confirmRename}
+                    onCancel={() => setRenameTarget(null)}
+                  />
+                ) : null}
+              </>
+            )}
           </aside>
         )}
         {/* 树分隔条（可拖拽调宽；树栏折叠时收窄条、不响应拖拽，比例维持记忆值） */}

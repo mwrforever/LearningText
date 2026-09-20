@@ -24,6 +24,8 @@ export const IPC = {
   vfsRestore: 'vfs:restore',
   /** 彻底删除（物理移除） */
   vfsPurge: 'vfs:purge',
+  /** 列回收站条目（deleted_at 非空行，按删除时刻倒序；M5 批次②） */
+  vfsListTrashed: 'vfs:list-trashed',
   /** 虚拟路径解析 */
   vfsResolve: 'vfs:resolve',
   // —— 搜索域（M2）：命名 <域>:<动作>（宪法 B.2-5）——

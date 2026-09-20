@@ -29,6 +29,7 @@ import type {
   ReadFileResponse,
   RenameNodeRequest,
   ResolvePathRequest,
+  TrashedNodeMeta,
   WriteFileRequest,
 } from '../../shared/vfs-contract';
 
@@ -102,6 +103,15 @@ export function createVfsService(db: Database.Database) {
   // 回收站行获取：仅命中 deleted_at 非空行，作为还原入口的回收站判定（未删除/不存在统一拒绝）
   const stmtRowInTrash = db.prepare<number, NodeRow>(
     'SELECT * FROM node WHERE id = ? AND deleted_at IS NOT NULL',
+  );
+  // 回收站列表（M5 批次②）：brief 逐字口径——单 SELECT WHERE deleted_at IS NOT NULL，
+  // 按删除时刻倒序（最近删除在前）；partial index idx_node_deleted 覆盖该谓词。
+  // 注意 deleted_at 非空为逐行谓词：回收站子树的每个后代行都各自入列（还原以子树为单位，
+  // 后代单独还原由 restoreNode 的父链校验拒绝），不取 content/meta 无关列避免 BLOB 物化
+  const stmtTrashed = db.prepare<[], NodeRow & { deleted_at: string }>(
+    `SELECT id, parent_id, node_type, name, virtual_path, mime_type, size, created_at, updated_at, deleted_at
+     FROM node WHERE deleted_at IS NOT NULL
+     ORDER BY deleted_at DESC`,
   );
 
   return {
@@ -305,6 +315,14 @@ export function createVfsService(db: Database.Database) {
         return { affectedCount: affected };
       });
     },
+    /**
+     * 列回收站条目（FR-VFS-06，M5 批次②）：deleted_at 非空行全量，按删除时刻倒序。
+     * 纯读无事务；行映射复用 toNodeMeta 单一实现，deletedAt 直取库列（本地 ISO 形态）。
+     */
+    listTrashed(): TrashedNodeMeta[] {
+      return stmtTrashed.all().map((row) => ({ meta: toNodeMeta(row), deletedAt: row.deleted_at }));
+    },
+
     /** 软删除（FR-VFS-06）：先删 FTS 行（宪法 A.4-10 顺序）后置 deleted_at；partial unique 随即让名 */
     trashNode(request: NodeIdRequest): AffectedResponse {
       const row = requireRow(request.nodeId);

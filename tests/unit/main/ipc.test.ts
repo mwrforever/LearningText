@@ -20,7 +20,7 @@ import {
   E_VFS_NOT_FOUND,
 } from '../../../src/shared/errors';
 import { AppError } from '../../../src/shared/result';
-import type { NodeMeta } from '../../../src/shared/vfs-contract';
+import type { NodeMeta, TrashedNodeMeta } from '../../../src/shared/vfs-contract';
 import { registerIpcHandlers } from '../../../src/main/ipc';
 import type { VfsService } from '../../../src/main/vfs/vfsService';
 import type { SearchService } from '../../../src/main/search/searchService';
@@ -43,6 +43,7 @@ function makeVfsStub(): VfsService {
     trashNode: vi.fn(),
     restoreNode: vi.fn(),
     purgeNode: vi.fn(),
+    listTrashed: vi.fn(() => []),
     resolvePath: vi.fn(() => ({ nodeId: 2 })),
     getNode: vi.fn(() => ({ id: 2, parentId: 1 })),
   } as unknown as VfsService;
@@ -501,6 +502,57 @@ describe('vfs:get 通道接线', () => {
     };
     expect(miss.ok).toBe(false);
     expect(miss.error.code).toBe(E_VFS_NOT_FOUND);
+  });
+});
+
+// vfs:list-trashed 通道（M5 批次②）：无参通道 null 载荷照 settingsGet 先例；纯读无写事务不广播
+describe('vfs:list-trashed 通道接线', () => {
+  it('合法 null 载荷透传服务列表；非 null 载荷 E_IPC_BAD_PAYLOAD；非白名单 origin 拒绝；全程不广播', () => {
+    handlers.clear();
+    const vfs = makeVfsStub();
+    const trashed: TrashedNodeMeta[] = [
+      {
+        meta: {
+          id: 5,
+          parentId: 1,
+          nodeType: 'file',
+          name: 'a.html',
+          virtualPath: '/a.html',
+          mimeType: 'text/html',
+          size: 1,
+          createdAt: 't',
+          updatedAt: 't',
+        },
+        deletedAt: '2026-09-21T09:30:00.000+08:00',
+      },
+    ];
+    vfs.listTrashed = vi.fn(() => trashed);
+    const broadcast = vi.fn();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs,
+      search: makeSearchStub(),
+      settings: makeSettingsStub(),
+      broadcast,
+      requestClose: vi.fn(),
+    });
+    const ok = handlers.get(IPC.vfsListTrashed)?.(fakeEvent('app://bundle'), null) as {
+      ok: boolean;
+      value: unknown;
+    };
+    expect(ok).toEqual({ ok: true, value: trashed });
+    const bad = handlers.get(IPC.vfsListTrashed)?.(fakeEvent('app://bundle'), {}) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    const forbidden = handlers.get(IPC.vfsListTrashed)?.(fakeEvent('http://evil'), null) as {
+      ok: boolean;
+    };
+    expect(forbidden.ok).toBe(false);
+    // 纯读通道不产生变更事件 → 不广播（宪法 B.3-4 广播仅随写事务）
+    expect(broadcast).not.toHaveBeenCalled();
   });
 });
 

@@ -22,6 +22,8 @@ const api: WindowApi = {
   trashNode: (request) => ipcRenderer.invoke(IPC.vfsTrash, request),
   restoreNode: (request) => ipcRenderer.invoke(IPC.vfsRestore, request),
   purgeNode: (request) => ipcRenderer.invoke(IPC.vfsPurge, request),
+  // 无参通道沿 settingsGet 先例固定发 null（回收站列表，M5 批次②）
+  listTrashed: () => ipcRenderer.invoke(IPC.vfsListTrashed, null),
   resolvePath: (request) => ipcRenderer.invoke(IPC.vfsResolve, request),
   searchQuery: (request) => ipcRenderer.invoke(IPC.searchQuery, request),
   settingsGet: () => ipcRenderer.invoke(IPC.settingsGet, null),

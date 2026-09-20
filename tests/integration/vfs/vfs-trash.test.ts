@@ -150,6 +150,42 @@ describe('restoreNode', () => {
   });
 });
 
+describe('listTrashed', () => {
+  it('回收站列表：仅 deleted_at 非空行（子树行逐列入列）、按删除时刻倒序、deletedAt 与库行一致', async () => {
+    const { webId, indexId } = seedScenario();
+    // 存活行不入列：trash 之前列表为空
+    expect(vfs.listTrashed()).toEqual([]);
+    vfs.trashNode({ nodeId: webId });
+    // 毫秒精度时间戳：隔开两次删除时刻，「倒序」断言才有区分力
+    await new Promise((r) => setTimeout(r, 2));
+    const docsId = vfs.createNode({ parentId: 1, name: 'docs', nodeType: 'dir' }).id;
+    vfs.trashNode({ nodeId: docsId });
+    const list = vfs.listTrashed();
+    const ids = list.map((t) => t.meta.id);
+    // 软删除以子树为单位、列表按行谓词全量列入：父目录与其子文件均在
+    expect(ids).toContain(webId);
+    expect(ids).toContain(indexId);
+    expect(ids).toContain(docsId);
+    // 倒序：后删的 docs 排在先删的 web 之前
+    expect(ids.indexOf(docsId)).toBeLessThan(ids.indexOf(webId));
+    // deletedAt 读模型与库行 deleted_at 同源一致
+    const webRow = list.find((t) => t.meta.id === webId);
+    expect(webRow?.deletedAt).toBe(
+      db
+        .prepare<number, { deleted_at: string }>('SELECT deleted_at FROM node WHERE id = ?')
+        .get(webId)?.deleted_at,
+    );
+  });
+
+  it('还原后条目移出列表（deleted_at 清空即出列）', () => {
+    const { webId } = seedScenario();
+    vfs.trashNode({ nodeId: webId });
+    expect(vfs.listTrashed().map((t) => t.meta.id)).toContain(webId);
+    vfs.restoreNode({ nodeId: webId });
+    expect(vfs.listTrashed().map((t) => t.meta.id)).not.toContain(webId);
+  });
+});
+
 describe('purgeNode', () => {
   it('物理移除子树且不再可解析；回收站与未删除节点均可彻底删除', () => {
     const { webId, indexId } = seedScenario();

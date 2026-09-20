@@ -14,6 +14,7 @@ import type {
   ReadFileResponse,
   RenameNodeRequest,
   ResolvePathRequest,
+  TrashedNodeMeta,
   VfsChangedBroadcast,
   WriteFileRequest,
 } from './vfs-contract';
@@ -35,6 +36,8 @@ export interface WindowApi {
   trashNode(request: NodeIdRequest): Promise<Result<AffectedResponse>>;
   restoreNode(request: NodeIdRequest): Promise<Result<NodeMeta>>;
   purgeNode(request: NodeIdRequest): Promise<Result<AffectedResponse>>;
+  /** 回收站列表（M5 批次②）：deleted_at 非空行，按删除时刻倒序 */
+  listTrashed(): Promise<Result<TrashedNodeMeta[]>>;
   resolvePath(request: ResolvePathRequest): Promise<Result<NodeIdResponse>>;
   // —— 搜索域（M2）：每通道一个具名包装（宪法 A.7-4 桥接面最小化）——
   searchQuery(request: SearchQueryRequest): Promise<Result<SearchQueryResponse>>;
