@@ -1,7 +1,115 @@
-/* 渲染层样式入口（M5 批次⓪ D26）：Tailwind v4 CSS-first 装配；@theme 语义映射与
-   shadcn 主题变量在 Task 2 设计系统基座填充，本任务只立装配与最小变量壳 */
+/* 渲染层样式入口与设计系统 tokens（M5 批次⓪）：Tailwind v4 CSS-first 装配。
+   取值依据与双候选方向论证见 docs/design/设计系统.md（择「冷静专业工具风」slate 轴，
+   light/dark 双主题各一套 shadcn 语义变量）；本文档与设计系统文档不一致视为缺陷 */
 @import 'tailwindcss';
 @import 'tw-animate-css';
-/* 过渡锚点（Task 2 移除）：global.css 的 body 字体与三栏 grid 布局仍在效（E2E 外壳记忆
-   用例依赖该布局），Task 2 将其内容迁入 @theme/工具类后删除本行并移除该文件 */
-@import '../global.css';
+
+/* 类式 dark 变体（Tailwind v4 / shadcn v4 惯例）：.dark 挂文档根元素时全部后代命中 dark: 前缀 */
+@custom-variant dark (&:is(.dark *));
+
+/* —— shadcn 语义变量 · Light（冷灰 slate 轴，对比度自证见设计系统文档 §3.1）—— */
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #1e293b;
+  --primary-foreground: #f8fafc;
+  --secondary: #e2e8f0;
+  --secondary-foreground: #1e293b;
+  --muted: #f1f5f9;
+  /* slate-500 加深约 8%：保证在最坏 light 表面（--muted）上仍 ≥4.5:1（4.63，实算） */
+  --muted-foreground: #5f7085;
+  --accent: #e2e8f0;
+  --accent-foreground: #0f172a;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #64748b;
+  --radius: 0.25rem;
+}
+
+/* —— shadcn 语义变量 · Dark（石板蓝暗面；切换开关 = documentElement 挂 .dark 类）—— */
+.dark {
+  --background: #0f172a;
+  --foreground: #f8fafc;
+  --card: #1e293b;
+  --card-foreground: #f8fafc;
+  --popover: #1e293b;
+  --popover-foreground: #f8fafc;
+  --primary: #e2e8f0;
+  --primary-foreground: #0f172a;
+  --secondary: #1e293b;
+  --secondary-foreground: #f8fafc;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --accent: #1e293b;
+  --accent-foreground: #f8fafc;
+  --destructive: #ef4444;
+  /* dark 破坏面配深色字：白字对 #EF4444 仅 3.76:1 不达正文门槛，深字 4.74:1 通过 */
+  --destructive-foreground: #0f172a;
+  --border: #2b3a52;
+  --input: #2b3a52;
+  --ring: #94a3b8;
+}
+
+/* inline 映射：工具类直接引用 var(--*)（非拷贝值），.dark 切换零重排即时生效。
+   动效/圆角/字体 tokens 的语义与取值依据见设计系统文档 §四/§五/§六 */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  /* UI 字体栈沿用系统栈（含中文回落），不引入网络字体（桌面工具零网络依赖 + CSP 面） */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  /* 等宽栈仅文档备案：CM6 编辑区沿用自带栈，本系统不覆盖 */
+  --font-mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace;
+  /* 圆角标尺（基准 4px 直线小圆角）：sm 2px 节点/标签 · md 4px 钮/toast · lg 8px 浮层卡片 */
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 4px);
+  /* 动效时长 tokens（数值即工具类字面量的唯一事实来源，见设计系统文档 §6.1） */
+  --duration-instant: 100ms;
+  --duration-fast: 180ms;
+  --duration-normal: 240ms;
+}
+
+@layer base {
+  /* shadcn 基线：默认边框/焦点环走语义色，防裸色值散落 */
+  * {
+    @apply border-border outline-ring/50;
+  }
+  /* 页面基线（承接原 global.css body 职责：零外距 + 系统字体栈），底色/字色铺语义 token */
+  body {
+    margin: 0;
+    @apply bg-background font-sans text-foreground;
+  }
+  /* prefers-reduced-motion 降级（设计系统文档 §6.3）：全部动效瞬时完成，呈现零损失 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

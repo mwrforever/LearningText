@@ -45,12 +45,13 @@ function TreeItem({
 }): React.JSX.Element {
   const isDir = node.meta.nodeType === 'dir';
   return (
-    <li>
+    <li className="list-none">
       <button
         type="button"
         aria-current={node.meta.id === selectedId ? 'true' : undefined}
         data-move-target={moveMode && isDir && node.meta.id === moveTargetId ? 'true' : undefined}
         disabled={moveMode && !isDir}
+        className="block w-full truncate rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40 aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground data-[move-target=true]:bg-primary/10 data-[move-target=true]:ring-1 data-[move-target=true]:ring-ring"
         onClick={() => {
           // move 选择模式：dir 点选上抛（Workspace 记账为选定目标），file 点选已被 disabled 拦截
           if (moveMode) {
@@ -64,7 +65,8 @@ function TreeItem({
         {node.meta.name}
       </button>
       {isDir && node.loaded ? (
-        <ul>
+        // 嵌套层经缩进 + 左侧连线表达层级（设计系统文档 §7.2 树列表形态）
+        <ul className="m-0 ml-4 list-none border-l border-border pl-1">
           {node.children.map((child) => (
             <TreeItem
               key={child.meta.id}
@@ -89,16 +91,28 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
   // 重命名/移动入口：有选中即渲染、根选中禁用（根不可 rename/move，spec §6.2 D8）
   const actionTarget = props.selectedId;
   return (
-    <nav aria-label="资源树">
-      <div className="lt-tree-toolbar">
-        <button type="button" onClick={() => props.onCreate(contextParentId, 'dir')}>
+    <nav aria-label="资源树" className="flex min-h-0 flex-1 flex-col">
+      <div className="lt-tree-toolbar flex flex-wrap items-center gap-1 border-b border-border px-2 py-1.5">
+        <button
+          type="button"
+          className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+          onClick={() => props.onCreate(contextParentId, 'dir')}
+        >
           新建目录
         </button>
-        <button type="button" onClick={() => props.onCreate(contextParentId, 'file')}>
+        <button
+          type="button"
+          className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+          onClick={() => props.onCreate(contextParentId, 'file')}
+        >
           新建文件
         </button>
         {trashTarget !== null ? (
-          <button type="button" onClick={() => props.onTrash(trashTarget)}>
+          <button
+            type="button"
+            className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+            onClick={() => props.onTrash(trashTarget)}
+          >
             删除
           </button>
         ) : null}
@@ -107,6 +121,7 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
             <button
               type="button"
               disabled={actionTarget === ROOT_ID}
+              className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
               onClick={() => props.onRename(actionTarget)}
             >
               重命名
@@ -114,6 +129,7 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
             <button
               type="button"
               disabled={actionTarget === ROOT_ID || props.moveMode}
+              className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
               onClick={props.onStartMove}
             >
               移动到…
@@ -121,7 +137,8 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
           </>
         ) : null}
       </div>
-      <ul>
+      {/* 顶层列表占满余高并自滚动（页面级不滚动，设计系统文档 §二） */}
+      <ul className="m-0 min-h-0 flex-1 list-none overflow-auto p-2 text-sm">
         {props.roots.map((node) => (
           <TreeItem
             key={node.meta.id}

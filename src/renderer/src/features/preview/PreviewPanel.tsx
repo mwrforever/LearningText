@@ -102,17 +102,26 @@ export function PreviewPanel({ node }: PreviewPanelProps): React.JSX.Element | n
 
   // 反查失败占位优先于 iframe（旧路径已不可达，保留 iframe 只会呈现失效内容）
   if (url !== null && unavailable) {
-    return <div className="lt-preview-empty">文档不可用</div>;
+    // 占位态（content 档 14px 次要文字，居中；文案为 E2E/单测断言锚点零变更）
+    return (
+      <div className="lt-preview-empty flex min-h-0 flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
+        文档不可用
+      </div>
+    );
   }
   if (url === null) {
-    return <div className="lt-preview-empty">未选中文件</div>;
+    return (
+      <div className="lt-preview-empty flex min-h-0 flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
+        未选中文件
+      </div>
+    );
   }
   return (
     <iframe
       // key=url：路径变化全新重挂（新历史条目无关——用户导航语义），内容更新走 replace（§4.2）
       key={url}
       ref={iframeRef}
-      className="lt-preview-frame"
+      className="lt-preview-frame min-h-0 w-full flex-1"
       title="预览"
       sandbox="allow-scripts"
       referrerPolicy="no-referrer"

@@ -86,26 +86,39 @@ export function EditorPanel({
 
   if (activeTab === null) {
     return (
-      <div className="lt-editor-empty" aria-label="编辑区占位">
+      // 空态占位（content 档 14px 次要文字，居中；aria-label 锚点零变更）
+      <div
+        className="lt-editor-empty flex min-h-0 flex-1 items-center justify-center p-4 text-sm text-muted-foreground"
+        aria-label="编辑区占位"
+      >
         未选中文件
       </div>
     );
   }
   return (
-    <div className="lt-editor">
-      <div className="lt-editor-host" ref={hostRef} />
-      <div className="lt-editor-bar">
+    <div className="lt-editor flex min-h-0 flex-1 flex-col">
+      {/* 宿主不设 overflow：滚动语义仍归 CM6 自管（设计系统文档 §7.2） */}
+      <div className="lt-editor-host min-h-0 flex-1" ref={hostRef} />
+      <div className="lt-editor-bar flex items-center gap-2 border-t border-border bg-muted/50 px-2 py-1 text-xs">
         {/* M4 起保存由原生菜单 Ctrl/Cmd+S 承载（Task 6）；按钮保留为可见入口，点击即菜单同款命令
             （brief 落地注 ②：立即写语义归 Task 5 管线，本任务经 onSaveRequest 可选接线） */}
         <button
           type="button"
+          className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
           onClick={() => {
             onSaveRequest?.();
           }}
         >
           保存
         </button>
-        <span aria-live="polite">{activeTab.dirty ? '未保存' : '已保存'}</span>
+        {/* 保存态文案：脏态转破坏色（对比度自证见设计系统文档 §3.1 #10/#16），净态次要文字。
+            无冲突条件拼接用模板字面量（cn/tailwind-merge 运行时留给 shadcn 组件场景，D28 体积红线） */}
+        <span
+          aria-live="polite"
+          className={`ml-auto ${activeTab.dirty ? 'text-destructive' : 'text-muted-foreground'}`}
+        >
+          {activeTab.dirty ? '未保存' : '已保存'}
+        </span>
       </div>
     </div>
   );

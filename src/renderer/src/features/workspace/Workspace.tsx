@@ -483,27 +483,34 @@ export function Workspace({
   ].join(' ');
 
   return (
-    <div className="lt-workspace">
+    // 工作台容器（设计系统文档 §7.2）：纵向 flex 等价替代原「无行模板 grid」——插槽行
+    // 自然堆叠、三栏区 1fr 占余；类名保留为测试锚点，视觉一律工具类承载
+    <div className="lt-workspace flex min-h-0 flex-1 flex-col">
       {toolbarSlot}
       {/* 三栏网格容器（内联列模板；工具栏/状态栏插槽留在外层，不占三栏轨道） */}
-      <div className="lt-panes" style={{ gridTemplateColumns: gridColumns }}>
+      <div
+        className="lt-panes grid min-h-0 flex-1 overflow-hidden"
+        style={{ gridTemplateColumns: gridColumns }}
+      >
         {layout.treeCollapsed ? (
-          <aside className="lt-pane lt-pane-tree lt-pane-collapsed">
+          <aside className="lt-pane lt-pane-tree lt-pane-collapsed flex w-full flex-col items-center gap-1 overflow-hidden py-1">
             <button
               type="button"
               aria-label="展开树栏"
+              className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
               onClick={() => updateLayout({ treeCollapsed: false })}
             >
               »
             </button>
           </aside>
         ) : (
-          <aside className="lt-pane lt-pane-tree">
-            <div className="lt-pane-titlebar">
-              <span>资源树</span>
+          <aside className="lt-pane lt-pane-tree flex min-h-0 min-w-0 flex-col bg-background">
+            <div className="lt-pane-titlebar flex h-8 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
+              <span className="text-xs font-medium text-muted-foreground">资源树</span>
               <button
                 type="button"
                 aria-label="折叠树栏"
+                className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
                 onClick={() => updateLayout({ treeCollapsed: true })}
               >
                 «
@@ -524,17 +531,31 @@ export function Workspace({
             {/* move 选择模式操作条（spec §6.2 D8）：目标未定/自身或后代/在途时确认禁用；
                 Esc 或取消退出。目标非法提示就地呈现（不占 toast 生命周期） */}
             {moveMode !== null ? (
-              <div className="lt-move-bar" role="group" aria-label="移动选择模式">
-                {moveInvalid ? <span className="lt-move-hint">不能移动到自身或其后代</span> : null}
+              <div
+                className="lt-move-bar flex flex-wrap items-center gap-2 border-t border-border bg-muted/50 px-2 py-1.5"
+                role="group"
+                aria-label="移动选择模式"
+              >
+                {moveInvalid ? (
+                  <span className="lt-move-hint text-xs text-destructive">
+                    不能移动到自身或其后代
+                  </span>
+                ) : null}
                 <button
                   type="button"
                   aria-label="确认移动"
                   disabled={moveTargetId === null || moveInvalid || moveInFlight}
+                  className="inline-flex h-6 items-center justify-center rounded-sm bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors duration-100 hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-40"
                   onClick={confirmMove}
                 >
                   确认移动
                 </button>
-                <button type="button" aria-label="取消移动" onClick={() => setMoveMode(null)}>
+                <button
+                  type="button"
+                  aria-label="取消移动"
+                  className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+                  onClick={() => setMoveMode(null)}
+                >
                   取消
                 </button>
               </div>
@@ -552,7 +573,7 @@ export function Workspace({
         )}
         {/* 树分隔条（可拖拽调宽；树栏折叠时收窄条、不响应拖拽，比例维持记忆值） */}
         <div
-          className="lt-divider lt-divider-tree"
+          className="lt-divider lt-divider-tree cursor-col-resize bg-border transition-colors duration-100 hover:bg-ring/50"
           role="separator"
           aria-orientation="vertical"
           onPointerDown={layout.treeCollapsed ? undefined : (e) => onDividerPointerDown('tree', e)}
@@ -560,27 +581,31 @@ export function Workspace({
         {/* 编辑器前分隔条（固定 4px 装饰轨）：编辑器折叠时承载展开钮——折叠容器 display:none
             的唯一展开回口（轨道 0px 内不放交互元素） */}
         {layout.editorCollapsed ? (
-          <div className="lt-divider lt-divider-editor lt-divider-editor-toggle">
+          <div className="lt-divider lt-divider-editor lt-divider-editor-toggle flex items-center justify-center bg-border">
             <button
               type="button"
               aria-label="展开编辑器"
+              className="inline-flex h-5 w-4 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
               onClick={() => updateLayout({ editorCollapsed: false })}
             >
               »
             </button>
           </div>
         ) : (
-          <div className="lt-divider lt-divider-editor" aria-hidden="true" />
+          <div className="lt-divider lt-divider-editor bg-border" aria-hidden="true" />
         )}
         <section
-          className={`lt-pane lt-pane-editor${layout.editorCollapsed ? ' lt-pane-collapsed' : ''}`}
+          className={`lt-pane lt-pane-editor flex min-h-0 min-w-0 flex-col bg-background${
+            layout.editorCollapsed ? ' lt-pane-collapsed' : ''
+          }`}
           style={layout.editorCollapsed ? { display: 'none' } : undefined}
         >
-          <div className="lt-pane-titlebar">
-            <span>编辑器</span>
+          <div className="lt-pane-titlebar flex h-8 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
+            <span className="text-xs font-medium text-muted-foreground">编辑器</span>
             <button
               type="button"
               aria-label="折叠编辑器"
+              className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
               onClick={() => updateLayout({ editorCollapsed: true })}
             >
               «
@@ -604,7 +629,7 @@ export function Workspace({
         </section>
         {/* 预览分隔条（可拖拽调宽；预览栏折叠时同理不响应拖拽） */}
         <div
-          className="lt-divider lt-divider-preview"
+          className="lt-divider lt-divider-preview cursor-col-resize bg-border transition-colors duration-100 hover:bg-ring/50"
           role="separator"
           aria-orientation="vertical"
           onPointerDown={
@@ -612,25 +637,27 @@ export function Workspace({
           }
         />
         {layout.previewCollapsed ? (
-          <section className="lt-pane lt-pane-preview lt-pane-collapsed">
+          <section className="lt-pane lt-pane-preview lt-pane-collapsed flex w-full flex-col items-center gap-1 overflow-hidden py-1">
             <button
               type="button"
               aria-label="展开预览栏"
+              className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
               onClick={() => updateLayout({ previewCollapsed: false })}
             >
               «
             </button>
           </section>
         ) : (
-          <section className="lt-pane lt-pane-preview">
-            <div className="lt-pane-titlebar">
-              <span>预览</span>
+          <section className="lt-pane lt-pane-preview flex min-h-0 min-w-0 flex-col bg-background">
+            <div className="lt-pane-titlebar flex h-8 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
+              <span className="text-xs font-medium text-muted-foreground">预览</span>
               <button
                 type="button"
                 aria-label="折叠预览栏"
+                className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
                 onClick={() => updateLayout({ previewCollapsed: true })}
               >
-                »
+                «
               </button>
             </div>
             <PreviewPanel node={activeTab?.meta ?? null} />

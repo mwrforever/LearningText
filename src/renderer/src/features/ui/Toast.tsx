@@ -35,9 +35,17 @@ export function ToastHost(): React.JSX.Element {
     };
   }, []);
   return (
-    <div className="lt-toasts" aria-live="polite">
+    // 宿主定 right-bottom 悬浮、不拦截底层点击（pointer-events-none），单条恢复可交互；
+    // 入场动效 240ms（fade + 底部轻位移，设计系统文档 §6.4），退场随 3s 摘除瞬时完成（D11 逻辑零变更）
+    <div
+      className="lt-toasts pointer-events-none fixed bottom-4 right-4 z-50 flex w-80 flex-col gap-2"
+      aria-live="polite"
+    >
       {items.map((item) => (
-        <div key={item.id} className="lt-toast">
+        <div
+          key={item.id}
+          className="lt-toast pointer-events-auto rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2"
+        >
           {item.text}
         </div>
       ))}
