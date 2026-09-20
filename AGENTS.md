@@ -8,12 +8,12 @@
 
 **配套文件职责（全体系唯一声明落点）**
 
-| 文件/目录 | 职责 |
-| --- | --- |
-| `TASK.md` | 登记台：待调研项 / 待决策 / 待回填 / TODO，回填后删除条目 |
-| `CHANGELOG.md` | 工程变更记录：宪法修订**先记再改**，追加式保留历史 |
-| `docs/01~03-*.md` | 业务功能设计与需求基线（specs 职责），宪法只引用不复制 |
-| `docs/agmds-research/` | 宪法调研报告（条款来源证据，正文不逐条标注） |
+| 文件/目录                  | 职责                                  |
+| ---------------------- | ----------------------------------- |
+| `TASK.md`              | 登记台：待调研项 / 待决策 / 待回填 / TODO，回填后删除条目 |
+| `CHANGELOG.md`         | 工程变更记录：宪法修订**先记再改**，追加式保留历史         |
+| `docs/01~03-*.md`      | 业务功能设计与需求基线（specs 职责），宪法只引用不复制      |
+| `docs/agmds-research/` | 宪法调研报告（条款来源证据，正文不逐条标注）              |
 
 **三段结构**：Part A Electron + TypeScript 全栈通用 / Part B 架构分层（Electron 进程模型）/ Part C LearningText 实际。
 （槽位说明：A.3 API 设计省略——本项目无对外 HTTP API，IPC 契约约束见 A.7 与 B.2；B.4 外部能力网关省略——无外部网关；C.3 目录结构省略——并入 B.1 注释式目录规范；省略槽位编号不重排。宪法只存工程原则与约束，**实现类工作一律登记 `TASK.md` 执行项，不入宪法**。）
@@ -120,15 +120,6 @@ LearningText/
 6. **React / CodeMirror 习语**：props 只读、子→父只经 `onXxx` 回调、受控组件 = `value` + `onChange`、状态提升到最近公共父；列表 key 用稳定业务 id（VFS 节点 id），禁无脑数组索引；集合一律不可变更新；编辑器能力封装为返回 extension 的工厂函数，文档内容只经 `view.dispatch` 变更。
 7. **例外边界**：仅业务功能确需动态 / 灵活结构可偏离，且须能陈述业务理由；无理由的违反视为缺陷，不得合入。
 
-## A.8 前端 UI 设计约束（2026-09-19 修订新增，强制）
-
-1. **技术栈红线**：组件与样式 = shadcn/ui（CLI 按需 add 组件源码进仓，未 add 的组件零依赖零代码）+ Tailwind CSS v4（@tailwindcss/vite，CSS-first `@theme`）；动画 = motion 为主 + CSS transition/tw-animate-css 微过渡，**自研动画仅限「明确的个性化定制且第三方无法满足」且须留论证**；禁 `import *` 与全量导入（全部按需 ESM）；渲染层主 chunk 警戒 800KB（原始体积），超警戒须 bundle 分析并裁剪后方可合入。
-2. **设计步骤（强制顺序，不可跳步）**：① **设计系统基座先行**——tokens（色彩/字体/间距/圆角/阴影/动效时长缓动）、布局语言、组件形态语言先落 `docs/design/` 设计文档与样式入口，一切 UI 消费基座，禁绕过自写平行样式体系；② **新增界面须产出 ≥2 套候选方向对照论证后择一**，论证留痕于设计文档，禁首个想法直出；③ 功能批次只按基座语言产出，**不回头改既有布局**；④ 全站深度打磨收尾——generic AI 味对照表逐项闭环并归档。
-3. **设计工具链（强制）**：设计阶段实施者必须加载 `ui-ux-pro-max`（+ `design-system`）技能；深度打磨阶段必须加载 `taste-skill`（`high-end-visual-design` + `redesign-existing-projects`）技能；派遣实施者时必须显式下达技能加载指令。
-4. **性能红线**：动画仅走 transform/opacity 合成器路径；禁 layout thrashing 与 width/height/top/left 动画；尊重 `prefers-reduced-motion`；大列表分页优先，虚拟化实测需要才引入。
-5. **回归红线**：UI 变更不得破坏 aria-label/语义角色等 E2E 断言锚点（结构变更须列锚点对照表）；主题 = shadcn 语义变量双套 + `.dark` 类切换（解析器驱动，settings 只存用户意图，`system` 经 matchMedia 解析）。
-6. 精确版本基线见 C.2；里程碑级设计裁决见 `docs/superpowers/specs/` 对应 spec 的裁决清单。
-
 ---
 
 # Part B — 架构分层（Electron 进程模型）
@@ -205,25 +196,25 @@ Electron 桌面端 HTML 文档管理与实时预览工具：VFS + SQLite 单库�
 
 版本为 2026-09-14 npm registry 实查基线（证据见 `docs/agmds-research/2026-09-14-语言框架与UI栈.md`、`2026-09-14-构建测试与打包.md`），精确小版本由 M0 在 `package-lock.json` 锁定：
 
-| 职责 | 技术 | 基线版本 |
-| --- | --- | --- |
-| 运行时 | Node LTS（`.nvmrc` + `engines` 双写） | 24 LTS |
-| 桌面框架 | Electron | 44.3.x |
-| 语言 | TypeScript（strict） | 6.0.x |
-| UI | React | 19.3.x |
-| 构建渲染层 | Vite | 8.3.x |
-| 编辑器 | CodeMirror 6（curated 八包自组，版本见 package.json 精确锁定） | 6.0.x |
-| 样式与组件体系 | Tailwind CSS v4（@tailwindcss/vite，CSS-first @theme）+ shadcn/ui（CLI 按需 add 组件源码） | 4.3.x / CLI 4.21.x |
-| 动画 | motion（React 声明式；自研动画仅限个性化定制且第三方无法满足并留论证） | 13.4.x |
-| 编辑器主题 | @codemirror/theme-one-dark（暗色语法主题，随 UI 主题解析器联动） | 实装日实查 |
-| 存储 | better-sqlite3（WAL + FTS5 trigram） | 13.0.x |
-| IPC / 参数校验 | zod | 4.6.x |
-| 单元 / 集成测试 | Vitest + @vitest/coverage-v8（严格同版） | 5.0.x |
-| E2E | Playwright（`_electron` 驱动） | 1.63.x |
-| 打包 | electron-builder（配置 `electron-builder.yml`） | 26.15.x |
-| 质量工具 | ESLint（flat config）+ typescript-eslint + Prettier | 10.10.x / 8.70.x / 3.9.x |
-| 本地门禁 | husky + lint-staged | 9.1.x / 17.5.x |
-| 开发编排 | concurrently | 10.x |
+| 职责         | 技术                                                                              | 基线版本                     |
+| ---------- | ------------------------------------------------------------------------------- | ------------------------ |
+| 运行时        | Node LTS（`.nvmrc` + `engines` 双写）                                               | 24 LTS                   |
+| 桌面框架       | Electron                                                                        | 44.3.x                   |
+| 语言         | TypeScript（strict）                                                              | 6.0.x                    |
+| UI         | React                                                                           | 19.3.x                   |
+| 构建渲染层      | Vite                                                                            | 8.3.x                    |
+| 编辑器        | CodeMirror 6（curated 八包自组，版本见 package.json 精确锁定）                                | 6.0.x                    |
+| 样式与组件体系    | Tailwind CSS v4（@tailwindcss/vite，CSS-first @theme）+ shadcn/ui（CLI 按需 add 组件源码） | 4.3.x / CLI 4.21.x       |
+| 动画         | motion（React 声明式；自研动画仅限个性化定制且第三方无法满足并留论证）                                       | 13.4.x                   |
+| 编辑器主题      | @codemirror/theme-one-dark（暗色语法主题，随 UI 主题解析器联动）                                 | 实装日实查                    |
+| 存储         | better-sqlite3（WAL + FTS5 trigram）                                              | 13.0.x                   |
+| IPC / 参数校验 | zod                                                                             | 4.6.x                    |
+| 单元 / 集成测试  | Vitest + @vitest/coverage-v8（严格同版）                                              | 5.0.x                    |
+| E2E        | Playwright（`_electron` 驱动）                                                      | 1.63.x                   |
+| 打包         | electron-builder（配置 `electron-builder.yml`）                                     | 26.15.x                  |
+| 质量工具       | ESLint（flat config）+ typescript-eslint + Prettier                               | 10.10.x / 8.70.x / 3.9.x |
+| 本地门禁       | husky + lint-staged                                                             | 9.1.x / 17.5.x           |
+| 开发编排       | concurrently                                                                    | 10.x                     |
 
 ## C.4 常用命令（M0 落地后 package.json 必须与之对齐）
 
@@ -262,3 +253,53 @@ npm run release          # 三平台构建并发布（M6 执行项，登记于 T
 4. ESLint 仅 flat config（`eslint.config.*`，v10 已移除 eslintrc）；产物目录进 `globalIgnores()`；Prettier 集成只允许 `eslint-config-prettier`，**禁引入 `eslint-plugin-prettier`**（官方不推荐）。
 5. 测试产物目录 `coverage/`、`.vitest/`、`playwright-report/`、`test-results/` 必须进 `.gitignore`。
 6. 升级预警：electron-builder v27 将更名 `electronDownload` → `electronGet`；升级 vitest 必须同步升级 `@vitest/coverage-v8` 且版本严格一致；升级 better-sqlite3 须同时核对包 semver 与捆绑 SQLite 版本变更（触发 A.4-3 迁移评审）。
+
+## C.7 UI 设计思想 · 谋建琢三段律
+
+> 凡涉 UI 工作，必循「谋 → 建 → 琢」三段闭环，顺序不可逆，缺一即违律。
+
+**谋 · 谋局定策**
+
+```text
+────────────────────────────────────
+ 谋局定策 ｜ 前置思考 · 全局蓝图
+────────────────────────────────────
+ 核心工具：@ui-ux-pro-max
+ 阶段职责：全局审视，敲定唯一最优方案
+ · 通盘考量布局 / 样式 / 交互 / 动画四大维度
+ · 持续思考、多轮推演、比较取舍
+ · 拒绝第一直觉草率定案，方案成形方可推进
+ ▸ 红线：未定蓝图，不得动工
+```
+
+**建 · 依图营造**
+
+```text
+────────────────────────────────────
+ 依图营造 ｜ 忠实实现 · 方案落地
+────────────────────────────────────
+ 施工依据：谋局阶段产出的设计方案
+ 阶段职责：将既定方案完整转化为代码
+ · 忠实执行设计决策，不偏移、不擅自降级
+ · 结构清晰，为后续精修预留打磨空间
+ · 以蓝图为唯一依据，不凭感觉发挥
+ ▸ 红线：落地 ≠ 完成，粗成品严禁交付
+```
+
+**琢 · 琢玉成器**
+
+```text
+────────────────────────────────────
+ 琢玉成器 ｜ 深度打磨 · 精修收口
+────────────────────────────────────
+ 核心工具：@taste-skill
+ 阶段职责：对成品全面深度打磨，逼近极致
+ · 逐层打磨组件 / 样式 / 交互 / 动画
+ · 剔除粗糙细节，雕琢质感与韵律
+ · 四维验收：高级视觉 / 高级交互 /
+             流畅动画 / 高性能渲染
+ ▸ 红线：四维标准缺一，视为未完成
+```
+
+> **协作纪律**：凡派遣 subagent，必须在其指令中明确要求加载 `@ui-ux-pro-max` 与 `@taste-skill` 方可开工。
+> **核心精神**：倾尽设计灵感、持续思考、拒绝模板化机械输出。

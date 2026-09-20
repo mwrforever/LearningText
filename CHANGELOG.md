@@ -81,3 +81,7 @@
   - **C.2 技术栈表增行**：「样式与组件体系 = Tailwind CSS v4 + shadcn/ui（4.3.x / CLI 4.21.x，2026-09-19 实查）」「动画 = motion（13.4.x）」「编辑器主题 = @codemirror/theme-one-dark」，并补登 M4 遗漏的 CodeMirror 各包行（八包精确版本见 package.json 锁定）；
   - 裁决依据：M5 spec `docs/superpowers/specs/2026-09-19-导入导出与辅助功能-design.md` v0.3（D26–D28）；
   - 联动：M5 实施计划 Task 1 的修宪步骤（CHANGELOG/C.2）由本条目完成，Task 1 收敛为依赖安装与装配。
+
+## 2026-09-20
+
+- **宪法修订（用户亲自修订，本条为事后补记）**：撤销 2026-09-19 新增的 A.8「前端 UI 设计约束」条目式节；前端 UI 设计思想改以新增 **C.7「UI 设计思想 · 谋建琢三段律」**承载——谋（ui-ux-pro-max 定全局蓝图，未定蓝图不得动工）→ 建（依图营造，忠实实现不擅自降级，粗成品严禁交付）→ 琢（taste-skill 深度打磨，四维验收：高级视觉/高级交互/流畅动画/高性能渲染）；协作纪律：凡派遣 subagent 必须在指令中明确要求加载 `@ui-ux-pro-max` 与 `@taste-skill` 方可开工。技术红线细节（按需导入/800KB 警戒/合成器路径/E2E 锚点）由 M5 spec 裁决 D24/D26–D28 与实施计划 Global Constraints 承载。联动：M5 实施计划与交接文档中的 A.8 引用同步更新为 C.7。
