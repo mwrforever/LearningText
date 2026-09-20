@@ -76,3 +76,8 @@
   - **CSS 热替换（FR-RENDER-07）与 DevTools（FR-RENDER-05）**：热替换全链——PreviewPanel written(css)→fetch 新文本→postMessage `lt:css-swap`，协议层对 text/html 200 全量响应只读注入接收器（不改 BLOB/不参与 ETag；CJK 路径经 decodeURIComponent 命中——WHATWG URL pathname 恒百分号编码，逐字匹配对中文库永不命中，探针实证后修复）；DevTools 右键「检查元素」（`webContents.inspectElement`，原生 popup 不可被 Playwright 驱动、验收降级单测留证）；
   - **验收与实测**：E2E 18/18 全绿（app 2 + editor 9 + preview 7）；NFR/FR-EDIT-01「文件 ≤ 5MB 打开 < 1s」E2E 计时中位 ≈170ms（6 样本 123–177ms，远优于目标）；滚动同步（FR-RENDER-06）为预览 P1 唯一余项，归 M5；
   - `TASK.md` 登记台收尾：删「预览外壳批次」「预览打磨批次」两行（M4 完成）；预览 P1 三项收敛为「滚动同步（FR-RENDER-06）归 M5」一行；追加「搜索 UI 批次」归 M5；M2 deferred 四条核对（M4 未触碰 search 契约/搜索服务/片段渲染，保留登记）；新增「树目录 rename/move 选中语义扩展」「move 模式状态条引导文案」「settingsService `set` 日志域摘要化」三项；待回填登记 FR-EDIT-01 实测值（见上条）。
+- **宪法修订（M5 spec v0.3 前端技术栈裁决固化，用户 2026-09-19 指令）**：
+  - **新增 A.8「前端 UI 设计约束」**：技术栈红线（shadcn/ui + Tailwind CSS v4 + motion，按需导入，主 chunk 800KB 警戒）、设计步骤强制（基座先行 → 多方向论证择一 → 功能批次按基座产出 → 深度打磨收尾）、设计工具链强制（设计阶段 ui-ux-pro-max、打磨阶段 taste-skill，派遣实施者须显式下达加载指令）、性能红线（合成器路径/禁 layout thrashing/prefers-reduced-motion）、回归红线（aria/语义锚点不可破坏；主题走 shadcn 语义变量 + `.dark`）；
+  - **C.2 技术栈表增行**：「样式与组件体系 = Tailwind CSS v4 + shadcn/ui（4.3.x / CLI 4.21.x，2026-09-19 实查）」「动画 = motion（13.4.x）」「编辑器主题 = @codemirror/theme-one-dark」，并补登 M4 遗漏的 CodeMirror 各包行（八包精确版本见 package.json 锁定）；
+  - 裁决依据：M5 spec `docs/superpowers/specs/2026-09-19-导入导出与辅助功能-design.md` v0.3（D26–D28）；
+  - 联动：M5 实施计划 Task 1 的修宪步骤（CHANGELOG/C.2）由本条目完成，Task 1 收敛为依赖安装与装配。

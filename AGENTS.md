@@ -120,6 +120,15 @@ LearningText/
 6. **React / CodeMirror 习语**：props 只读、子→父只经 `onXxx` 回调、受控组件 = `value` + `onChange`、状态提升到最近公共父；列表 key 用稳定业务 id（VFS 节点 id），禁无脑数组索引；集合一律不可变更新；编辑器能力封装为返回 extension 的工厂函数，文档内容只经 `view.dispatch` 变更。
 7. **例外边界**：仅业务功能确需动态 / 灵活结构可偏离，且须能陈述业务理由；无理由的违反视为缺陷，不得合入。
 
+## A.8 前端 UI 设计约束（2026-09-19 修订新增，强制）
+
+1. **技术栈红线**：组件与样式 = shadcn/ui（CLI 按需 add 组件源码进仓，未 add 的组件零依赖零代码）+ Tailwind CSS v4（@tailwindcss/vite，CSS-first `@theme`）；动画 = motion 为主 + CSS transition/tw-animate-css 微过渡，**自研动画仅限「明确的个性化定制且第三方无法满足」且须留论证**；禁 `import *` 与全量导入（全部按需 ESM）；渲染层主 chunk 警戒 800KB（原始体积），超警戒须 bundle 分析并裁剪后方可合入。
+2. **设计步骤（强制顺序，不可跳步）**：① **设计系统基座先行**——tokens（色彩/字体/间距/圆角/阴影/动效时长缓动）、布局语言、组件形态语言先落 `docs/design/` 设计文档与样式入口，一切 UI 消费基座，禁绕过自写平行样式体系；② **新增界面须产出 ≥2 套候选方向对照论证后择一**，论证留痕于设计文档，禁首个想法直出；③ 功能批次只按基座语言产出，**不回头改既有布局**；④ 全站深度打磨收尾——generic AI 味对照表逐项闭环并归档。
+3. **设计工具链（强制）**：设计阶段实施者必须加载 `ui-ux-pro-max`（+ `design-system`）技能；深度打磨阶段必须加载 `taste-skill`（`high-end-visual-design` + `redesign-existing-projects`）技能；派遣实施者时必须显式下达技能加载指令。
+4. **性能红线**：动画仅走 transform/opacity 合成器路径；禁 layout thrashing 与 width/height/top/left 动画；尊重 `prefers-reduced-motion`；大列表分页优先，虚拟化实测需要才引入。
+5. **回归红线**：UI 变更不得破坏 aria-label/语义角色等 E2E 断言锚点（结构变更须列锚点对照表）；主题 = shadcn 语义变量双套 + `.dark` 类切换（解析器驱动，settings 只存用户意图，`system` 经 matchMedia 解析）。
+6. 精确版本基线见 C.2；里程碑级设计裁决见 `docs/superpowers/specs/` 对应 spec 的裁决清单。
+
 ---
 
 # Part B — 架构分层（Electron 进程模型）
@@ -203,7 +212,10 @@ Electron 桌面端 HTML 文档管理与实时预览工具：VFS + SQLite 单库�
 | 语言 | TypeScript（strict） | 6.0.x |
 | UI | React | 19.3.x |
 | 构建渲染层 | Vite | 8.3.x |
-| 编辑器 | CodeMirror 6 | 6.0.x |
+| 编辑器 | CodeMirror 6（curated 八包自组，版本见 package.json 精确锁定） | 6.0.x |
+| 样式与组件体系 | Tailwind CSS v4（@tailwindcss/vite，CSS-first @theme）+ shadcn/ui（CLI 按需 add 组件源码） | 4.3.x / CLI 4.21.x |
+| 动画 | motion（React 声明式；自研动画仅限个性化定制且第三方无法满足并留论证） | 13.4.x |
+| 编辑器主题 | @codemirror/theme-one-dark（暗色语法主题，随 UI 主题解析器联动） | 实装日实查 |
 | 存储 | better-sqlite3（WAL + FTS5 trigram） | 13.0.x |
 | IPC / 参数校验 | zod | 4.6.x |
 | 单元 / 集成测试 | Vitest + @vitest/coverage-v8（严格同版） | 5.0.x |
