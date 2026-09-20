@@ -21,4 +21,21 @@ if (typeof Range !== 'undefined') {
       return new DOMRect(0, 0, 0, 0);
     };
   }
+  // jsdom 无 ResizeObserver（cssom-view 未实现）：cmdk（快速打开浮层，M5 Task 6）挂载即
+  // 观测容器尺寸，缺失直接 ReferenceError。补空实现：观测为 no-op（jsdom 无布局，本无
+  // 尺寸变化可报），不影响命令列表渲染与键盘语义；条件式赋值同上，不遮蔽真实现。
+  if (typeof ResizeObserver === 'undefined') {
+    const stub = class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    };
+    window.ResizeObserver = stub as unknown as typeof ResizeObserver;
+  }
+  // jsdom 无 scrollIntoView（元素滚动未实现）：cmdk 方向键导航后把选中项滚入可视区，
+  // 缺失在 keydown 处理中抛 TypeError。补 no-op（jsdom 无布局，滚动本无可视区语义）；
+  // 条件式赋值同上。
+  if (typeof Element.prototype.scrollIntoView !== 'function') {
+    Element.prototype.scrollIntoView = function (): void {};
+  }
 }

@@ -292,8 +292,8 @@ test.describe('M4 保存管线/多标签/热替换/5MB（计时调优设置）',
     });
   });
 
-  test('保存管线：菜单保存立即落库 + disabled 菜单项不可点（验收项 2/5）', async () => {
-    // 菜单骨架：menu-save 按 id 命中；「快速打开」M5 搜索 UI 未落地为 disabled 占位
+  test('保存管线：菜单保存立即落库 + 快速打开菜单启用（验收项 2/5）', async () => {
+    // 菜单骨架：menu-save 按 id 命中；「快速打开」M5 Task 6 已启用（click 下发 quick-open 命令）
     const menuState = await app.evaluate(({ Menu }) => {
       const menu = Menu.getApplicationMenu();
       const quickOpen = menu?.items
@@ -306,7 +306,7 @@ test.describe('M4 保存管线/多标签/热替换/5MB（计时调优设置）',
       };
     });
     expect(menuState.hasSave).toBe(true);
-    expect(menuState.quickOpenEnabled).toBe(false);
+    expect(menuState.quickOpenEnabled).not.toBe(false);
     await seedFile(1, '快捷.html', '<p id="k">初始</p>');
     await openInTree('快捷.html');
     await replaceDoc('<p id="k">保存态</p>');

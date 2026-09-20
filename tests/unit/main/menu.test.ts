@@ -16,7 +16,7 @@ vi.mock('electron', () => ({
 }));
 
 describe('createMenuTemplate', () => {
-  it('文件菜单含新建文件/新建目录/保存（id 与 accelerator 逐字），搜索与导入导出 disabled 占位', () => {
+  it('文件菜单含新建文件/新建目录/保存（id 与 accelerator 逐字），全局搜索与导入导出 disabled 占位', () => {
     const template = createMenuTemplate(false) as Array<{
       label: string;
       submenu: Array<Record<string, unknown>>;
@@ -28,8 +28,13 @@ describe('createMenuTemplate', () => {
     expect(save?.['accelerator']).toBe('CmdOrCtrl+S');
     expect(save?.['enabled']).toBeUndefined(); // 可用项不设 disabled
     const searchMenu = template.find((m) => m.label === '搜索');
-    const quickOpen = (searchMenu?.submenu ?? []).find((item) => item['label'] === '快速打开');
-    expect(quickOpen?.['enabled']).toBe(false); // M5 搜索 UI 前占位
+    const searchItems = searchMenu?.submenu ?? [];
+    // M5 Task 6：快速打开已启用（不再 disabled 占位；可用项不设 enabled——与保存项同约定）
+    const quickOpen = searchItems.find((item) => item['label'] === '快速打开');
+    expect(quickOpen?.['enabled']).not.toBe(false);
+    expect(quickOpen?.['accelerator']).toBe('CmdOrCtrl+P');
+    const globalSearch = searchItems.find((item) => item['label'] === '全局搜索');
+    expect(globalSearch?.['enabled']).toBe(false);
     const ioMenu = template.find((m) => m.label === '导入导出');
     expect(ioMenu).toBeDefined();
   });
@@ -55,6 +60,18 @@ describe('createMenuTemplate', () => {
     (items.find((item) => item['id'] === 'menu-new-dir')?.['click'] as () => void)();
     expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'new-file' });
     expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'new-dir' });
+  });
+
+  it('点击快速打开项 → 同通道下发 { type: "quick-open" }（ShellCommand 联合扩型）', () => {
+    const template = createMenuTemplate(false) as Array<{
+      label: string;
+      submenu: Array<Record<string, unknown>>;
+    }>;
+    const items = template.find((m) => m.label === '搜索')?.submenu ?? [];
+    const quickOpen = items.find((item) => item['id'] === 'menu-quick-open');
+    expect(quickOpen).toBeDefined();
+    (quickOpen?.['click'] as () => void)();
+    expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'quick-open' });
   });
 
   it('macOS 模板首项为 appMenu role；Windows 非 mac 无', () => {

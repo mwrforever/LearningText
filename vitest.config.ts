@@ -1,7 +1,18 @@
 // Vitest 5：projects 拆 unit/integration（宪法 A.6-1/2），禁用已废弃的 workspace 文件
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
+// shadcn components.json aliases 对齐的路径映射（与 vite.config.resolve.alias 同源双写）：
+// 渲染层测试传导引入 shadcn 产码（内部以 @components/@lib 别名互引），vitest 运行时须能解析
+const rendererSrc = fileURLToPath(new URL('./src/renderer/src', import.meta.url));
+
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@components': `${rendererSrc}/components`,
+      '@lib': `${rendererSrc}/lib`,
+    },
+  },
   test: {
     // 宪法 A.6-3：覆盖率门禁与 projects 平级，对 unit + integration 合并计量
     coverage: {

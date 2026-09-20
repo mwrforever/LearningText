@@ -1,0 +1,12 @@
+{
+  "//": "解决方案式根配置（不参与任何构建/检查脚本——各脚本均显式 -p 指定子配置）：仅为要求根 tsconfig.json 的工具链（shadcn CLI 解析别名）提供路径映射，与 tsconfig.renderer.json 的 paths 双写对齐",
+  "compilerOptions": {
+    "paths": {
+      "@components": ["./src/renderer/src/components"],
+      "@components/*": ["./src/renderer/src/components/*"],
+      "@lib": ["./src/renderer/src/lib"],
+      "@lib/*": ["./src/renderer/src/lib/*"]
+    }
+  },
+  "files": []
+}

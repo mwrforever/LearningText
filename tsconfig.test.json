@@ -11,6 +11,14 @@
     "allowImportingTsExtensions": true,
     // node：测试运行环境；vite/client：测试程序纳入渲染层源码后，为其 CSS 副作用导入提供模块声明
     "types": ["node", "vite/client"],
+    // shadcn 组件别名（@components/@lib）：渲染层测试传导引入 shadcn 产码（内部以别名互引），
+    // 与 tsconfig.renderer.json / vite.config / vitest.config 三处对齐双写
+    "paths": {
+      "@components": ["./src/renderer/src/components"],
+      "@components/*": ["./src/renderer/src/components/*"],
+      "@lib": ["./src/renderer/src/lib"],
+      "@lib/*": ["./src/renderer/src/lib/*"]
+    },
     "noEmit": true
   },
   "include": [

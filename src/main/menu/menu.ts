@@ -44,7 +44,13 @@ export function createMenuTemplate(isMac: boolean): MenuItemConstructorOptions[]
     {
       label: '搜索',
       submenu: [
-        { label: '快速打开', accelerator: 'CmdOrCtrl+P', enabled: false }, // M5 搜索 UI
+        {
+          id: 'menu-quick-open',
+          label: '快速打开',
+          accelerator: 'CmdOrCtrl+P',
+          // M5 批次① Task 6：浮层 UI 落地，启用并经命令单通道下发（全局搜索仍归 Task 7）
+          click: () => sendCommand({ type: 'quick-open' }),
+        },
         { label: '全局搜索', accelerator: 'CmdOrCtrl+Shift+F', enabled: false }, // M5
       ],
     },

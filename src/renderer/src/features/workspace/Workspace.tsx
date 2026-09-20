@@ -16,6 +16,9 @@
  * 5–50MB 征询）；标签操作经 throttleTrailing 尾沿 300ms 写 workspace 域（D8，卸载 flush+dispose）。
  * recent/workspace 域写统一经串行 get→merge→set 队列（restoreWorkspace 同链），防启动期
  * 并发记录点丢更新；recentToItems 数据接口落在 features/quickopen（Task 6 浮层消费）。
+ * 快速打开浮层（M5 批次① Task 6）：quickOpen 开关态在此提升，shell:command 'quick-open'
+ * （菜单 Ctrl+P，键位单一来源）dispatch 置 true 打开；点选回传 openFile 统一入口，
+ * 结果/最近打开双源数据自持在 QuickOpenDialog。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -52,6 +55,7 @@ import {
 import { RenameDialog } from '../tree/RenameDialog';
 import { TreePanel } from '../tree/TreePanel';
 import { TrashPanel } from '../trash/TrashPanel';
+import { QuickOpenDialog } from '../quickopen/QuickOpenDialog';
 import { showToast } from '../ui/Toast';
 import { TabBar } from './TabBar';
 import { ratioFromPointer } from './layoutModel';
@@ -89,6 +93,9 @@ export function Workspace({
   // 'tree'=资源树 / 'trash'=回收站；回收站面板数据自持（挂载首拉 + trash 域广播重拉），
   // Workspace 只负责态切换与退出通道（返回钮 / Esc），不代理其数据拉取
   const [view, setView] = useState<'tree' | 'trash'>('tree');
+  // 快速打开浮层开关（M5 批次① Task 6）：唯一写入口是 shell:command dispatch（菜单
+  // Ctrl+P），点选/取消由浮层经 onOpenChange 回传收口
+  const [quickOpen, setQuickOpen] = useState(false);
   // 布局实时镜像（settingsRef/tabsRef 同款同步模式）：拖拽 pointerup 持久化必须读「此刻」
   // 布局——pointermove 高频更新下事件闭包 layout 必陈旧；事件处理器内同步记账，渲染期不写
   const layoutRef = useRef<ShellLayout>(layout);
@@ -639,7 +646,8 @@ export function Workspace({
   }, [tabsOp.activeId, saveController]);
 
   // 外壳命令订阅（cleanup 成对）：菜单命令 dispatch + 关窗确认链（spec §2.3/§5.2）；
-  // switch 四分支穷举 ShellCommand 联合（宪法 A.1-4，never 兜底由穷举性承担）
+  // switch 分支穷举 ShellCommand 联合（宪法 A.1-4，never 兜底由穷举性承担——联合扩型
+  // 未同步追加分支时编译期即报错）
   useEffect(() => {
     return window.api.onShellCommand((command) => {
       switch (command.type) {
@@ -652,6 +660,10 @@ export function Workspace({
           break;
         case 'new-dir':
           createInContext('dir');
+          break;
+        case 'quick-open':
+          // 菜单「快速打开」/Ctrl+P：置开关浮层（数据自持，点选经 onPick 回 openFile）
+          setQuickOpen(true);
           break;
         case 'confirm-close':
           // 关窗确认链（spec §2.3）：无脏直接放行 forceClose；有脏弹原生 confirm，
@@ -913,6 +925,13 @@ export function Workspace({
           </section>
         )}
       </div>
+      {/* 快速打开浮层（M5 批次① Task 6）：radix portal 渲染，关闭即卸载内容；
+          点选回传走 openFile 统一入口（大文件/二进制拦截与 recent 记录一并生效） */}
+      <QuickOpenDialog
+        open={quickOpen}
+        onOpenChange={setQuickOpen}
+        onPick={(node) => void openFile(node)}
+      />
       {statusBarSlot}
     </div>
   );
