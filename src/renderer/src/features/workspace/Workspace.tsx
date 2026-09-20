@@ -35,6 +35,10 @@
  * （M5 批次③ Task 9）：备份条目列表在设置页打开期间拉取并随 backup:done 广播重拉（订阅成对
  * 摘除）；自动备份开关走 backup 域串行写链；立即备份/还原经专用通道（还原为数据覆盖级操作，
  * 强确认与 fire-and-forget 语义见 restoreBackupNow）。
+ * 滚动同步装配（M5 批次⑤ Task 11，FR-RENDER-06）：编辑器↔预览互为命令出口——两侧面板各自
+ * 在 effect 内向槽位登记实现（卸载摘除成对），本组件只持两个可空槽位互为中转，不感知协议
+ * 细节：编辑器比例（100ms 节流，EditorPanel）→ 预览 postMessage（开关闸门在 PreviewPanel，
+ * D14 会话级）；预览锚点 report → 编辑器滚动（150ms 抑制窗在 EditorPanel，D13）。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -135,6 +139,11 @@ export function Workspace({
   // 拉取与 backup:done 广播刷新，见下方 effect；Workspace 只做数据提升，页面纯受控）
   const [backupAutoEnabled, setBackupAutoEnabled] = useState(true);
   const [backups, setBackups] = useState<readonly BackupEntry[]>([]);
+  // 滚动同步桥槽位（M5 批次⑤ Task 11）：两侧面板各自在 effect 内登记实现（卸载摘除成对），
+  // 本组件持可空槽位互为中转——previewScrollPostRef = 「比例→预览 postMessage」（开关闸门
+  // 在预览侧）；editorAnchorScrollRef = 「锚点→编辑器滚动」（150ms 抑制窗在编辑器侧）
+  const previewScrollPostRef = useRef<((ratio: number) => void) | null>(null);
+  const editorAnchorScrollRef = useRef<((anchorText: string) => void) | null>(null);
   // 布局实时镜像（settingsRef/tabsRef 同款同步模式）：拖拽 pointerup 持久化必须读「此刻」
   // 布局——pointermove 高频更新下事件闭包 layout 必陈旧；事件处理器内同步记账，渲染期不写
   const layoutRef = useRef<ShellLayout>(layout);
@@ -1162,6 +1171,9 @@ export function Workspace({
             theme={resolvedTheme}
             editorFontSize={editorFontSize}
             onSaveRequest={() => saveController.flushActive()}
+            // 滚动同步接线（M5 Task 11）：比例上行中转至预览投递槽；锚点滚动命令槽交面板登记
+            onScrollRatio={(ratio) => previewScrollPostRef.current?.(ratio)}
+            anchorScrollRef={editorAnchorScrollRef}
           />
         </section>
         {/* 预览分隔条（可拖拽调宽；预览栏折叠时同理不响应拖拽） */}
@@ -1197,7 +1209,12 @@ export function Workspace({
                 »
               </button>
             </div>
-            <PreviewPanel node={activeTab?.meta ?? null} />
+            <PreviewPanel
+              node={activeTab?.meta ?? null}
+              // 滚动同步接线（M5 Task 11）：投递槽交面板登记；锚点 report 中转至编辑器命令槽
+              scrollPostRef={previewScrollPostRef}
+              onScrollReport={(anchorText) => editorAnchorScrollRef.current?.(anchorText)}
+            />
           </section>
         )}
       </div>

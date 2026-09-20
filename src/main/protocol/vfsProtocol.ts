@@ -30,20 +30,28 @@ function textResponse(body: string, status: number): Response {
 }
 
 /**
- * 预览接收器（M4 spec §5.4 裁决 D10）：css 热替换消息入口——监听 lt:css-swap，
- * 按「href 相对解析 pathname === 消息 path」匹配 <link> 并替换为等值 <style>（滚动保持）。
+ * 预览接收器（M4 spec §5.4 裁决 D10 + M5 批次⑤ Task 11）：沙箱子文档注入脚本——
+ * 消息入口监听两类父→子消息：lt:css-swap 热替换（按「href 相对解析 pathname === 消息
+ * path」匹配 <link> 并替换为等值 <style>，滚动保持）；lt:scroll-ratio 滚动比例下行
+ * （M3 spec §7.2，按 offsetFromRatio 同式就地换算 scrollTo——有限数校验防 NaN 落地）。
+ * 另监听本窗口 scroll 上报 lt:scroll-report（比例 + 可视首行文本锚点快照，文档序首个
+ * 视口内带文本块级元素、trim 后截 80 字符——渲染文本与编辑器源文按字面子串对齐，启发式
+ * 已知边界：实体/空白差异时锚点失效由编辑器侧静默）。回环抑制由父侧 150ms 抑制窗承担
+ * （D13），子端只上报不做抑制。
  * 注意：字符串内不得出现 </script> 序列（会在宿主页提前闭合标签），闭合标签以
- * `'</' + 'script>'` 拼接形态落地。pathname 侧 decodeURIComponent 是硬性必需——
+ * `'</' + 'script>'` 拼接形态落地；拼接体的 JS 语法由注入集成测试以 new Function
+ * 编译守卫兜底（语法破损在单测链路无从暴露，只在真实预览运行时爆发）。
+ * pathname 侧 decodeURIComponent 是硬性必需——
  * WHATWG URL 序列化对非 ASCII 路径恒百分号编码（node 探针实证：
  * new URL('vfs://local/笔记/a.css').pathname === '/%E7%AC%94%E8%AE%B0/a.css'），
  * 而触发端（PreviewPanel）postMessage 的 path 为库内原始 virtualPath，不解码则
  * CJK 路径永不命中（本项目主要场景）；解码失败由既有 try/catch 兜底静默跳过。
  */
 const PREVIEW_RECEIVER =
-  '<script>(function(){window.addEventListener("message",function(e){var m=e.data;' +
-  'if(m&&m.type==="lt:css-swap"&&typeof m.path==="string"&&typeof m.text==="string"){var links=document.querySelectorAll(\'link[rel="stylesheet"]\');' +
-  'for(var i=0;i<links.length;i++){var href=links[i].getAttribute("href");if(href!==null){try{' +
-  'if(decodeURIComponent(new URL(href,document.baseURI).pathname)===m.path){var s=document.createElement("style");s.textContent=m.text;links[i].replaceWith(s);}}catch(_e){}}}}});})();</' +
+  '<script>' +
+  '(function () {window.addEventListener("message", function (e) {var m = e.data;if (m && m.type === "lt:css-swap" && typeof m.path === "string" && typeof m.text === "string") {var links = document.querySelectorAll(\'link[rel="stylesheet"]\');for (var i = 0; i < links.length; i++) {var href = links[i].getAttribute("href");if (href !== null) {try {if (decodeURIComponent(new URL(href, document.baseURI).pathname) === m.path) {var s = document.createElement("style");s.textContent = m.text;links[i].replaceWith(s);}} catch (_e) {}}}} else if (m && m.type === "lt:scroll-ratio" && typeof m.ratio === "number" && isFinite(m.ratio)) {var range = document.documentElement.scrollHeight - window.innerHeight;if (range > 0) {window.scrollTo(0, Math.max(0, Math.min(1, m.ratio)) * range);}}});' +
+  'window.addEventListener("scroll", function () {var max = document.documentElement.scrollHeight - window.innerHeight;var ratio = max <= 0 ? 0 : Math.min(1, Math.max(0, (window.scrollY || window.pageYOffset || 0) / max));var anchor = "";if (document.body) {var nodes = document.body.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li,dt,dd,pre,blockquote,td,th");for (var j = 0; j < nodes.length; j++) {var rect = nodes[j].getBoundingClientRect();if (rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight) {var text = (nodes[j].textContent || "").trim();if (text) {anchor = text.slice(0, 80);break;}}}}parent.postMessage({ type: "lt:scroll-report", ratio: ratio, anchorText: anchor }, "*");});' +
+  '})();</' +
   'script>';
 
 /**

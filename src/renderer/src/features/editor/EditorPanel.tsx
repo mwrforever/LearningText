@@ -7,10 +7,16 @@
  * effect 同 state 重配（doc/undo/光标/滚动全保留，CM6 官方习语；评审 Important fix round 1
  * 弃用 EditorState 整体重建——该路径丢失撤销历史）；切签换入后无条件对齐外观（非激活标签
  * 的 state compartment 内容可能滞后于当前外观）。
+ * M5 批次⑤ Task 11：滚动同步（FR-RENDER-06）——上行：scrollDOM 监听（独立 effect 挂卸，
+ * 不触碰会话 state 与 compartment，Task 8 同 state 重配机制零交互）经 100ms 节流计算比例
+ * 回调 onScrollRatio（Workspace 桥接至预览投递），上报即盖章进 150ms 抑制窗（D13）；下行：
+ * 经 anchorScrollRef 槽位登记「滚动到锚点」命令（预览 report 经 Workspace 中转到达），
+ * 锚点 doc.indexOf 首处 scrollIntoView、未命中静默（启发式已知边界），应用前过抑制窗防回环。
  * 渲染期零副作用：view 生命周期与会话换入全在 effect（75647f2 渲染期禁写 ref 先例）。
  */
 import { useEffect, useRef } from 'react';
 import { EditorView } from '@codemirror/view';
+import { ratioFromScroll, shouldSuppressReport } from '../preview/scrollSync';
 import type { TabState } from '../workspace/tabModel';
 import { appearanceReconfigureEffect } from './codemirror';
 import { TabSessions } from './tabSessions';
@@ -37,7 +43,21 @@ export interface EditorPanelProps {
   readonly editorFontSize?: number;
   /** 立即保存请求（保存钮 = 原生菜单同款命令）：Workspace 接 SaveController.flushActive */
   readonly onSaveRequest?: () => void;
+  /**
+   * 滚动同步上行出口（M5 Task 11）：编辑器滚动经 100ms 节流换算比例后回调（Workspace
+   * 桥接到预览面板的 iframe postMessage；开关闸门在预览侧）。缺省（未接线/测试桩）静默
+   */
+  readonly onScrollRatio?: (ratio: number) => void;
+  /**
+   * 滚动同步下行命令槽（M5 Task 11）：面板在 effect 内登记「滚动到锚点」实现（预览
+   * lt:scroll-report 经 Workspace 中转到达；锚点未命中静默、150ms 抑制窗 D13），
+   * 卸载时摘除（置 null）——Workspace 持槽位中转，两侧面板互不感知
+   */
+  readonly anchorScrollRef?: React.RefObject<((anchorText: string) => void) | null>;
 }
+
+/** 上行比例上报节流间隔（spec §6「节流 ~100ms」定档） */
+const SCROLL_REPORT_INTERVAL_MS = 100;
 
 export function EditorPanel({
   sessions,
@@ -45,6 +65,8 @@ export function EditorPanel({
   theme = 'light',
   editorFontSize = 14,
   onSaveRequest,
+  onScrollRatio,
+  anchorScrollRef,
 }: EditorPanelProps): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -55,6 +77,15 @@ export function EditorPanel({
     theme,
     fontSize: editorFontSize,
   });
+  // 滚动同步（M5 Task 11）：上次同步盖章时刻（D13 抑制窗基准），-Infinity 表达「从未同步」
+  // ——首份预览报告不被抑制；随组件卸载整体回收（数值态无 timer 需清理）
+  const lastSyncAtRef = useRef<number>(Number.NEGATIVE_INFINITY);
+  // onScrollRatio 实时镜像：监听闭包持稳（随 activeTab 进出挂卸），事件时刻读最新回调
+  //（settingsRef 同款模式——Workspace 传入的内联闭包随渲染换新，直捕必陈旧）
+  const onScrollRatioRef = useRef(onScrollRatio);
+  useEffect(() => {
+    onScrollRatioRef.current = onScrollRatio;
+  }, [onScrollRatio]);
 
   // 激活会话换入（外部数据到达，唯一例外 effect 域）：首挂建 view；切签 setState 换入并回写
   // 旧会话（state/scroll）；切至无激活（关末签）时 host 随占位分支卸载、视图 DOM 脱离文档不可
@@ -121,6 +152,73 @@ export function EditorPanel({
       viewRef.current = null;
     };
   }, []);
+
+  // —— 滚动同步上行（M5 Task 11）：scrollDOM 独立监听 → 100ms 节流比例上报 ——
+  // 声明在视图生命周期 effect 之后：同轮提交后行 effect 才能读到新建/换入后的 viewRef。
+  // 监听随 activeTab 进出成对挂卸（视图实例仅在首挂/空态往返时更换，activeTab 依赖覆盖全部
+  // 换点）；节流计时器为 effect 局部量，卸载/换签 cleanup 一并清除（资源成对）。本监听不触
+  // 碰会话 state 与 compartment——Task 8 同 state 重配机制零交互；既有 M4 onScroll 会话
+  // 回写链路（state 内建 domEventHandlers）原样并行，职责互斥（持久化归彼、同步上报归此）
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view === null) return undefined;
+    const dom = view.scrollDOM;
+    let trailingTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastEmitAt = Number.NEGATIVE_INFINITY;
+    // 上报即盖章（D13）：随后 iframe 因 scrollTo 产生的回响 report 落入 150ms 抑制窗
+    const emit = (): void => {
+      lastEmitAt = Date.now();
+      lastSyncAtRef.current = lastEmitAt;
+      onScrollRatioRef.current?.(
+        ratioFromScroll(dom.scrollTop, dom.clientHeight, dom.scrollHeight),
+      );
+    };
+    const onDomScroll = (): void => {
+      const elapsed = Date.now() - lastEmitAt;
+      if (elapsed >= SCROLL_REPORT_INTERVAL_MS) {
+        emit(); // 首个事件即发（跟随感）；后续事件在窗内合并、尾沿补发最新位置
+        return;
+      }
+      if (trailingTimer !== null) return;
+      trailingTimer = setTimeout(() => {
+        trailingTimer = null;
+        if (viewRef.current === null) return; // 空态切换后视图已销毁，不再补发
+        emit();
+      }, SCROLL_REPORT_INTERVAL_MS - elapsed);
+    };
+    dom.addEventListener('scroll', onDomScroll);
+    return () => {
+      dom.removeEventListener('scroll', onDomScroll);
+      if (trailingTimer !== null) {
+        clearTimeout(trailingTimer);
+        trailingTimer = null;
+      }
+    };
+  }, [activeTab]);
+
+  // —— 滚动同步下行（M5 Task 11）：向槽位登记「滚动到锚点」命令，卸载摘除成对 ——
+  // 闭包经 viewRef 读当前视图（跨换签/空态往返有效，槽位登记挂载期一次）。应用同步滚动前
+  // 先过 D13 抑制窗：150ms 内的预览报告视为自身上报的回响，静默忽略（回环不死循环的父侧
+  // 闸门）；锚点未命中（渲染文本与源文不可对齐——启发式已知边界）与空锚点均静默零派发。
+  // 滚动走 transaction effect（CM6 习语）：scrollIntoView 不改 doc/selection、不原地动 state
+  useEffect(() => {
+    const slot = anchorScrollRef;
+    if (slot === undefined) return undefined;
+    slot.current = (anchorText: string) => {
+      const view = viewRef.current;
+      if (view === null) return;
+      if (anchorText === '') return;
+      const now = Date.now();
+      if (shouldSuppressReport(lastSyncAtRef.current, now)) return;
+      const offset = view.state.doc.toString().indexOf(anchorText);
+      if (offset === -1) return;
+      lastSyncAtRef.current = now;
+      view.dispatch({ effects: EditorView.scrollIntoView(offset, { y: 'start' }) });
+    };
+    return () => {
+      slot.current = null;
+    };
+  }, [anchorScrollRef]);
 
   if (activeTab === null) {
     return (

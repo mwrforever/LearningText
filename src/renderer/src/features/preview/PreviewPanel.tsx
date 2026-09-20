@@ -6,6 +6,11 @@
  * 打磨批次（M4 终审 M-4/M-5）：订阅挂载期一次（node 经 ref 比较）；written 命中先
  * getNode 反查（路径新鲜双保险，spec §6.1），失败置「文档不可用」占位不重载旧路径；
  * text/css 写入经 fetch 新文本 postMessage 触发 iframe 内热替换（接收端归 Task 9 注入）。
+ * M5 批次⑤ Task 11：滚动同步（FR-RENDER-06）——下行：向 scrollPostRef 槽位登记「按比例
+ * 投递 lt:scroll-ratio 到 iframe」实现（'*' targetOrigin 为 M3 §7.2 既定协议；开关关闭
+ * 静默不投递），卸载摘除成对；上行：window message 监听（挂载期一次）经 parseScrollReport
+ * 收窄后、开关开启才回调 onScrollReport（Workspace 中转至编辑器锚点滚动），来源精确比对
+ * 本 iframe 防串扰。开关钮为会话级偏好（D14，不进 settings），默认开启。
  */
 import { useEffect, useRef, useState } from 'react';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
@@ -16,14 +21,31 @@ import {
   onReloadStart,
   type RevState,
 } from './refreshModel';
+import { parseScrollReport } from './scrollSync';
+import type { ScrollRatioMessage } from './scrollSync';
 import { vfsUrl } from './vfsUrl';
 
 export interface PreviewPanelProps {
   /** 当前预览节点（null → 占位；rename 后树重取推新 virtualPath 即触发重挂） */
   readonly node: NodeMeta | null;
+  /**
+   * 滚动同步下行投递槽（M5 Task 11）：面板在 effect 内登记「按比例投递 lt:scroll-ratio
+   * 到 iframe」实现（开关关闭时不投递——D14 会话级开关），卸载时摘除（置 null）；编辑器侧
+   * 滚动经 Workspace 中转调用。缺省（未接线/测试桩）不登记
+   */
+  readonly scrollPostRef?: React.RefObject<((ratio: number) => void) | null>;
+  /**
+   * 滚动同步上行出口（M5 Task 11）：收到本 iframe 的合法 lt:scroll-report 且开关开启时
+   * 回调（Workspace 桥接到编辑器锚点滚动）；开关关闭、来源不符或消息形态非法不回调
+   */
+  readonly onScrollReport?: (anchorText: string) => void;
 }
 
-export function PreviewPanel({ node }: PreviewPanelProps): React.JSX.Element | null {
+export function PreviewPanel({
+  node,
+  scrollPostRef,
+  onScrollReport,
+}: PreviewPanelProps): React.JSX.Element | null {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const revRef = useRef<RevState>(initialRevState);
   const [url, setUrl] = useState<string | null>(null);
@@ -34,8 +56,20 @@ export function PreviewPanel({ node }: PreviewPanelProps): React.JSX.Element | n
   const nodeRef = useRef<NodeMeta | null>(node);
   // written 命中但 getNode 反查失败（节点已不存在/不可达）：置占位态，不重载旧路径
   const [unavailable, setUnavailable] = useState(false);
+  // 滚动同步开关（M5 Task 11，D14）：会话级偏好，不进 settings；默认开启
+  const [scrollSyncEnabled, setScrollSyncEnabled] = useState(true);
+  // 开关实时镜像（投递闭包与 message 订阅均挂载期一次，触发时刻读最新值——urlRef 同款模式）
+  const scrollSyncEnabledRef = useRef(scrollSyncEnabled);
+  useEffect(() => {
+    scrollSyncEnabledRef.current = scrollSyncEnabled;
+  }, [scrollSyncEnabled]);
+  // onScrollReport 实时镜像（订阅挂载期一次，回调读最新——nodeRef 同款模式）
+  const onScrollReportRef = useRef(onScrollReport);
+  useEffect(() => {
+    onScrollReportRef.current = onScrollReport;
+  }, [onScrollReport]);
 
-  // 外部数据到达（node/路径变化）：唯一允许 effect（订阅同步）。重挂即重置 rev 基线，
+  // 外部数据到达（node/路径变化）：刷新链路的状态同步 effect。重挂即重置 rev 基线，
   // 并复位反查失败占位态（切节点即脱离上一节点的不可用事实）
   useEffect(() => {
     revRef.current = initialRevState;
@@ -44,6 +78,39 @@ export function PreviewPanel({ node }: PreviewPanelProps): React.JSX.Element | n
     setUrl(urlRef.current);
     setUnavailable(false);
   }, [node]);
+
+  // 滚动同步下行投递登记（M5 Task 11，挂载期一次，卸载摘除成对）：'*' targetOrigin 为
+  // M3 §7.2 既定协议（opaque origin 子文档唯一可通形态，同 css-swap 先例）；开关关闭
+  // 静默不投递（会话级 D14）
+  useEffect(() => {
+    const slot = scrollPostRef;
+    if (slot === undefined) return undefined;
+    slot.current = (ratio: number) => {
+      if (!scrollSyncEnabledRef.current) return;
+      const message: ScrollRatioMessage = { type: 'lt:scroll-ratio', ratio };
+      iframeRef.current?.contentWindow?.postMessage(message, '*');
+    };
+    return () => {
+      slot.current = null;
+    };
+  }, [scrollPostRef]);
+
+  // 滚动 report 接收（M5 Task 11，挂载期一次，cleanup 成对摘除）：来源精确比对本 iframe
+  // （防他源消息串扰；iframe 不在场即一概拒收），形态经 parseScrollReport 收窄（外部输入
+  // 禁断言），开关关闭不联动编辑器
+  useEffect(() => {
+    const onMessage = (event: MessageEvent): void => {
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      const report = parseScrollReport(event.data);
+      if (report === null) return;
+      if (!scrollSyncEnabledRef.current) return;
+      onScrollReportRef.current?.(report.anchorText);
+    };
+    window.addEventListener('message', onMessage);
+    return () => {
+      window.removeEventListener('message', onMessage);
+    };
+  }, []);
 
   function reload(): void {
     const current = urlRef.current;
@@ -117,16 +184,34 @@ export function PreviewPanel({ node }: PreviewPanelProps): React.JSX.Element | n
     );
   }
   return (
-    <iframe
-      // key=url：路径变化全新重挂（新历史条目无关——用户导航语义），内容更新走 replace（§4.2）
-      key={url}
-      ref={iframeRef}
-      className="lt-preview-frame min-h-0 w-full flex-1"
-      title="预览"
-      sandbox="allow-scripts"
-      referrerPolicy="no-referrer"
-      src={url}
-      onLoad={onLoad}
-    />
+    <div className="lt-preview flex min-h-0 flex-1 flex-col">
+      {/* 滚动同步开关条（M5 Task 11，D14 会话级偏好）：aria-pressed 表达开合态；开启态
+          以 accent 底色区分（工具钮通用串 + 受控态条件拼接，cn/tailwind-merge 运行时留给
+          shadcn 组件场景，D28 体积红线） */}
+      <div className="lt-preview-bar flex h-7 shrink-0 items-center gap-2 border-b border-border bg-muted/50 px-2">
+        <button
+          type="button"
+          aria-label="滚动同步"
+          aria-pressed={scrollSyncEnabled}
+          className={`inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium transition-colors duration-100 hover:bg-accent hover:text-accent-foreground ${
+            scrollSyncEnabled ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'
+          }`}
+          onClick={() => setScrollSyncEnabled((prev) => !prev)}
+        >
+          滚动同步
+        </button>
+      </div>
+      <iframe
+        // key=url：路径变化全新重挂（新历史条目无关——用户导航语义），内容更新走 replace（§4.2）
+        key={url}
+        ref={iframeRef}
+        className="lt-preview-frame min-h-0 w-full flex-1"
+        title="预览"
+        sandbox="allow-scripts"
+        referrerPolicy="no-referrer"
+        src={url}
+        onLoad={onLoad}
+      />
+    </div>
   );
 }
