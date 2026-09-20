@@ -8,6 +8,7 @@ import { IPC } from '../shared/ipc';
 import type { Result } from '../shared/result';
 import type { ShellCommand } from '../shared/shell-contract';
 import type { VfsChangedBroadcast } from '../shared/vfs-contract';
+import type { ImportProgress } from '../shared/io-contract';
 import type { WindowApi } from '../shared/window-api';
 
 const api: WindowApi = {
@@ -34,6 +35,16 @@ const api: WindowApi = {
   backupCreate: () => ipcRenderer.invoke(IPC.backupCreate, null),
   backupList: () => ipcRenderer.invoke(IPC.backupList, null),
   backupRestore: (request) => ipcRenderer.invoke(IPC.backupRestore, request),
+  // —— 导入域（M5 批次⑥）：invoke 长任务 + 取消寻址 + 目录选择供给 ——
+  importNodes: (request) => ipcRenderer.invoke(IPC.ioImport, request),
+  cancelImport: (request) => ipcRenderer.invoke(IPC.ioCancel, request),
+  pickDirectory: (request) => ipcRenderer.invoke(IPC.ioPickDirectory, request),
+  /** 订阅导入进度广播（批次提交后发）：同 onBackupDone 先例，退订成对 */
+  onIoProgress: (callback) => {
+    const listener = (_event: IpcRendererEvent, value: ImportProgress): void => callback(value);
+    ipcRenderer.on(IPC.ioProgress, listener);
+    return () => ipcRenderer.removeListener(IPC.ioProgress, listener);
+  },
   /** 订阅外壳命令：同 onVfsChanged 先例，包装内部消化 ipcRenderer */
   onShellCommand: (callback) => {
     const listener = (_event: IpcRendererEvent, value: ShellCommand): void => callback(value);

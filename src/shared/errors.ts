@@ -24,3 +24,7 @@ export const E_BACKUP_FAILED = 'E_BACKUP_FAILED';
 export const E_BACKUP_NOT_FOUND = 'E_BACKUP_NOT_FOUND';
 /** 备份文件完整性校验未通过（无法作为数据库打开或 integrity_check 非 ok） */
 export const E_BACKUP_CORRUPT = 'E_BACKUP_CORRUPT';
+
+// —— 以下为 M5 导入导出域实际使用的码（docs/03 §7.3 同步，禁预定义未使用码）——
+/** 导入源路径不存在或不可读（选择与发起之间源目录被移动/删除等） */
+export const E_IO_SOURCE_NOT_FOUND = 'E_IO_SOURCE_NOT_FOUND';

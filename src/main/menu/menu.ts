@@ -70,8 +70,13 @@ export function createMenuTemplate(isMac: boolean): MenuItemConstructorOptions[]
     {
       label: '导入导出',
       submenu: [
-        { label: '导入…', enabled: false }, // M5
-        { label: '导出…', enabled: false }, // M5
+        {
+          id: 'menu-import',
+          label: '导入…',
+          // M5 批次⑥ Task 12：导入链路（目录选择 → 策略确认 → io:import）落地，经命令单通道下发
+          click: () => sendCommand({ type: 'import' }),
+        },
+        { label: '导出…', enabled: false }, // M5（Task 13）
       ],
     },
   ];

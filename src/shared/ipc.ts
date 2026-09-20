@@ -47,6 +47,15 @@ export const IPC = {
   backupDone: 'backup:done',
   /** 主→渲染：树变更广播（事务提交成功后发出，宪法 B.3-4） */
   vfsChanged: 'vfs:changed',
+  // —— 导入域（M5 批次⑥）：命名 <域>:<动作>（宪法 B.2-5）——
+  /** 导入磁盘目录到 VFS（分批事务写入，进度经 ioProgress 广播，长任务异步返回计数） */
+  ioImport: 'io:import',
+  /** 取消进行中的导入（当前批完成后停止，已写入节点保留——D16） */
+  ioCancel: 'io:cancel',
+  /** 主→渲染：导入进度广播（批次间、事务提交后发——宪法 B.3-4/D16） */
+  ioProgress: 'io:progress',
+  /** 选择磁盘目录（openDirectory；multiple 开关区分多选源与单选目标，Task 13 复用） */
+  ioPickDirectory: 'io:pick-directory',
   // —— 外壳域（M4）：命名 <域>:<动作>（宪法 B.2-5）——
   /** 主→渲染：菜单/窗口命令（ShellCommand 可辨识联合，shell-contract 单一来源） */
   shellCommand: 'shell:command',

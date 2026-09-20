@@ -98,6 +98,8 @@ function stubSearchApi(overrides: Partial<Record<string, unknown>> = {}): {
       return vi.fn();
     }),
     onVfsChanged: vi.fn(() => vi.fn()),
+    // 导入进度订阅（M5 批次⑥ Task 12）：Workspace 挂载即订阅
+    onIoProgress: vi.fn(() => vi.fn()),
     ...overrides,
   };
   Object.defineProperty(window, 'api', { value: api, configurable: true, writable: true });

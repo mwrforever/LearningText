@@ -64,6 +64,14 @@ function stubApi(overrides: Partial<Record<string, unknown>> = {}): Record<strin
       unsubscribes.push(unsub);
       return unsub;
     }),
+    // 导入进度订阅（M5 批次⑥ Task 12）：Workspace 挂载即订阅，桩按契约形态注入
+    onIoProgress: vi.fn((callback: (p: unknown) => void) => {
+      const unsub = vi.fn(() => {
+        void callback;
+      });
+      unsubscribes.push(unsub);
+      return unsub;
+    }),
     ...overrides,
   };
   Object.defineProperty(window, 'api', { value: api, configurable: true, writable: true });
@@ -1193,6 +1201,195 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
       (b) => b.getAttribute('aria-current') === 'true',
     );
     expect(activeTab?.textContent).toBe('新名.html');
+    act(() => {
+      tree.unmount();
+    });
+  });
+});
+
+// 导入链路接线（M5 批次⑥ Task 12，FR-IO-01）：菜单命令 → 目录选择 → 策略确认弹层 →
+// io:import 发起；io:progress 广播驱动进度面板与取消；结果 toast 与树刷新收口。
+describe('Workspace 导入链路（M5 Task 12）', () => {
+  interface ImportCapture {
+    api: Record<string, ReturnType<typeof vi.fn>>;
+    shellHandlers: Array<(command: ShellCommand) => void>;
+    progressHandlers: Array<(p: unknown) => void>;
+    unsub: ReturnType<typeof vi.fn>;
+  }
+
+  /** 捕获 shell 命令与导入进度订阅回调（供逐条驱动两条主→渲染链） */
+  function captureImport(overrides: Partial<Record<string, unknown>> = {}): ImportCapture {
+    const shellHandlers: Array<(command: ShellCommand) => void> = [];
+    const progressHandlers: Array<(p: unknown) => void> = [];
+    const unsub = vi.fn();
+    const api = stubApi({
+      onShellCommand: vi.fn((callback: (command: ShellCommand) => void) => {
+        shellHandlers.push(callback);
+        return unsub;
+      }),
+      onIoProgress: vi.fn((callback: (p: unknown) => void) => {
+        progressHandlers.push(callback);
+        return unsub;
+      }),
+      pickDirectory: vi.fn(() => Promise.resolve({ ok: true, value: ['D:/notes', 'D:/pics'] })),
+      importNodes: vi.fn(() =>
+        Promise.resolve({ ok: true, value: { imported: 2, skipped: 1, failed: 0 } }),
+      ),
+      cancelImport: vi.fn(() => Promise.resolve({ ok: true, value: null })),
+      ...overrides,
+    }) as Record<string, ReturnType<typeof vi.fn>>;
+    return { api, shellHandlers, progressHandlers, unsub };
+  }
+
+  async function renderWorkspace(): Promise<ReturnType<typeof createRoot>> {
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    return tree;
+  }
+
+  /** 从菜单命令推进到确认弹层打开（目录选择已返回双路径） */
+  async function openImportDialog(capture: ImportCapture): Promise<void> {
+    await act(async () => {
+      capture.shellHandlers[0]?.({ type: 'import' });
+    });
+  }
+
+  it('订阅 cleanup 成对：onIoProgress 卸载必退订（宪法资源纪律）', async () => {
+    const capture = captureImport();
+    const tree = await renderWorkspace();
+    expect(capture.api.onIoProgress).toHaveBeenCalledTimes(1);
+    act(() => {
+      tree.unmount();
+    });
+    expect(capture.unsub).toHaveBeenCalled();
+  });
+
+  it('import 命令 → pickDirectory 选源；用户取消（空清单）不弹确认层', async () => {
+    const capture = captureImport({
+      pickDirectory: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
+    });
+    const tree = await renderWorkspace();
+    await openImportDialog(capture);
+    expect(capture.api.pickDirectory).toHaveBeenCalledWith({ multiple: true });
+    expect(document.querySelector('[aria-label="确认导入"]')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('选源成功弹出确认层：默认跳过策略，三策略单选可切换；取消导入不发起请求', async () => {
+    const capture = captureImport();
+    const tree = await renderWorkspace();
+    await openImportDialog(capture);
+
+    const radios = Array.from(document.querySelectorAll('[role="radio"]'));
+    expect(radios.map((r) => r.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false']);
+    // 切换到覆盖策略（radio 点击 → onValueChange）
+    await act(async () => {
+      (radios[2] as HTMLElement).click();
+    });
+    expect(
+      Array.from(document.querySelectorAll('[role="radio"]')).map((r) =>
+        r.getAttribute('aria-checked'),
+      ),
+    ).toEqual(['false', 'false', 'true']);
+
+    await act(async () => {
+      (document.querySelector('[aria-label="取消导入"]') as HTMLElement).click();
+    });
+    expect(capture.api.importNodes).not.toHaveBeenCalled();
+    expect(document.querySelector('[aria-label="确认导入"]')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('确认导入 → io:import 载荷（双源路径 + 目标父 + 所选策略）；完成后结果 toast 且弹层关闭', async () => {
+    const capture = captureImport();
+    // 结果 toast 呈现面：ToastHost 挂载于 App 根（与 Workspace 平级），本用例显式同挂
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(
+        <>
+          <Workspace />
+          <ToastHost />
+        </>,
+      );
+    });
+    await openImportDialog(capture);
+    // 切「重命名」策略后确认：载荷 conflict 必为 rename（策略经单选层传递）
+    await act(async () => {
+      (Array.from(document.querySelectorAll('[role="radio"]'))[1] as HTMLElement).click();
+    });
+    await act(async () => {
+      (document.querySelector('[aria-label="确认导入"]') as HTMLElement).click();
+    });
+    expect(capture.api.importNodes).toHaveBeenCalledWith({
+      sourcePaths: ['D:/notes', 'D:/pics'],
+      targetParentId: 1,
+      conflict: 'rename',
+    });
+    // 完成收口：弹层关闭 + D17 结果 toast 含三项计数
+    expect(document.querySelector('[aria-label="确认导入"]')).toBeNull();
+    const toasts = Array.from(container.querySelectorAll('.lt-toast')).map((t) => t.textContent);
+    expect(
+      toasts.some((t) => t?.includes('新增 2') && t?.includes('跳过 1') && t?.includes('失败 0')),
+    ).toBe(true);
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('io:progress 广播驱动进度面板（scanning/writing 文案），取消钮按 importId 寻址', async () => {
+    const capture = captureImport({
+      importNodes: vi.fn(
+        () =>
+          new Promise<{ ok: true; value: { imported: number; skipped: number; failed: number } }>(
+            () => undefined,
+          ),
+      ), // 挂起中：进度面板保持
+    });
+    const tree = await renderWorkspace();
+    await openImportDialog(capture);
+    await act(async () => {
+      (document.querySelector('[aria-label="确认导入"]') as HTMLElement).click();
+    });
+
+    // 扫描阶段进度
+    await act(async () => {
+      capture.progressHandlers[0]?.({
+        importId: 7,
+        phase: 'scanning',
+        done: 1,
+        total: 2,
+        currentPath: 'D:/notes',
+      });
+    });
+    expect(container.querySelector('.lt-import-progress')).not.toBeNull();
+    expect(container.textContent).toContain('正在扫描导入源');
+
+    // 写入阶段进度：done/total 文案 + 当前路径呈现
+    await act(async () => {
+      capture.progressHandlers[0]?.({
+        importId: 7,
+        phase: 'writing',
+        done: 3,
+        total: 10,
+        currentPath: 'D:/notes/sub/b.html',
+      });
+    });
+    expect(container.textContent).toContain('3/10');
+    expect(container.textContent).toContain('D:/notes/sub/b.html');
+
+    // 取消：按进度载荷中的 importId 寻址（io:cancel）
+    await act(async () => {
+      (container.querySelector('[aria-label="取消导入"]') as HTMLElement).click();
+    });
+    expect(capture.api.cancelImport).toHaveBeenCalledWith({ importId: 7 });
+
+    // 导入 promise 永挂：直接卸载收尾（资源成对由 unmount 断言覆盖）
     act(() => {
       tree.unmount();
     });

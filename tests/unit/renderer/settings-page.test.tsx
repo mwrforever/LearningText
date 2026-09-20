@@ -97,6 +97,8 @@ function stubWorkspaceApi(overrides: { settingsSetOk?: boolean; backupRestoreOk?
       backupDoneHandlers.push(callback);
       return vi.fn();
     }),
+    // 导入进度订阅（M5 批次⑥ Task 12）：Workspace 挂载即订阅，桩按契约形态注入
+    onIoProgress: vi.fn(() => vi.fn()),
   };
   Object.defineProperty(window, 'api', { value: api, configurable: true, writable: true });
   return { api, settingsGet, settingsSet, shellHandlers, backupDoneHandlers };

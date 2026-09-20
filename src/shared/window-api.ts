@@ -5,6 +5,13 @@ import type {
   BackupRestoreRequest,
   BackupRestoreResponse,
 } from './backup-contract';
+import type {
+  ImportProgress,
+  ImportRequest,
+  ImportResult,
+  IoCancelRequest,
+  IoPickDirectoryRequest,
+} from './io-contract';
 import type { SearchQueryRequest, SearchQueryResponse } from './search-contract';
 import type { ShellCommand } from './shell-contract';
 import type { SettingsData } from './settings-contract';
@@ -65,6 +72,18 @@ export interface WindowApi {
   backupRestore(request: BackupRestoreRequest): Promise<Result<BackupRestoreResponse>>;
   /** 订阅备份完成广播（载荷为备份文件名），返回取消订阅函数 */
   onBackupDone(callback: (fileName: string) => void): () => void;
+  // —— 导入域（M5 批次⑥）：invoke 长任务 + 进度订阅 + 目录选择供给 ——
+  /**
+   * 导入磁盘目录到目标父节点（分批事务写入，批次间让出事件循环）。进度经 onIoProgress
+   * 订阅到达；取消用 cancelImport（按进度载荷中的 importId 寻址）。
+   */
+  importNodes(request: ImportRequest): Promise<Result<ImportResult>>;
+  /** 取消进行中的导入：当前批完成后停止，已写入节点保留（D16） */
+  cancelImport(request: IoCancelRequest): Promise<Result<null>>;
+  /** 主进程弹出目录选择框：multiple 多选（导入源），单选（导出目标，Task 13 复用）；取消返回空数组 */
+  pickDirectory(request: IoPickDirectoryRequest): Promise<Result<readonly string[]>>;
+  /** 订阅导入进度广播（批次间、事务提交后发），返回取消订阅函数 */
+  onIoProgress(callback: (progress: ImportProgress) => void): () => void;
   // —— VFS 补充（M4）：nodeId → NodeMeta 反查（未找到 E_VFS_NOT_FOUND）——
   getNode(request: NodeIdRequest): Promise<Result<NodeMeta>>;
   /** 订阅树变更广播，返回取消订阅函数 */

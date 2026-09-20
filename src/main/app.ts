@@ -7,7 +7,7 @@
  */
 import path from 'node:path';
 import type Database from 'better-sqlite3';
-import { app, BrowserWindow, Menu, protocol } from 'electron';
+import { app, BrowserWindow, Menu, dialog, protocol } from 'electron';
 import { handleAppResource } from './protocol/appProtocol';
 import { createVfsProtocolHandler } from './protocol/vfsProtocol';
 import { registerIpcHandlers } from './ipc';
@@ -18,12 +18,14 @@ import { ensureDataDir, resolveDataDir } from './store/dataDir';
 import { createVfsService } from './vfs/vfsService';
 import { createSearchService } from './search/searchService';
 import { createSettingsService } from './settings/settingsService';
+import { createImportService, nodeFs } from './io/importService';
 import { IPC } from '../shared/ipc';
 import type { VfsChangedBroadcast } from '../shared/vfs-contract';
+import type { ImportProgress } from '../shared/io-contract';
 import { attachWindowCloseGuard, installApplicationMenu } from './menu/menu';
 import { BackupService } from './backup/backupService';
 import { toLocalIsoDate } from '../shared/time';
-import type { BrowserWindow as BrowserWindowType } from 'electron';
+import type { BrowserWindow as BrowserWindowType, OpenDialogOptions } from 'electron';
 
 const APP_ORIGIN = 'app://bundle';
 
@@ -183,6 +185,33 @@ export function bootstrapMain(): void {
           }
         },
       });
+      // 导入服务（M5 批次⑥ Task 12）：fs 走生产适配器（node:fs 同步原语，扫描/读取均在
+      // 分批事务的预算外路径承载——A.5-4/D15）；onProgress 即 io:progress 广播（遍历全部
+      // 窗口，服务侧保证事务提交后调用——宪法 B.3-4 同型广播面）。开库已成功（fail-fast
+      // 已过），此刻 db 必为已赋值句柄（与上方 vfs/search 工厂同一窄化依据）
+      const io = createImportService({
+        db,
+        fs: nodeFs,
+        onProgress: (progress: ImportProgress) => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send(IPC.ioProgress, progress);
+          }
+        },
+      });
+      // 目录选择供给（io:pick-directory，Task 13 复用）：dialog.showOpenDialog 异步弹出
+      // （不阻塞主进程事件循环），目录模式；multiple 区分导入多选与导出单选；取消返回空数组。
+      // 不绑定主窗 owner：单窗应用下系统对话框恒前台，省去「窗未建/已关」分支（渲染端发起
+      // invoke 时窗口必已存在，owner 判空属死分支）
+      const pickDirectories = async (allowMultiple: boolean): Promise<readonly string[]> => {
+        // 显式标注 Electron 契约类型（条件分支的窄字面量数组合并后需按契约定型）
+        const options: OpenDialogOptions = {
+          title: '选择文件夹',
+          properties: allowMultiple ? ['openDirectory', 'multiSelections'] : ['openDirectory'],
+        };
+        const result = await dialog.showOpenDialog(options);
+        if (result.canceled) return [];
+        return result.filePaths;
+      };
       /**
        * 还原编排（照 requestClose 先例的依赖注入，D11：服务不摸连接不摸生命周期）：
        * 置替换点标记后进入服务——存在性/integrity 校验等失败发生在替换点之前，库未关、
@@ -221,6 +250,9 @@ export function bootstrapMain(): void {
           app.relaunch();
           app.exit(0);
         },
+        // 导入域（M5 批次⑥）：导入服务与目录选择供给一并注入
+        io,
+        pickDirectories,
       });
       winRef.current = createMainWindow(devServerUrl, allowed, allowClose);
       // 应用菜单装配（M4 spec §5.2）：窗口创建后一次（命令经 shell:command 下发渲染层）

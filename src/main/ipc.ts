@@ -28,6 +28,18 @@ import type {
   BackupRestoreResponse,
 } from '../shared/backup-contract';
 import type { BackupService } from './backup/backupService';
+import type { ImportService } from './io/importService';
+import {
+  ImportRequestSchema,
+  IoCancelRequestSchema,
+  IoPickDirectoryRequestSchema,
+} from '../shared/io-contract';
+import type {
+  ImportRequest,
+  ImportResult,
+  IoCancelRequest,
+  IoPickDirectoryRequest,
+} from '../shared/io-contract';
 import {
   CreateNodeRequestSchema,
   ListChildrenRequestSchema,
@@ -76,6 +88,14 @@ export interface IpcHandlerDeps {
   readonly restoreBackup: (fileName: string) => void;
   /** 还原成功后重启（app.ts 提供：app.relaunch() + app.exit(0)，D11：服务不直接 relaunch） */
   readonly requestRelaunch: () => void;
+  /** 导入服务（M5 批次⑥）：import 长任务（分批事务，批次间让出事件循环）与 cancel 登记 */
+  readonly io: ImportService;
+  /**
+   * 主进程目录选择供给（app.ts 提供，照 requestRelaunch 先例的依赖注入）：
+   * dialog.showOpenDialog（openDirectory）异步弹出；multiple 区分导入多选源与导出单选目标
+   * （Task 13 复用）。用户取消返回空数组（不作为错误）。
+   */
+  readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
 }
 
 /** origin 白名单判定（B.5-6）：senderFrame 可能为 null，null/空串/非白名单一律拒绝 */
@@ -84,6 +104,33 @@ function isOriginPermitted(deps: IpcHandlerDeps, event: IpcMainInvokeEvent): boo
   return (
     origin !== undefined && origin !== null && origin !== '' && deps.allowedOrigins.includes(origin)
   );
+}
+
+/**
+ * 异步通道包装（M5 批次⑥）：与 handleWith 同两道校验（origin → zod，B.3-2），差异仅在
+ * 服务调用为 Promise（导入长任务 / 目录选择弹窗）。AppError 转 Result 语义同 handleWith（A.7-3）。
+ */
+function handleWithAsync<TReq, TRes>(
+  deps: IpcHandlerDeps,
+  schema: ZodType<TReq>,
+  fn: (request: TReq) => Promise<TRes>,
+): (event: IpcMainInvokeEvent, payload: unknown) => Promise<Result<TRes>> {
+  return async (event, payload) => {
+    if (!isOriginPermitted(deps, event)) {
+      return err(E_IPC_FORBIDDEN_ORIGIN, '拒绝来自未授权来源的调用');
+    }
+    const parsed = schema.safeParse(payload);
+    if (!parsed.success) {
+      return err(E_IPC_BAD_PAYLOAD, '请求载荷不合法');
+    }
+    try {
+      return ok(await fn(parsed.data));
+    } catch (error: unknown) {
+      // 业务错误码保真透传；非业务异常收敛为 E_STORE_INTERNAL，禁异常跨进程透传（A.7-3）
+      if (error instanceof AppError) return err(error.code, error.message);
+      return err(E_STORE_INTERNAL, '操作失败');
+    }
+  };
 }
 
 /** 通用包装：origin 校验 → zod 校验 → 服务调用（AppError 转 Result）→ 广播钩子 */
@@ -282,5 +329,30 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       deps.requestRelaunch();
       return { result: { relaunch: true } satisfies BackupRestoreResponse };
     }),
+  );
+
+  // —— 导入域（M5 批次⑥）：导入为分批长任务（批次间让出事件循环，io:cancel 可插队），
+  //    树刷新由渲染层在 invoke 结果到达后统一收口；进度经 io:progress 广播（服务侧 B.3-4）——
+  ipcMain.handle(
+    IPC.ioImport,
+    handleWithAsync(deps, ImportRequestSchema, async (q: ImportRequest) => {
+      const result: ImportResult = await deps.io.importNodes(q);
+      return result;
+    }),
+  );
+  // 取消登记：纯内存操作无写事务 → 返回对象无 event 键 → 不广播
+  ipcMain.handle(
+    IPC.ioCancel,
+    handleWith(deps, IoCancelRequestSchema, (q: IoCancelRequest) => {
+      deps.io.cancel(q.importId);
+      return { result: null };
+    }),
+  );
+  // 目录选择（dialog.showOpenDialog 异步 API，主进程弹窗不阻塞渲染进程）；无写事务不广播
+  ipcMain.handle(
+    IPC.ioPickDirectory,
+    handleWithAsync(deps, IoPickDirectoryRequestSchema, (q: IoPickDirectoryRequest) =>
+      deps.pickDirectories(q.multiple),
+    ),
   );
 }

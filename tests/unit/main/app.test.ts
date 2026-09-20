@@ -13,6 +13,10 @@ const mocks = vi.hoisted(() => {
   const vfsStub = { __vfsServiceStub: true } as const;
   // 搜索服务桩标记对象：断言 search:query 通道的装配注入链路（M2 spec §7.3）
   const searchStub = { __searchServiceStub: true } as const;
+  // 导入服务桩标记对象：断言 io:import 通道的装配注入链路（M5 批次⑥ Task 12）
+  const ioStub = { __ioServiceStub: true } as const;
+  // 生产 fs 适配桩标记对象：断言 nodeFs 注入链路（mock 工厂须提供同名导出）
+  const nodeFsStub = { __nodeFsStub: true } as const;
   // 备份服务桩（M5 批次③ Task 9）：记录构造 deps 供装配断言；各实例方法独立 vi.fn，
   // restore/autoBackupIfNeeded 按用例编程（还原编排/每日触发链路断言面）
   class BackupServiceStub {
@@ -55,6 +59,11 @@ const mocks = vi.hoisted(() => {
     runMigrations: vi.fn<(db: unknown) => void>(),
     createVfsService: vi.fn<(db: unknown) => typeof vfsStub>(),
     createSearchService: vi.fn<(db: unknown) => typeof searchStub>(),
+    // 导入服务工厂桩（M5 批次⑥）：断言 db/fs/onProgress 装配注入
+    createImportService: vi.fn<(deps: unknown) => typeof ioStub>(),
+    // 主进程目录选择弹窗桩（io:pick-directory 供给闭包消费）
+    showOpenDialog:
+      vi.fn<(options: unknown) => Promise<{ canceled: boolean; filePaths: string[] }>>(),
     getAllWindows:
       vi.fn<() => Array<{ webContents: { send: (channel: string, payload: unknown) => void } }>>(),
     BrowserWindow: vi.fn<(options: unknown) => { loadURL: (url: string) => Promise<void> }>(),
@@ -88,6 +97,8 @@ const mocks = vi.hoisted(() => {
           readonly backup: unknown;
           readonly restoreBackup: (fileName: string) => void;
           readonly requestRelaunch: () => void;
+          readonly io: unknown;
+          readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
         }) => void
       >(),
   };
@@ -107,6 +118,10 @@ const mocks = vi.hoisted(() => {
   m.createVfsService.mockImplementation(() => vfsStub);
   // 搜索工厂桩：同上，产物标记对象仅供注入链路断言（工厂本身会立刻 prepare 语句，禁触真库）
   m.createSearchService.mockImplementation(() => searchStub);
+  // 导入服务工厂桩：同上（M5 批次⑥）
+  m.createImportService.mockImplementation(() => ioStub);
+  // 目录选择弹窗桩默认「用户取消」：具体用例内覆写返回值
+  m.showOpenDialog.mockResolvedValue({ canceled: true, filePaths: [] });
   // context-menu「检查元素」弹出桩（Task 9）：buildFromTemplate 产物须带 popup 方法，
   // 否则右键 handler 内 `.popup(...)` 对 undefined 取属性抛错
   m.menuBuildFromTemplate.mockImplementation(() => ({ popup: m.menuPopup }));
@@ -127,9 +142,16 @@ const mocks = vi.hoisted(() => {
       },
     };
   });
-  // vfsStub/searchStub 供用例断言 deps 与工厂产物同一引用；
+  // vfsStub/searchStub/ioStub 供用例断言 deps 与工厂产物同一引用；
   // BackupServiceStub 以 vi.mock 工厂注入（backup 模块替换），backupStubs 供用例取实例
-  return Object.assign(m, { vfsStub, searchStub, BackupServiceStub, backupStubs });
+  return Object.assign(m, {
+    vfsStub,
+    searchStub,
+    ioStub,
+    nodeFsStub,
+    BackupServiceStub,
+    backupStubs,
+  });
 });
 
 vi.mock('electron', () => ({
@@ -148,6 +170,8 @@ vi.mock('electron', () => ({
   },
   // 静态方法 getAllWindows 挂在构造器上（broadcast 遍历窗口用，宪法 B.3-4）
   BrowserWindow: Object.assign(mocks.BrowserWindow, { getAllWindows: mocks.getAllWindows }),
+  // 目录选择弹窗（M5 批次⑥ io:pick-directory 供给闭包消费）
+  dialog: { showOpenDialog: mocks.showOpenDialog },
   // 应用菜单装配面（M4 spec §5.2）：bootstrapMain 建窗后 installApplicationMenu 一次
   Menu: {
     buildFromTemplate: mocks.menuBuildFromTemplate,
@@ -162,6 +186,10 @@ vi.mock('../../../src/main/vfs/vfsService', () => ({
 }));
 vi.mock('../../../src/main/search/searchService', () => ({
   createSearchService: mocks.createSearchService,
+}));
+vi.mock('../../../src/main/io/importService', () => ({
+  createImportService: mocks.createImportService,
+  nodeFs: mocks.nodeFsStub,
 }));
 vi.mock('../../../src/main/backup/backupService', () => ({
   BackupService: mocks.BackupServiceStub,
@@ -263,6 +291,9 @@ describe('主进程装配 bootstrapMain', () => {
     // 设置服务走真实现（仅读 userData 下几 KB JSON，不触 SQLite）：断言注入链路完整（M3 spec §5）
     expect(ipcDeps?.settings).toEqual(expect.anything());
     expect(ipcDeps?.broadcast).toEqual(expect.any(Function));
+    // 导入服务与目录选择供给一并注入（M5 批次⑥ Task 12）
+    expect(ipcDeps?.io).toBe(mocks.ioStub);
+    expect(ipcDeps?.pickDirectories).toEqual(expect.any(Function));
     // close 拦截 guard 接线（M4 spec §2.3）：未放行的首次 close 一律拦截
     // 并经窗口自身 webContents 下发 confirm-close 命令（渲染层确认链入口）
     const closeCall = mocks.winOn.mock.calls.find(([event]) => event === 'close');
@@ -578,6 +609,70 @@ describe('主进程装配 bootstrapMain', () => {
       deps.requestRelaunch();
       expect(mocks.appRelaunch).toHaveBeenCalledTimes(1);
       expect(mocks.appExit).toHaveBeenCalledWith(0);
+    });
+  });
+
+  // —— 导入服务装配与目录选择供给（M5 批次⑥ Task 12）——
+  describe('导入服务装配与目录选择供给', () => {
+    interface IpcDeps {
+      readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
+    }
+
+    /** 取 showOpenDialog 末次调用的末位实参（OpenDialogOptions；带窗/不带窗重载通吃） */
+    function lastDialogOptions(): { properties: string[] } {
+      const call = mocks.showOpenDialog.mock.calls.at(-1);
+      const options = call?.[call.length - 1];
+      return options as { properties: string[] };
+    }
+
+    async function bootstrapWithIo(): Promise<{
+      deps: IpcDeps;
+      ioDeps: {
+        readonly db: unknown;
+        readonly fs: unknown;
+        readonly onProgress: (progress: unknown) => void;
+      };
+    }> {
+      bootstrapMain();
+      await flushReadyChain();
+      const deps = mocks.registerIpcHandlers.mock.calls[0]?.[0] as unknown as IpcDeps;
+      const ioDeps = mocks.createImportService.mock.calls[0]?.[0] as {
+        readonly db: unknown;
+        readonly fs: unknown;
+        readonly onProgress: (progress: unknown) => void;
+      };
+      if (ioDeps === undefined) {
+        throw new Error('导入服务未被装配');
+      }
+      return { deps, ioDeps };
+    }
+
+    it('导入服务按开库句柄装配：db 与 onProgress 注入（onProgress 遍历窗口 io:progress 广播）', async () => {
+      const { ioDeps } = await bootstrapWithIo();
+      expect(ioDeps.db).toBe(mocks.openDatabase.mock.results[0]?.value);
+      // fs 适配器以同一标记对象注入（nodeFs 契约形态由服务单元/集成测试覆盖）
+      expect(ioDeps.fs).toBe(mocks.nodeFsStub);
+      const sendA = vi.fn<(channel: string, payload: unknown) => void>();
+      mocks.getAllWindows.mockReturnValue([{ webContents: { send: sendA } }]);
+      const progress = { importId: 1, phase: 'writing', done: 1, total: 1, currentPath: '/a' };
+      ioDeps.onProgress(progress);
+      expect(sendA).toHaveBeenCalledWith(IPC.ioProgress, progress);
+    });
+
+    it('pickDirectories 注入实现：主进程 dialog.showOpenDialog（目录模式），多选开关透传', async () => {
+      const { deps } = await bootstrapWithIo();
+      mocks.showOpenDialog.mockResolvedValue({ canceled: false, filePaths: ['D:/a', 'D:/b'] });
+      await expect(deps.pickDirectories(true)).resolves.toEqual(['D:/a', 'D:/b']);
+      // options 恒为末位实参（带窗 owner 与不带窗两种重载通吃）
+      const options = lastDialogOptions();
+      expect(options.properties).toContain('openDirectory');
+      expect(options.properties).toContain('multiSelections');
+      // 用户取消返回空数组（渲染层以空清单识别取消，不发起导入）
+      mocks.showOpenDialog.mockResolvedValue({ canceled: true, filePaths: [] });
+      await expect(deps.pickDirectories(false)).resolves.toEqual([]);
+      const singleOptions = lastDialogOptions();
+      expect(singleOptions.properties).toContain('openDirectory');
+      expect(singleOptions.properties).not.toContain('multiSelections');
     });
   });
 });

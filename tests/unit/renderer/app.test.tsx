@@ -17,6 +17,8 @@ describe('App 根组件', () => {
         settingsGet: vi.fn(() => Promise.resolve({ ok: true, value: DEFAULT_SETTINGS })),
         listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
         onVfsChanged: vi.fn(() => () => undefined),
+        // 导入进度订阅（M5 批次⑥ Task 12）：Workspace 挂载即订阅
+        onIoProgress: vi.fn(() => () => undefined),
         getNode: vi.fn(() =>
           Promise.resolve({
             ok: true,

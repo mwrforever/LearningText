@@ -39,6 +39,11 @@
  * 在 effect 内向槽位登记实现（卸载摘除成对），本组件只持两个可空槽位互为中转，不感知协议
  * 细节：编辑器比例（100ms 节流，EditorPanel）→ 预览 postMessage（开关闸门在 PreviewPanel，
  * D14 会话级）；预览锚点 report → 编辑器滚动（150ms 抑制窗在 EditorPanel，D13）。
+ * 导入链路（M5 批次⑥ Task 12，FR-IO-01）：菜单 'import' 命令 → 主进程目录选择（pickDirectory
+ * 多选，取消静默）→ 确认弹层（目标父目录=树选中上下文默认根的最小推导 + 重名策略三选，
+ * alert-dialog + radio 组）→ io:import 发起；onIoProgress 订阅（挂载常驻、退订成对）驱动
+ * 进度面板（批次粒度，取消按 importId 寻址），invoke 结果即终态收口：D17 计数 toast +
+ * 整树标记 stale（已展开目录经既有 stale 重取效应刷新导入结果）。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -50,8 +55,20 @@ import type {
   WorkspaceSettings,
 } from '../../../../shared/settings-contract';
 import type { BackupEntry } from '../../../../shared/backup-contract';
+import type { ImportConflict, ImportProgress } from '../../../../shared/io-contract';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import { toLocalIsoTime } from '../../../../shared/time';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@components/ui/alert-dialog';
+import { RadioGroup, RadioGroupItem } from '@components/ui/radio-group';
 import {
   planWorkspaceRestore,
   pruneRecentByNodes,
@@ -139,6 +156,14 @@ export function Workspace({
   // 拉取与 backup:done 广播刷新，见下方 effect；Workspace 只做数据提升，页面纯受控）
   const [backupAutoEnabled, setBackupAutoEnabled] = useState(true);
   const [backups, setBackups] = useState<readonly BackupEntry[]>([]);
+  // 导入域（M5 批次⑥ Task 12）：待确认导入草稿（源路径/目标父/策略——确认弹层受控态，
+  // null=关闭）与进行中进度（io:progress 广播驱动；invoke 返回即收口置 null）
+  const [importDraft, setImportDraft] = useState<{
+    readonly sourcePaths: readonly string[];
+    readonly targetParentId: number;
+    readonly conflict: ImportConflict;
+  } | null>(null);
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   // 滚动同步桥槽位（M5 批次⑤ Task 11）：两侧面板各自在 effect 内登记实现（卸载摘除成对），
   // 本组件持可空槽位互为中转——previewScrollPostRef = 「比例→预览 postMessage」（开关闸门
   // 在预览侧）；editorAnchorScrollRef = 「锚点→编辑器滚动」（150ms 抑制窗在编辑器侧）
@@ -354,6 +379,15 @@ export function Workspace({
       unsubscribe();
     };
   }, [settingsOpen]);
+
+  // 导入进度订阅（M5 批次⑥ Task 12，挂载期常驻 + cleanup 成对摘除）：io:progress 广播
+  // 驱动进度面板（批次粒度——扫描按源根推进、写入按批推进，B.3-4 事务提交后到达即事实）；
+  // 完成态清理由 importNodes invoke 续体收口（toast + 树刷新），广播不负责终态
+  useEffect(() => {
+    return window.api.onIoProgress((progress) => {
+      setImportProgress(progress);
+    });
+  }, []);
 
   function onToggle(id: number): void {
     const next = new Set(expanded);
@@ -607,6 +641,75 @@ export function Workspace({
         showToast(`还原失败：${result.error.message}`);
       }
     });
+  }
+
+  // —— 导入链路（M5 批次⑥ Task 12，FR-IO-01）：目录选择 → 策略确认弹层 → io:import ——
+
+  /**
+   * 目标父目录推导（spec §7.1「树选中上下文默认根」的最小实现）：取树选中上下文
+   * （reveal 覆盖选中 ?? 激活标签对应节点——与 TreePanel selectedId 同源），命中且为
+   * 目录即以其为导入目标父；文件选中/无命中/无选中一律回落根。目录不开标签（懒加载）
+   * 也能经 reveal 命中，与 M4 以来的选中语义一致。
+   */
+  function deriveImportTargetParentId(): number {
+    const selectedId = revealSelectionId ?? tabsOp.activeId;
+    if (selectedId === null) return ROOT_ID;
+    const node = findNode(roots, selectedId);
+    return node !== null && node.meta.nodeType === 'dir' ? node.meta.id : ROOT_ID;
+  }
+
+  /**
+   * 导入入口（菜单「导入…」命令唯一触发）：主进程弹目录选择框（多选），取消（空清单）
+   * 静默返回；选定即打开确认弹层，目标父目录此刻推导、策略默认跳过（spec §7.1）。
+   */
+  function beginImport(): void {
+    void window.api.pickDirectory({ multiple: true }).then((picked) => {
+      if (!picked.ok) {
+        showToast(`选择导入目录失败：${picked.error.message}`);
+        return;
+      }
+      if (picked.value.length === 0) return; // 用户取消选择：不弹确认层
+      setImportDraft({
+        sourcePaths: picked.value,
+        targetParentId: deriveImportTargetParentId(),
+        conflict: 'skip',
+      });
+    });
+  }
+
+  /**
+   * 确认导入：发起 io:import（长任务，invoke 结果即终态收口）——清弹层；结果到达后
+   * 清进度面板、D17 计数 toast、树整树标记 stale（已展开目录经既有 stale 重取效应刷新，
+   * 折叠目录随展开重取——导入批量写入无逐节点广播，树刷新统一在结果收口）。
+   */
+  function confirmImport(): void {
+    if (importDraft === null) return;
+    const draft = importDraft;
+    setImportDraft(null);
+    // 载荷按契约展开为可变数组（ImportRequest zod 形态；draft 态保持 readonly 不可变，A.1-10）
+    void window.api
+      .importNodes({
+        sourcePaths: [...draft.sourcePaths],
+        targetParentId: draft.targetParentId,
+        conflict: draft.conflict,
+      })
+      .then((result) => {
+        setImportProgress(null);
+        if (result.ok) {
+          const { imported, skipped, failed } = result.value;
+          showToast(`导入完成：新增 ${imported}、跳过 ${skipped}、失败 ${failed}`);
+          setRoots((prev) => markAllStale(prev));
+        } else {
+          showToast(`导入失败：${result.error.message}`);
+        }
+      });
+  }
+
+  /** 取消导入：按进度载荷中的 importId 寻址（首个进度广播到达即可取消，D16 当前批完成后停） */
+  function cancelRunningImport(): void {
+    const progress = importProgress;
+    if (progress === null) return;
+    void window.api.cancelImport({ importId: progress.importId });
   }
 
   /**
@@ -956,6 +1059,10 @@ export function Workspace({
           // 菜单「设置…」/CmdOrCtrl+,（M5 Task 8）：全屏覆盖设置页（工作台状态保持，关闭即还原）
           setSettingsOpen(true);
           break;
+        case 'import':
+          // 菜单「导入…」（M5 批次⑥ Task 12）：目录选择 → 策略确认弹层 → io:import 链入口
+          beginImport();
+          break;
         case 'confirm-close':
           // 关窗确认链（spec §2.3）：无脏直接放行 forceClose；有脏弹原生 confirm，
           // 用户确认才放行（取消则留在应用）。放行动作即 shell:force-close，
@@ -1225,6 +1332,96 @@ export function Workspace({
         onOpenChange={setQuickOpen}
         onPick={(node) => void openFile(node)}
       />
+      {/* 导入进度面板（M5 批次⑥ Task 12）：io:progress 广播驱动，toast 形态的等价呈现
+          （批次粒度更新，不逐节点）；bottom-14 让位 toast 队列（完成 toast 同屏不重叠） */}
+      {importProgress !== null ? (
+        <div
+          className="lt-import-progress pointer-events-auto fixed bottom-14 right-4 z-50 flex w-80 flex-col gap-1 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-medium">
+              {importProgress.phase === 'scanning'
+                ? '正在扫描导入源…'
+                : `正在导入（${importProgress.done}/${importProgress.total}）`}
+            </span>
+            <button
+              type="button"
+              aria-label="取消导入"
+              className="inline-flex h-5 shrink-0 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+              onClick={cancelRunningImport}
+            >
+              取消
+            </button>
+          </div>
+          <span className="lt-import-progress-path truncate text-muted-foreground">
+            {importProgress.currentPath}
+          </span>
+        </div>
+      ) : null}
+      {/* 导入确认弹层（M5 批次⑥ Task 12）：目标父目录展示 + 重名策略三选（alert-dialog +
+          radio 组，形态按设计系统文档——破坏性/带参操作先确认再执行） */}
+      {importDraft !== null ? (
+        <AlertDialog
+          open
+          onOpenChange={(open) => {
+            // 关闭面（Esc/取消/确认后的自动收起）统一清草稿
+            if (!open) setImportDraft(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>导入</AlertDialogTitle>
+              <AlertDialogDescription>
+                将所选磁盘文件夹导入到「
+                {findNode(roots, importDraft.targetParentId)?.meta.name ?? '根'}
+                」；同名冲突按下方策略处理
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <RadioGroup
+              aria-label="重名策略"
+              className="flex flex-col gap-2"
+              value={importDraft.conflict}
+              onValueChange={(value) => {
+                // radix 回调为宽 string：与字面量成员逐一比对收窄（禁 as 断言，A.1-5）
+                setImportDraft((prev) => {
+                  if (prev === null) return prev;
+                  if (value === 'skip' || value === 'rename' || value === 'overwrite') {
+                    return { ...prev, conflict: value };
+                  }
+                  return prev;
+                });
+              }}
+            >
+              <label className="flex items-center gap-2 text-sm">
+                <RadioGroupItem value="skip" />
+                跳过
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <RadioGroupItem value="rename" />
+                重命名
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <RadioGroupItem value="overwrite" />
+                覆盖（同名移入回收站）
+              </label>
+            </RadioGroup>
+            <AlertDialogFooter>
+              <AlertDialogCancel aria-label="取消导入" className="h-8 text-xs">
+                取消
+              </AlertDialogCancel>
+              <AlertDialogAction
+                aria-label="确认导入"
+                className="h-8 text-xs"
+                onClick={confirmImport}
+              >
+                确认导入
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
       {/* 状态栏（设计系统文档 §7.2 标准类串）：设置入口钮（M5 Task 8）；保存态/进度占位后续消费 */}
       <footer className="lt-statusbar flex h-7 shrink-0 items-center gap-3 border-t border-border bg-muted/50 px-3 text-xs text-muted-foreground">
         <button
@@ -1309,4 +1506,13 @@ function replaceNode(
     if (n.meta.id === id) return fn(n);
     return { ...n, children: replaceNode(n.children, id, fn) };
   });
+}
+
+/**
+ * 整树标记 stale（M5 批次⑥ Task 12 导入完成收口）：批量导入无逐节点广播，树刷新统一
+ * 在导入结果到达时触发——已加载且展开的目录经既有 collectStaleExpanded 效应重取子级，
+ * 折叠目录保持懒加载语义（展开时 onToggle 自会重取）。不可变更新（A.1-10）。
+ */
+function markAllStale(nodes: readonly TreeNode[]): readonly TreeNode[] {
+  return nodes.map((node) => ({ ...node, stale: true, children: markAllStale(node.children) }));
 }

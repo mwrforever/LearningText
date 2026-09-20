@@ -114,6 +114,32 @@ describe('createMenuTemplate', () => {
     expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'open-settings' });
   });
 
+  it('导入导出菜单：导入…启用（id menu-import），导出…保持 M5 占位禁用', () => {
+    const template = createMenuTemplate(false) as Array<{
+      label: string;
+      submenu: Array<Record<string, unknown>>;
+    }>;
+    const items = template.find((m) => m.label === '导入导出')?.submenu ?? [];
+    const importItem = items.find((item) => item['label'] === '导入…');
+    expect(importItem).toBeDefined();
+    expect(importItem?.['id']).toBe('menu-import');
+    expect(importItem?.['enabled']).not.toBe(false); // Task 12 启用：可用项不设 disabled
+    const exportItem = items.find((item) => item['label'] === '导出…');
+    expect(exportItem?.['enabled']).toBe(false); // 导出归 Task 13，仍为占位
+  });
+
+  it('点击导入…项 → 同通道下发 { type: "import" }（ShellCommand 联合扩型）', () => {
+    const template = createMenuTemplate(false) as Array<{
+      label: string;
+      submenu: Array<Record<string, unknown>>;
+    }>;
+    const items = template.find((m) => m.label === '导入导出')?.submenu ?? [];
+    const importItem = items.find((item) => item['id'] === 'menu-import');
+    expect(importItem).toBeDefined();
+    (importItem?.['click'] as () => void)();
+    expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'import' });
+  });
+
   it('macOS 模板首项为 appMenu role；Windows 非 mac 无', () => {
     const mac = createMenuTemplate(true) as Array<Record<string, unknown>>;
     expect(mac[0]?.['role']).toBe('appMenu');

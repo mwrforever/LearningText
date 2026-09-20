@@ -55,6 +55,8 @@ function stubTrashApi(overrides: Partial<Record<string, unknown>> = {}): {
     settingsGet: vi.fn(() => Promise.resolve({ ok: true, value: DEFAULT_SETTINGS })),
     listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
     onShellCommand: vi.fn(() => vi.fn()),
+    // 导入进度订阅（M5 批次⑥ Task 12）：Workspace 挂载即订阅
+    onIoProgress: vi.fn(() => vi.fn()),
     ...overrides,
   };
   Object.defineProperty(window, 'api', { value: api, configurable: true, writable: true });

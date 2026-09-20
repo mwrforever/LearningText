@@ -24,15 +24,19 @@ interface ExposedApi {
   backupCreate(request: unknown): Promise<unknown>;
   backupList(request: unknown): Promise<unknown>;
   backupRestore(request: unknown): Promise<unknown>;
+  importNodes(request: unknown): Promise<unknown>;
+  cancelImport(request: unknown): Promise<unknown>;
+  pickDirectory(request: unknown): Promise<unknown>;
   onShellCommand(callback: (event: unknown) => void): () => void;
   onVfsChanged(callback: (event: unknown) => void): () => void;
   onBackupDone(callback: (event: unknown) => void): () => void;
+  onIoProgress(callback: (event: unknown) => void): () => void;
 }
 
-/** invoke 类通道的包装方法名（ping 与三个订阅通道单独用例覆盖） */
+/** invoke 类通道的包装方法名（ping 与四个订阅通道单独用例覆盖） */
 type InvokeMethod = Exclude<
   keyof ExposedApi,
-  'ping' | 'onVfsChanged' | 'onShellCommand' | 'onBackupDone'
+  'ping' | 'onVfsChanged' | 'onShellCommand' | 'onBackupDone' | 'onIoProgress'
 >;
 
 const mocks = vi.hoisted(() => ({
@@ -83,6 +87,10 @@ describe('preload 桥注册', () => {
       'backupCreate',
       'backupList',
       'backupRestore',
+      'importNodes',
+      'cancelImport',
+      'pickDirectory',
+      'onIoProgress',
       'onShellCommand',
       'onVfsChanged',
       'onBackupDone',
@@ -126,6 +134,14 @@ describe('preload 桥注册', () => {
       ['backupCreate', IPC.backupCreate, null],
       ['backupList', IPC.backupList, null],
       ['backupRestore', IPC.backupRestore, { fileName: 'lt-20260921-080000.db' }],
+      // 导入域（M5 批次⑥）：导入请求透传、取消按 importId 寻址、目录选择带多选开关
+      [
+        'importNodes',
+        IPC.ioImport,
+        { sourcePaths: ['D:/notes'], targetParentId: 1, conflict: 'skip' },
+      ],
+      ['cancelImport', IPC.ioCancel, { importId: 1 }],
+      ['pickDirectory', IPC.ioPickDirectory, { multiple: true }],
     ];
     mocks.invoke.mockResolvedValue({ ok: true, value: null });
     for (const [method, channel, request] of channelCases) {
@@ -189,5 +205,24 @@ describe('preload 桥注册', () => {
     expect(callback).toHaveBeenCalledWith('lt-20260921-080000.db');
     unsubscribe();
     expect(mocks.removeListener).toHaveBeenCalledWith(IPC.backupDone, listener);
+  });
+
+  it('onIoProgress 订阅：剥离 event 首参仅回传导入进度载荷，退订移除同一监听器', () => {
+    const callback = vi.fn<(event: unknown) => void>();
+    const unsubscribe = exposedApi.onIoProgress(callback);
+    // 订阅固定挂在 io:progress 广播通道上（M5 批次⑥）
+    const onCall = mocks.on.mock.calls.at(-1);
+    expect(onCall?.[0]).toBe(IPC.ioProgress);
+    const listener = onCall?.[1];
+    if (listener === undefined) {
+      throw new Error('onIoProgress 未注册监听器');
+    }
+    // 模拟主进程进度广播：首个参数为 IpcRendererEvent 形态，必须被剥离后不透传
+    const payload = { importId: 1, phase: 'writing', done: 200, total: 250, currentPath: 'a.txt' };
+    listener({ sender: 'ipc-event' }, payload);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(payload);
+    unsubscribe();
+    expect(mocks.removeListener).toHaveBeenCalledWith(IPC.ioProgress, listener);
   });
 });

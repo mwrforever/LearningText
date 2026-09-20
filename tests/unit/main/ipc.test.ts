@@ -15,6 +15,7 @@ vi.mock('electron', () => ({
 import { IPC } from '../../../src/shared/ipc';
 import {
   E_BACKUP_CORRUPT,
+  E_IO_SOURCE_NOT_FOUND,
   E_IPC_BAD_PAYLOAD,
   E_IPC_FORBIDDEN_ORIGIN,
   E_STORE_INTERNAL,
@@ -27,6 +28,7 @@ import type { VfsService } from '../../../src/main/vfs/vfsService';
 import type { SearchService } from '../../../src/main/search/searchService';
 import type { SettingsService } from '../../../src/main/settings/settingsService';
 import type { BackupService } from '../../../src/main/backup/backupService';
+import type { ImportService } from '../../../src/main/io/importService';
 import { DEFAULT_SETTINGS, type SettingsData } from '../../../src/shared/settings-contract';
 
 function fakeEvent(origin: string | null): { senderFrame: { origin: string | null } | null } {
@@ -76,6 +78,20 @@ function makeBackupStub(): BackupService {
   } as unknown as BackupService;
 }
 
+// 导入服务桩（M5 批次⑥）：importNodes/cancel 可注入返回值（vi.fn 接口测试期适配，
+// `as unknown as` 与 makeVfsStub 同款测试期适配先例）
+function makeIoStub(): ImportService {
+  return {
+    importNodes: vi.fn(() => Promise.resolve({ imported: 1, skipped: 0, failed: 0 })),
+    cancel: vi.fn(),
+  } as unknown as ImportService;
+}
+
+// 目录选择供给桩（M5 批次⑥，Task 13 复用）：可编程返回路径数组
+function makePickStub(): (allowMultiple: boolean) => Promise<readonly string[]> {
+  return vi.fn(() => Promise.resolve(['D:/picked']));
+}
+
 describe('system:ping 入口校验', () => {
   beforeEach(() => {
     handlers.clear();
@@ -89,6 +105,8 @@ describe('system:ping 入口校验', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
   });
 
@@ -157,6 +175,8 @@ describe('vfs 通道接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     const okResult = handlers.get(IPC.vfsResolve)?.(fakeEvent('app://bundle'), {
       virtualPath: '/a',
@@ -197,6 +217,8 @@ describe('vfs 通道接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
@@ -228,6 +250,8 @@ describe('vfs 通道接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     const dup = handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
@@ -259,6 +283,8 @@ describe('vfs 通道接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     const r = handlers.get(IPC.vfsList)?.(fakeEvent('http://evil'), { parentId: 1 }) as {
       ok: boolean;
@@ -301,6 +327,8 @@ describe('vfs 通道接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
 
     const read = handlers.get(IPC.vfsRead)?.(fakeEvent('app://bundle'), { nodeId: 5 }) as {
@@ -396,6 +424,8 @@ describe('search 通道接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     const okResult = handlers.get(IPC.searchQuery)?.(fakeEvent('app://bundle'), {
       keyword: '指数',
@@ -428,6 +458,8 @@ describe('search 通道接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     const forbidden = handlers.get(IPC.searchQuery)?.(fakeEvent('http://evil'), {
       keyword: 'x',
@@ -465,6 +497,8 @@ describe('settings 通道接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     const ok = handlers.get(IPC.settingsGet)?.(fakeEvent('app://bundle'), null) as {
       ok: boolean;
@@ -491,6 +525,8 @@ describe('settings 通道接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     // M4 起 settings schema 为 v2：合法载荷以出厂默认为底、仅改写 debounceMs
     const r = handlers.get(IPC.settingsSet)?.(fakeEvent('app://bundle'), {
@@ -522,6 +558,8 @@ describe('vfs:get 通道接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     // 桩返回服务层 NodeMeta（Result 包装由 handleWith 统一完成，同既有桩形态）
     const meta: NodeMeta = {
@@ -588,6 +626,8 @@ describe('vfs:list-trashed 通道接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     const ok = handlers.get(IPC.vfsListTrashed)?.(fakeEvent('app://bundle'), null) as {
       ok: boolean;
@@ -624,6 +664,8 @@ describe('shell:force-close 接线', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     const bad = handlers.get(IPC.shellForceClose)?.(fakeEvent('app://bundle'), { x: 1 }) as {
       ok: boolean;
@@ -653,6 +695,8 @@ describe('广播版本号 rev', () => {
       backup: makeBackupStub(),
       restoreBackup: vi.fn(),
       requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     handlers.get(IPC.vfsWrite)?.(fakeEvent('app://bundle'), {
       nodeId: 2,
@@ -691,6 +735,8 @@ describe('backup 通道接线', () => {
       backup: deps.backup,
       restoreBackup: deps.restoreBackup,
       requestRelaunch: deps.requestRelaunch,
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
     });
     return deps;
   }
@@ -770,5 +816,133 @@ describe('backup 通道接线', () => {
     expect(corrupt.ok).toBe(false);
     expect(corrupt.error).toEqual({ code: E_BACKUP_CORRUPT, message: '备份文件已损坏，无法还原' });
     expect(deps.requestRelaunch).not.toHaveBeenCalled();
+  });
+});
+
+// 导入域三通道（M5 批次⑥ Task 12）：io:import 异步长任务（AppError 保真 / E_STORE_INTERNAL 兜底）、
+// io:cancel 按 importId 寻址、io:pick-directory 主进程目录选择供给；三通道均无 vfs 写事务 → 不广播
+describe('io 通道接线', () => {
+  interface IoDeps {
+    io: ImportService;
+    pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
+  }
+
+  function registerWith(overrides: Partial<IoDeps> = {}): IoDeps {
+    const deps: IoDeps = {
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
+      ...overrides,
+    };
+    handlers.clear();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      settings: makeSettingsStub(),
+      broadcast: vi.fn(),
+      requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
+      io: deps.io,
+      pickDirectories: deps.pickDirectories,
+    });
+    return deps;
+  }
+
+  it('io:import 合法载荷 await 服务结果 → ok(ImportResult)；非法载荷 E_IPC_BAD_PAYLOAD；不广播', async () => {
+    const deps = registerWith();
+    const ok = (await handlers.get(IPC.ioImport)?.(fakeEvent('app://bundle'), {
+      sourcePaths: ['D:/notes'],
+      targetParentId: 1,
+      conflict: 'skip',
+    })) as { ok: boolean; value: { imported: number } };
+    expect(ok).toEqual({ ok: true, value: { imported: 1, skipped: 0, failed: 0 } });
+    expect(deps.io.importNodes).toHaveBeenCalledWith({
+      sourcePaths: ['D:/notes'],
+      targetParentId: 1,
+      conflict: 'skip',
+    });
+    const bad = (await handlers.get(IPC.ioImport)?.(fakeEvent('app://bundle'), {
+      sourcePaths: [],
+    })) as { ok: boolean; error: { code: string } };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+  });
+
+  it('io:import 业务错误保真（E_IO_SOURCE_NOT_FOUND）；意外异常收敛 E_STORE_INTERNAL', async () => {
+    const missingIo = makeIoStub();
+    (missingIo.importNodes as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.reject(new AppError(E_IO_SOURCE_NOT_FOUND, '导入源路径不存在或不可读')),
+    );
+    registerWith({ io: missingIo });
+    const missing = (await handlers.get(IPC.ioImport)?.(fakeEvent('app://bundle'), {
+      sourcePaths: ['D:/gone'],
+      targetParentId: 1,
+      conflict: 'skip',
+    })) as { ok: boolean; error: { code: string; message: string } };
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toEqual({
+      code: E_IO_SOURCE_NOT_FOUND,
+      message: '导入源路径不存在或不可读',
+    });
+    const crashIo = makeIoStub();
+    (crashIo.importNodes as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.reject(new Error('意外崩溃')),
+    );
+    registerWith({ io: crashIo });
+    const unknown = (await handlers.get(IPC.ioImport)?.(fakeEvent('app://bundle'), {
+      sourcePaths: ['D:/x'],
+      targetParentId: 1,
+      conflict: 'skip',
+    })) as { ok: boolean; error: { code: string } };
+    expect(unknown.ok).toBe(false);
+    expect(unknown.error.code).toBe(E_STORE_INTERNAL);
+  });
+
+  it('io:import 非白名单 origin 拒绝（异步包装与同步包装同两道校验，B.3-2）；服务不被调用', async () => {
+    const deps = registerWith();
+    const forbidden = (await handlers.get(IPC.ioImport)?.(fakeEvent('http://evil'), {
+      sourcePaths: ['D:/x'],
+      targetParentId: 1,
+      conflict: 'skip',
+    })) as { ok: boolean; error: { code: string } };
+    expect(forbidden.ok).toBe(false);
+    expect(forbidden.error.code).toBe(E_IPC_FORBIDDEN_ORIGIN);
+    expect(deps.io.importNodes).not.toHaveBeenCalled();
+  });
+
+  it('io:cancel 合法请求转发服务 cancel(importId)；非法载荷 E_IPC_BAD_PAYLOAD；非白名单 origin 拒绝', async () => {
+    const deps = registerWith();
+    const ok = (await handlers.get(IPC.ioCancel)?.(fakeEvent('app://bundle'), {
+      importId: 3,
+    })) as { ok: boolean; value: null };
+    expect(ok).toEqual({ ok: true, value: null });
+    expect(deps.io.cancel).toHaveBeenCalledWith(3);
+    const bad = (await handlers.get(IPC.ioCancel)?.(fakeEvent('app://bundle'), {})) as {
+      ok: boolean;
+    };
+    expect(bad.ok).toBe(false);
+    const forbidden = (await handlers.get(IPC.ioCancel)?.(fakeEvent('http://evil'), {
+      importId: 3,
+    })) as { ok: boolean };
+    expect(forbidden.ok).toBe(false);
+  });
+
+  it('io:pick-directory 透传 multiple 开关并返回路径数组；用户取消为空数组', async () => {
+    const pick = vi.fn((allowMultiple: boolean) =>
+      Promise.resolve(allowMultiple ? ['D:/a', 'D:/b'] : ['D:/single']),
+    );
+    registerWith({ pickDirectories: pick });
+    const multi = (await handlers.get(IPC.ioPickDirectory)?.(fakeEvent('app://bundle'), {
+      multiple: true,
+    })) as { ok: boolean; value: readonly string[] };
+    expect(multi).toEqual({ ok: true, value: ['D:/a', 'D:/b'] });
+    expect(pick).toHaveBeenCalledWith(true);
+    registerWith({ pickDirectories: vi.fn(() => Promise.resolve([])) });
+    const canceled = (await handlers.get(IPC.ioPickDirectory)?.(fakeEvent('app://bundle'), {
+      multiple: false,
+    })) as { ok: boolean; value: readonly string[] };
+    expect(canceled).toEqual({ ok: true, value: [] });
   });
 });
