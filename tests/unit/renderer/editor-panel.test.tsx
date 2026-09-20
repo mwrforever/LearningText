@@ -7,9 +7,13 @@ import { EditorView } from '@codemirror/view';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEditorState } from '../../../src/renderer/src/features/editor/codemirror';
+import type { EditorAppearance } from '../../../src/renderer/src/features/editor/codemirror';
 import { EditorPanel } from '../../../src/renderer/src/features/editor/EditorPanel';
 import { TabSessions } from '../../../src/renderer/src/features/editor/tabSessions';
 import type { NodeMeta } from '../../../src/shared/vfs-contract';
+
+/** 出厂默认外观（M5 Task 8 createEditorState 契约：appearance 显式必填） */
+const APPEARANCE: EditorAppearance = { theme: 'light', fontSize: 14 };
 
 function meta(id: number, name: string, mimeType = 'text/html'): NodeMeta {
   return {
@@ -40,7 +44,12 @@ describe('EditorPanel（CodeMirror 内核）', () => {
     const sessions = new TabSessions();
     sessions.open(
       2,
-      createEditorState('<p>一</p>', 'text/html', { onDocChanged: () => {}, onScroll: () => {} }),
+      createEditorState({
+        doc: '<p>一</p>',
+        mimeType: 'text/html',
+        handlers: { onDocChanged: () => {}, onScroll: () => {} },
+        appearance: APPEARANCE,
+      }),
     );
     const tree = createRoot(container);
     act(() => {
@@ -63,16 +72,20 @@ describe('EditorPanel（CodeMirror 内核）', () => {
     const onDocChanged = vi.fn();
     sessions.open(
       2,
-      createEditorState('', 'text/plain', {
-        onDocChanged: (t) => onDocChanged(2, t),
-        onScroll: () => {},
+      createEditorState({
+        doc: '',
+        mimeType: 'text/plain',
+        handlers: { onDocChanged: (t) => onDocChanged(2, t), onScroll: () => {} },
+        appearance: APPEARANCE,
       }),
     );
     sessions.open(
       3,
-      createEditorState('', 'text/plain', {
-        onDocChanged: (t) => onDocChanged(3, t),
-        onScroll: () => {},
+      createEditorState({
+        doc: '',
+        mimeType: 'text/plain',
+        handlers: { onDocChanged: (t) => onDocChanged(3, t), onScroll: () => {} },
+        appearance: APPEARANCE,
       }),
     );
     const tree = createRoot(container);
@@ -130,9 +143,11 @@ describe('EditorPanel（CodeMirror 内核）', () => {
     const onDocChanged = vi.fn();
     sessions.open(
       2,
-      createEditorState('', 'text/plain', {
-        onDocChanged: (t) => onDocChanged(2, t),
-        onScroll: () => {},
+      createEditorState({
+        doc: '',
+        mimeType: 'text/plain',
+        handlers: { onDocChanged: (t) => onDocChanged(t), onScroll: () => {} },
+        appearance: APPEARANCE,
       }),
     );
     const tree = createRoot(container);
@@ -171,9 +186,11 @@ describe('EditorPanel（CodeMirror 内核）', () => {
     const onDocChanged = vi.fn();
     sessions.open(
       2,
-      createEditorState('', 'text/plain', {
-        onDocChanged: (t) => onDocChanged(2, t),
-        onScroll: () => {},
+      createEditorState({
+        doc: '',
+        mimeType: 'text/plain',
+        handlers: { onDocChanged: (t) => onDocChanged(t), onScroll: () => {} },
+        appearance: APPEARANCE,
       }),
     );
     const tree = createRoot(container);
@@ -232,7 +249,12 @@ describe('EditorPanel（CodeMirror 内核）', () => {
     const onSaveRequest = vi.fn();
     sessions.open(
       2,
-      createEditorState('', 'text/plain', { onDocChanged: () => {}, onScroll: () => {} }),
+      createEditorState({
+        doc: '',
+        mimeType: 'text/plain',
+        handlers: { onDocChanged: () => {}, onScroll: () => {} },
+        appearance: APPEARANCE,
+      }),
     );
     const tree = createRoot(container);
     act(() => {
@@ -259,7 +281,15 @@ describe('EditorPanel（CodeMirror 内核）', () => {
   it('scrollDOM 滚动事件经 CM 路由回报 onScroll（会话级滚动记忆的数据源）', () => {
     const sessions = new TabSessions();
     const onScroll = vi.fn();
-    sessions.open(2, createEditorState('', 'text/plain', { onDocChanged: () => {}, onScroll }));
+    sessions.open(
+      2,
+      createEditorState({
+        doc: '',
+        mimeType: 'text/plain',
+        handlers: { onDocChanged: () => {}, onScroll },
+        appearance: APPEARANCE,
+      }),
+    );
     const tree = createRoot(container);
     act(() => {
       tree.render(
@@ -278,6 +308,66 @@ describe('EditorPanel（CodeMirror 内核）', () => {
       view?.scrollDOM.dispatchEvent(new Event('scroll'));
     });
     expect(onScroll).toHaveBeenCalledTimes(1);
+    tree.unmount();
+  });
+  it('字号/主题 props 变化 → 外观重建的会话状态经同一性感知换入（doc/光标保留、不误报变更）', () => {
+    // M5 Task 8：Workspace 以新扩展集重建会话状态（此处 updateState 模拟其事件处理器内
+    // 同步重建语义），EditorPanel 在外观 props 变化的提交内感知 state 实例替换并换入——
+    // 视图态随之更新且内容零丢失；换入不触发 docChanged（不误入保存管线）
+    const sessions = new TabSessions();
+    const onDocChanged = vi.fn();
+    sessions.open(
+      2,
+      createEditorState({
+        doc: '',
+        mimeType: 'text/plain',
+        handlers: { onDocChanged: (t) => onDocChanged(t), onScroll: () => {} },
+        appearance: { theme: 'light', fontSize: 14 },
+      }),
+    );
+    const tree = createRoot(container);
+    act(() => {
+      tree.render(
+        <EditorPanel
+          sessions={sessions}
+          activeTab={{ meta: meta(2, 'a.txt'), dirty: false }}
+          debounceMs={300}
+          theme="light"
+          editorFontSize={14}
+        />,
+      );
+    });
+    const view = mountedView(container);
+    if (!view) throw new Error('视图未挂载');
+    const before = view.state;
+    act(() => {
+      view.dispatch({ changes: { from: 0, insert: '丙' }, selection: EditorSelection.cursor(1) });
+    });
+    const rebuilt = createEditorState({
+      doc: view.state.doc,
+      selection: view.state.selection,
+      mimeType: 'text/plain',
+      handlers: { onDocChanged: (t) => onDocChanged(t), onScroll: () => {} },
+      appearance: { theme: 'dark', fontSize: 20 },
+    });
+    sessions.updateState(2, rebuilt);
+    act(() => {
+      tree.render(
+        <EditorPanel
+          sessions={sessions}
+          activeTab={{ meta: meta(2, 'a.txt'), dirty: false }}
+          debounceMs={300}
+          theme="dark"
+          editorFontSize={20}
+        />,
+      );
+    });
+    const after = mountedView(container);
+    expect(after).not.toBeNull();
+    expect(after?.state).not.toBe(before); // 新状态实例已换入（外观重建生效）
+    expect(after?.state.doc.toString()).toBe('丙'); // 内容零丢失
+    expect(after?.state.selection.main.head).toBe(1); // 光标由重建态透传
+    expect(onDocChanged).toHaveBeenCalledTimes(1); // 换入不重复回报（不误触发保存管线）
     tree.unmount();
   });
 });

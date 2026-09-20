@@ -37,6 +37,13 @@ export function createMenuTemplate(isMac: boolean): MenuItemConstructorOptions[]
       accelerator: 'CmdOrCtrl+S',
       click: () => sendCommand({ type: 'save' }),
     },
+    {
+      id: 'menu-settings',
+      label: '设置…',
+      accelerator: 'CmdOrCtrl+,',
+      // M5 批次③ Task 8：设置页（全屏覆盖视图）开启命令，经 shell:command 单通道下发
+      click: () => sendCommand({ type: 'open-settings' }),
+    },
   ];
   if (!isMac) fileSubmenu.push({ type: 'separator' }, { role: 'quit', label: '退出' });
   const template: MenuItemConstructorOptions[] = [

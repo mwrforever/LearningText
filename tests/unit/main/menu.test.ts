@@ -89,6 +89,31 @@ describe('createMenuTemplate', () => {
     expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'global-search' });
   });
 
+  it('文件菜单含「设置…」项（id menu-settings、accelerator CmdOrCtrl+,，M5 Task 8）', () => {
+    const template = createMenuTemplate(false) as Array<{
+      label: string;
+      submenu: Array<Record<string, unknown>>;
+    }>;
+    const items = template.find((m) => m.label === '文件')?.submenu ?? [];
+    const settings = items.find((item) => item['label'] === '设置…');
+    expect(settings).toBeDefined();
+    expect(settings?.['id']).toBe('menu-settings');
+    expect(settings?.['accelerator']).toBe('CmdOrCtrl+,');
+    expect(settings?.['enabled']).not.toBe(false); // 可用项不设 disabled
+  });
+
+  it('点击设置项 → 同通道下发 { type: "open-settings" }（ShellCommand 联合扩型）', () => {
+    const template = createMenuTemplate(false) as Array<{
+      label: string;
+      submenu: Array<Record<string, unknown>>;
+    }>;
+    const items = template.find((m) => m.label === '文件')?.submenu ?? [];
+    const settings = items.find((item) => item['label'] === '设置…');
+    expect(settings).toBeDefined();
+    (settings?.['click'] as () => void)();
+    expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'open-settings' });
+  });
+
   it('macOS 模板首项为 appMenu role；Windows 非 mac 无', () => {
     const mac = createMenuTemplate(true) as Array<Record<string, unknown>>;
     expect(mac[0]?.['role']).toBe('appMenu');

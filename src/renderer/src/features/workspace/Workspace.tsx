@@ -24,6 +24,11 @@
  * 快速打开浮层（M5 批次① Task 6）：quickOpen 开关态在此提升，shell:command 'quick-open'
  * （菜单 Ctrl+P，键位单一来源）dispatch 置 true 打开；点选回传 openFile 统一入口，
  * 结果/最近打开双源数据自持在 QuickOpenDialog。
+ * 设置页（M5 批次③ Task 8）：settingsOpen 全屏覆盖态（非 view 三态枚举——覆盖于工作台之上，
+ * 关闭后工作台状态原样还原），入口 = 状态栏「设置」钮 + 菜单 'open-settings' 命令；主题装配
+ * 在此收口（意图 → resolveTheme 解析 → documentElement .dark 切换 + 全部会话状态以新外观
+ * 重建，system 态经 matchMedia 监听，cleanup 成对摘除）；字号/去抖/自动保存表单即改即存——
+ * 经既有串行写链（get→merge→set）落盘，失败 toast 回滚显示。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -62,6 +67,8 @@ import { TreePanel, TreePane, type TreePaneView } from '../tree/TreePanel';
 import { TrashPanel } from '../trash/TrashPanel';
 import { SearchPanel } from '../search/SearchPanel';
 import { QuickOpenDialog } from '../quickopen/QuickOpenDialog';
+import { SettingsPage } from '../settings/SettingsPage';
+import { resolveTheme, type ThemeIntent } from '../settings/themeResolver';
 import { showToast } from '../ui/Toast';
 import { TabBar } from './TabBar';
 import { ratioFromPointer } from './layoutModel';
@@ -106,6 +113,21 @@ export function Workspace({
   // 快速打开浮层开关（M5 批次① Task 6）：唯一写入口是 shell:command dispatch（菜单
   // Ctrl+P），点选/取消由浮层经 onOpenChange 回传收口
   const [quickOpen, setQuickOpen] = useState(false);
+  // 设置覆盖层开关（M5 批次③ Task 8）：入口 = 状态栏「设置」钮 + 菜单 'open-settings' 命令；
+  // 非 view 三态枚举成员——覆盖于工作台之上、关闭后工作台状态原样还原
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // 外观域（M5 批次③ Task 8）：意图（持久化值）与解析结果（驱动 .dark 类与编辑器主题）。
+  // 解析初值 light——spec §4.3 D10「首帧默认 light，装配后切换，闪变定档为已知边界」
+  const [themeIntent, setThemeIntent] = useState<ThemeIntent>('system');
+  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light');
+  const [editorFontSize, setEditorFontSize] = useState(14);
+  // 外观实时镜像：matchMedia change 监听回调持稳态引用（主题 effect deps 仅 themeIntent，
+  // 监听不随字号变更重挂），事件时刻经 ref 读最新字号重建会话（settingsRef 同款同步模式，
+  // 渲染期不写 ref）
+  const appearanceRef = useRef({ fontSize: editorFontSize });
+  useEffect(() => {
+    appearanceRef.current = { fontSize: editorFontSize };
+  }, [editorFontSize]);
   // 布局实时镜像（settingsRef/tabsRef 同款同步模式）：拖拽 pointerup 持久化必须读「此刻」
   // 布局——pointermove 高频更新下事件闭包 layout 必陈旧；事件处理器内同步记账，渲染期不写
   const layoutRef = useRef<ShellLayout>(layout);
@@ -174,6 +196,10 @@ export function Workspace({
       if (alive && result.ok) {
         setDebounceMs(result.value.preview.debounceMs);
         setAutoSaveMs(result.value.editor.autoSaveMs);
+        // 外观域装载（M5 Task 8）：意图/字号进 state，.dark 切换与会话外观重建由主题装配
+        // effect 派生应用（意图变化即重跑）
+        setThemeIntent(result.value.appearance.theme);
+        setEditorFontSize(result.value.appearance.editorFontSize);
         // 布局记忆恢复（FR-SHELL-01）：ref 同步记账（后续拖拽持久化以恢复值为基准）
         layoutRef.current = result.value.shell.layout;
         setLayout(result.value.shell.layout);
@@ -379,21 +405,169 @@ export function Workspace({
   }
 
   /**
-   * 设置全量串行写（recent/workspace 域唯一写出口）：get→apply→set 经 promise 链逐笔串行。
-   * 串行化的必要性：启动恢复期多个记录点近同时完成，裸并发读改写各自读到同一旧值、后写
-   * 覆盖先写丢条目；串行链使每笔写基于前一笔落盘后的全量。get 失败放弃本笔写（服务侧默认
-   * 值兜底，persistLayout 同口径）；set 失败静默不阻断后续排队写（链尾 catch 吞 IPC 层异常）。
+   * 设置全量串行写（recent/workspace/appearance/preview/editor 域唯一写出口）：get→apply→set
+   * 经 promise 链逐笔串行。串行化的必要性：启动恢复期多个记录点近同时完成，裸并发读改写
+   * 各自读到同一旧值、后写覆盖先写丢条目；串行链使每笔写基于前一笔落盘后的全量。返回本笔
+   * 写结果（false = get 失败放弃 / set 失败 / IPC 层异常），供设置页表单「失败 toast 回滚
+   * 显示」消费；链尾 catch 维持吞异常不断链语义（queueSettingsWrite 同口径）。
    */
+  function enqueueSettingsWrite(
+    apply: (settings: SettingsData) => SettingsData | Promise<SettingsData>,
+  ): Promise<boolean> {
+    const outcome = new Promise<boolean>((resolve) => {
+      settingsWriteChainRef.current = settingsWriteChainRef.current
+        .then(async () => {
+          try {
+            const current = await window.api.settingsGet();
+            if (!current.ok) {
+              resolve(false);
+              return;
+            }
+            const written = await window.api.settingsSet(await apply(current.value));
+            resolve(written.ok);
+          } catch {
+            resolve(false);
+          }
+        })
+        .catch(() => {
+          resolve(false);
+        });
+    });
+    return outcome;
+  }
+
+  /** 既有 fire-and-forget 口径（recent/workspace/布局写入方）：结果不消费 */
   function queueSettingsWrite(
     apply: (settings: SettingsData) => SettingsData | Promise<SettingsData>,
   ): void {
-    settingsWriteChainRef.current = settingsWriteChainRef.current
-      .then(async () => {
-        const current = await window.api.settingsGet();
-        if (!current.ok) return;
-        await window.api.settingsSet(await apply(current.value));
-      })
-      .catch(() => undefined);
+    void enqueueSettingsWrite(apply);
+  }
+
+  // —— 主题装配与外观应用（M5 批次③ Task 8，spec §4.3 D10）——
+
+  /**
+   * 主题装配 effect：意图 → resolveTheme 解析 → documentElement .dark 切换（设计系统文档
+   * §八双主题唯一开关）→ 全部会话状态以新外观重建；system 态经 matchMedia 监听跟随系统
+   * 偏好，监听随 effect 进出成对挂卸。应用动作全部同步完成、先于 setResolvedTheme 触发的
+   * 换入提交——EditorPanel 换入 effect（子先父后）总能看到已重建的会话状态。
+   */
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const applyTheme = (): void => {
+      const resolved = resolveTheme(themeIntent, media.matches);
+      // .dark 挂文档根元素：语义变量与 dark: 变体全站即时生效（切换零重排）
+      document.documentElement.classList.toggle('dark', resolved === 'dark');
+      rebuildSessionsForAppearance(resolved, appearanceRef.current.fontSize);
+      // 值不变时返回原 state 触发 bail-out，避免无谓提交（首次装配同值亦不产生第二次渲染）
+      setResolvedTheme((prev) => (prev === resolved ? prev : resolved));
+    };
+    applyTheme();
+    media.addEventListener('change', applyTheme);
+    return () => {
+      media.removeEventListener('change', applyTheme);
+    };
+    // rebuildSessionsForAppearance 为组件内函数声明（每次渲染重建），其依赖（sessions/
+    // tabsRef/saveController/appearanceRef）均为稳定引用，效果等价于 effect 期实例
+  }, [themeIntent]);
+
+  /**
+   * 外观重建（spec §4.3 D10「切主题全标签 view 重建」）：以新主题/字号重建全部会话状态
+   * （扩展集含外观——doc/光标由旧态透传，撤销历史随状态重建归零，已知边界）。仅允许在
+   * 事件处理器 / effect 回调内同步调用（渲染期禁副作用）；标签清单读 tabsRef 实时镜像
+   * （事件闭包 tabsOp 必陈旧，openFile 触顶判定同款纪律）。EditorPanel 经 state 实例
+   * 同一性感知重建并 setState 换入（M4 习语：会话态为唯一权威）。
+   */
+  function rebuildSessionsForAppearance(theme: 'light' | 'dark', fontSize: number): void {
+    for (const tab of tabsRef.current.tabs) {
+      const session = sessions.get(tab.meta.id);
+      if (session === undefined) continue;
+      sessions.updateState(
+        tab.meta.id,
+        createEditorState({
+          doc: session.state.doc,
+          mimeType: tab.meta.mimeType ?? 'text/plain',
+          selection: session.state.selection,
+          handlers: {
+            onDocChanged: (text, state) => {
+              sessions.updateState(tab.meta.id, state);
+              saveController.edit(tab.meta.id, text);
+            },
+            onScroll: (top) => sessions.updateScroll(tab.meta.id, top),
+          },
+          appearance: { theme, fontSize },
+        }),
+      );
+    }
+  }
+
+  // —— 设置页表单回调（M5 批次③ Task 8）：即改即存 + 失败 toast 回滚显示 ——
+
+  /**
+   * 主题意图变更：意图入 state（.dark 切换与会话重建由主题装配 effect 派生应用，回滚亦
+   * 同路径逆放）；持久化失败 toast 后回滚意图
+   */
+  function changeThemeIntent(intent: ThemeIntent): void {
+    const previous = themeIntent;
+    setThemeIntent(intent);
+    void enqueueSettingsWrite((settings) => ({
+      ...settings,
+      appearance: { ...settings.appearance, theme: intent },
+    })).then((ok) => {
+      if (!ok) {
+        showToast('设置保存失败，已恢复原值');
+        setThemeIntent(previous);
+      }
+    });
+  }
+
+  /**
+   * 编辑器字号变更：先以新字号同步重建全部会话（单提交内 EditorPanel 即感知换入——若经
+   * effect 重建会晚于子组件换入 effect 一个提交）；持久化失败 toast 后回滚显示并逆重建
+   */
+  function changeEditorFontSize(fontSize: number): void {
+    const previous = editorFontSize;
+    rebuildSessionsForAppearance(resolvedTheme, fontSize);
+    setEditorFontSize(fontSize);
+    void enqueueSettingsWrite((settings) => ({
+      ...settings,
+      appearance: { ...settings.appearance, editorFontSize: fontSize },
+    })).then((ok) => {
+      if (!ok) {
+        showToast('设置保存失败，已恢复原值');
+        rebuildSessionsForAppearance(resolvedTheme, previous);
+        setEditorFontSize(previous);
+      }
+    });
+  }
+
+  /** 预览去抖变更：状态即改即存（SaveController 经 settingsRef 镜像读取新值），失败回滚显示 */
+  function changeDebounceMs(debounceMs: number): void {
+    const previous = debounceMs;
+    setDebounceMs(debounceMs);
+    void enqueueSettingsWrite((settings) => ({
+      ...settings,
+      preview: { debounceMs },
+    })).then((ok) => {
+      if (!ok) {
+        showToast('设置保存失败，已恢复原值');
+        setDebounceMs(previous);
+      }
+    });
+  }
+
+  /** 自动保存间隔变更：同预览去抖口径 */
+  function changeAutoSaveMs(autoSaveMs: number): void {
+    const previous = autoSaveMs;
+    setAutoSaveMs(autoSaveMs);
+    void enqueueSettingsWrite((settings) => ({
+      ...settings,
+      editor: { autoSaveMs },
+    })).then((ok) => {
+      if (!ok) {
+        showToast('设置保存失败，已恢复原值');
+        setAutoSaveMs(previous);
+      }
+    });
   }
 
   /**
@@ -599,10 +773,10 @@ export function Workspace({
     // mimeType 已过 isTextLike 白名单，`??` 仅为可空契约的收尾窄化
     sessions.open(
       node.id,
-      createEditorState(
-        new TextDecoder().decode(result.value.content),
-        node.mimeType ?? 'text/plain',
-        {
+      createEditorState({
+        doc: new TextDecoder().decode(result.value.content),
+        mimeType: node.mimeType ?? 'text/plain',
+        handlers: {
           // 库以新实例整体替换 state（A.1-9）：会话态同步 + 输入回路进保存管线（双计时器调度落库）
           onDocChanged: (text, state) => {
             sessions.updateState(node.id, state);
@@ -610,7 +784,9 @@ export function Workspace({
           },
           onScroll: (top) => sessions.updateScroll(node.id, top),
         },
-      ),
+        // 外观参数取当前渲染闭包值（openFile 每次渲染重建，事件时刻即最新外观）
+        appearance: { theme: resolvedTheme, fontSize: editorFontSize },
+      }),
     );
     recordRecentOpen(node);
     setTabsOp((prev) => openTab(prev, node));
@@ -720,6 +896,10 @@ export function Workspace({
         case 'global-search':
           // 菜单「全局搜索」/Ctrl+Shift+F（M5 Task 7）：切入树栏 search 态（三态容器）
           setView('search');
+          break;
+        case 'open-settings':
+          // 菜单「设置…」/CmdOrCtrl+,（M5 Task 8）：全屏覆盖设置页（工作台状态保持，关闭即还原）
+          setSettingsOpen(true);
           break;
         case 'confirm-close':
           // 关窗确认链（spec §2.3）：无脏直接放行 forceClose；有脏弹原生 confirm，
@@ -927,6 +1107,8 @@ export function Workspace({
             sessions={sessions}
             activeTab={activeTab}
             debounceMs={debounceMs}
+            theme={resolvedTheme}
+            editorFontSize={editorFontSize}
             onSaveRequest={() => saveController.flushActive()}
           />
         </section>
@@ -974,6 +1156,33 @@ export function Workspace({
         onOpenChange={setQuickOpen}
         onPick={(node) => void openFile(node)}
       />
+      {/* 状态栏（设计系统文档 §7.2 标准类串）：设置入口钮（M5 Task 8）；保存态/进度占位后续消费 */}
+      <footer className="lt-statusbar flex h-7 shrink-0 items-center gap-3 border-t border-border bg-muted/50 px-3 text-xs text-muted-foreground">
+        <button
+          type="button"
+          aria-label="打开设置"
+          className="ml-auto inline-flex h-5 items-center justify-center rounded-sm px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+          onClick={() => setSettingsOpen(true)}
+        >
+          设置
+        </button>
+      </footer>
+      {/* 设置覆盖层（M5 批次③ Task 8，spec §4.2 D9）：fixed 全屏覆盖于工作台之上，z-40
+          低于 toast/浮层的 z-50（保存失败 toast 保持可见）；非路由非模态——工作台状态原样
+          保持，返回即卸载还原；表单即改即存经回调收口（写链与回滚在 Workspace） */}
+      {settingsOpen ? (
+        <SettingsPage
+          theme={themeIntent}
+          editorFontSize={editorFontSize}
+          debounceMs={debounceMs}
+          autoSaveMs={autoSaveMs}
+          onThemeChange={changeThemeIntent}
+          onFontSizeChange={changeEditorFontSize}
+          onDebounceChange={changeDebounceMs}
+          onAutoSaveChange={changeAutoSaveMs}
+          onBack={() => setSettingsOpen(false)}
+        />
+      ) : null}
       {statusBarSlot}
     </div>
   );

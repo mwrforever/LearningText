@@ -3,11 +3,20 @@
 import { describe, expect, it } from 'vitest';
 import { EditorState } from '@codemirror/state';
 import { createEditorState } from '../../../src/renderer/src/features/editor/codemirror';
+import type { EditorAppearance } from '../../../src/renderer/src/features/editor/codemirror';
 import { TabSessions } from '../../../src/renderer/src/features/editor/tabSessions';
+
+/** 出厂默认外观（M5 Task 8 createEditorState 契约：appearance 显式必填） */
+const APPEARANCE: EditorAppearance = { theme: 'light', fontSize: 14 };
 
 /** 生成最小会话 state（不挂真实回调——容器单测只关心 state 引用与字段替换） */
 function state(doc: string): EditorState {
-  return createEditorState(doc, 'text/plain', { onDocChanged: () => {}, onScroll: () => {} });
+  return createEditorState({
+    doc,
+    mimeType: 'text/plain',
+    handlers: { onDocChanged: () => {}, onScroll: () => {} },
+    appearance: APPEARANCE,
+  });
 }
 
 describe('TabSessions', () => {

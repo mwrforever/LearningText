@@ -38,4 +38,21 @@ if (typeof Range !== 'undefined') {
   if (typeof Element.prototype.scrollIntoView !== 'function') {
     Element.prototype.scrollIntoView = function (): void {};
   }
+  // jsdom 无 matchMedia（cssom-view 未实现媒体查询）：Workspace 主题装配（M5 Task 8）挂载即
+  // 查询 prefers-color-scheme，缺失直接 TypeError。补最小实现：matches 恒 false（system 解析
+  // 为 light）、监听记账 no-op——不派发 change。需要翻转 matches 断言 system 态的用例在各自
+  // 文件以可编程桩 defineProperty 替换（条件式赋值同上，不遮蔽真实现）。
+  if (typeof window.matchMedia !== 'function') {
+    const stubMql = {
+      matches: false,
+      media: '(prefers-color-scheme: dark)',
+      addEventListener: (): void => {},
+      removeEventListener: (): void => {},
+      addListener: (): void => {},
+      removeListener: (): void => {},
+      onchange: null,
+      dispatchEvent: (): boolean => false,
+    };
+    window.matchMedia = (): MediaQueryList => stubMql as unknown as MediaQueryList;
+  }
 }
