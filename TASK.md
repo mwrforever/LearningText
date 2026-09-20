@@ -61,7 +61,7 @@
 | 【M1 前置】补齐 B.5-4/5 窗口安全基线缺口：`will-navigate` origin 白名单拦截（URL 解析器比较）、`setWindowOpenHandler` 一律 deny、`setPermissionRequestHandler` 默认拒绝 | 宪法 B.5-4/5 强制条款，M0 未落地 | M1 窗口 / 预览工作时优先补齐 | 完成（M1） |
 | 【M1 前置】preload 从 tsconfig.main 拆出独立构建：现 dev watch 与单独 `npm run build:main` 会用 tsc 多文件产物覆盖 rolldown 单文件 preload（sandbox 下坏产物、dev 形态 IPC 断），重构构建编排——dev 主开发循环即受影响，M1 开工首日即撞上 | M0-Task 8/11 实测遗留 | M1 前置（M1 开工首日） | 完成（M1） |
 | release 发布工作流：tag 触发、draft release 人工发布闸门、签名 / 公证 secrets 占位、`forceCodeSigning` 证书就绪后开启为硬门禁 | 同上 §三方案 C | M6 | 待办 |
-| 搜索索引重建修复例程（设置页：v1 对账不平或用户自修复触发——同 v2 复制范式重跑；M5 辅助功能批次） | docs/superpowers/specs/2026-09-17-搜索-design.md §7.1 | M5 | 待办 |
+| 搜索索引重建修复例程（设置页：v1 对账不平或用户自修复触发——同 v2 复制范式重跑；M5 辅助功能批次） | docs/superpowers/specs/2026-09-17-搜索-design.md §7.1 | M5 | 待办（M5 Task 9 裁决：设置页维护区以 disabled 占位交付——brief 可选项评估为复用成本高（无既有可接线通道与例程出口），接线顺延后续批次） |
 | electron-builder v27 `electronGet` 更名复核 | 同上 §三（C.6-11） | v27 发布后 |
 | A.5-4 交互/批量预算分档与基句悬空指针清理（终审建议：交互单点写与批量导入分档、删「见 TASK.md」悬空引用） | M2 终审 | 下一修宪周期 | 待办 |
 | searchService `filterFragments` 类型白名单形态仅覆盖 ≤2 值（0/1/2 三分支，≥3 静默失真）——nodeTypes 枚举扩展时须同步参数化改造 | M2 终审 deferred（Task 7 评审） | M4 契约/枚举变更时 | 待办（M4 核对：未触碰对应文件，保留） |

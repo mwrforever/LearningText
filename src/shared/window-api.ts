@@ -1,4 +1,10 @@
 import type { Result } from './result';
+import type {
+  BackupCreateResponse,
+  BackupEntry,
+  BackupRestoreRequest,
+  BackupRestoreResponse,
+} from './backup-contract';
 import type { SearchQueryRequest, SearchQueryResponse } from './search-contract';
 import type { ShellCommand } from './shell-contract';
 import type { SettingsData } from './settings-contract';
@@ -47,6 +53,18 @@ export interface WindowApi {
   // —— 外壳域（M4）：菜单命令订阅 + guard 放行 ——
   onShellCommand(callback: (command: ShellCommand) => void): () => void;
   forceClose(): Promise<Result<null>>;
+  // —— 备份域（M5 批次③）：create/list 无参通道沿 settingsGet 先例 ——
+  /** 立即创建备份（checkpoint + 整文件复制 + 滚动裁剪） */
+  backupCreate(): Promise<Result<BackupCreateResponse>>;
+  /** 列出备份条目（文件名/字节数/修改时刻，新→旧） */
+  backupList(): Promise<Result<BackupEntry[]>>;
+  /**
+   * 还原到指定备份：数据覆盖级操作（渲染层须强确认后调用）。成功响应 { relaunch: true }
+   * 后主进程随即重启——本调用续体可能因进程退出不落地，调用方不得依赖其结果做 UI 收尾。
+   */
+  backupRestore(request: BackupRestoreRequest): Promise<Result<BackupRestoreResponse>>;
+  /** 订阅备份完成广播（载荷为备份文件名），返回取消订阅函数 */
+  onBackupDone(callback: (fileName: string) => void): () => void;
   // —— VFS 补充（M4）：nodeId → NodeMeta 反查（未找到 E_VFS_NOT_FOUND）——
   getNode(request: NodeIdRequest): Promise<Result<NodeMeta>>;
   /** 订阅树变更广播，返回取消订阅函数 */

@@ -14,6 +14,7 @@ vi.mock('electron', () => ({
 
 import { IPC } from '../../../src/shared/ipc';
 import {
+  E_BACKUP_CORRUPT,
   E_IPC_BAD_PAYLOAD,
   E_IPC_FORBIDDEN_ORIGIN,
   E_STORE_INTERNAL,
@@ -25,6 +26,7 @@ import { registerIpcHandlers } from '../../../src/main/ipc';
 import type { VfsService } from '../../../src/main/vfs/vfsService';
 import type { SearchService } from '../../../src/main/search/searchService';
 import type { SettingsService } from '../../../src/main/settings/settingsService';
+import type { BackupService } from '../../../src/main/backup/backupService';
 import { DEFAULT_SETTINGS, type SettingsData } from '../../../src/shared/settings-contract';
 
 function fakeEvent(origin: string | null): { senderFrame: { origin: string | null } | null } {
@@ -64,6 +66,16 @@ function makeSettingsStub(): SettingsService {
   } as unknown as SettingsService;
 }
 
+// 备份服务桩（M5 批次③）：create/list 可注入返回值（vi.fn 接口测试期适配）
+function makeBackupStub(): BackupService {
+  return {
+    create: vi.fn(() => ({ fileName: 'lt-20260921-080000.db' })),
+    list: vi.fn(() => []),
+    restore: vi.fn(),
+    autoBackupIfNeeded: vi.fn(),
+  } as unknown as BackupService;
+}
+
 describe('system:ping 入口校验', () => {
   beforeEach(() => {
     handlers.clear();
@@ -74,6 +86,9 @@ describe('system:ping 入口校验', () => {
       settings: makeSettingsStub(),
       broadcast: vi.fn(),
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
   });
 
@@ -139,6 +154,9 @@ describe('vfs 通道接线', () => {
       settings: makeSettingsStub(),
       broadcast,
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     const okResult = handlers.get(IPC.vfsResolve)?.(fakeEvent('app://bundle'), {
       virtualPath: '/a',
@@ -176,6 +194,9 @@ describe('vfs 通道接线', () => {
       settings: makeSettingsStub(),
       broadcast,
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
@@ -204,6 +225,9 @@ describe('vfs 通道接线', () => {
       settings: makeSettingsStub(),
       broadcast,
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     const dup = handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
@@ -232,6 +256,9 @@ describe('vfs 通道接线', () => {
       settings: makeSettingsStub(),
       broadcast,
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     const r = handlers.get(IPC.vfsList)?.(fakeEvent('http://evil'), { parentId: 1 }) as {
       ok: boolean;
@@ -271,6 +298,9 @@ describe('vfs 通道接线', () => {
       settings: makeSettingsStub(),
       broadcast,
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
 
     const read = handlers.get(IPC.vfsRead)?.(fakeEvent('app://bundle'), { nodeId: 5 }) as {
@@ -363,6 +393,9 @@ describe('search 通道接线', () => {
       settings: makeSettingsStub(),
       broadcast,
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     const okResult = handlers.get(IPC.searchQuery)?.(fakeEvent('app://bundle'), {
       keyword: '指数',
@@ -392,6 +425,9 @@ describe('search 通道接线', () => {
       settings: makeSettingsStub(),
       broadcast,
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     const forbidden = handlers.get(IPC.searchQuery)?.(fakeEvent('http://evil'), {
       keyword: 'x',
@@ -426,6 +462,9 @@ describe('settings 通道接线', () => {
       settings,
       broadcast,
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     const ok = handlers.get(IPC.settingsGet)?.(fakeEvent('app://bundle'), null) as {
       ok: boolean;
@@ -449,6 +488,9 @@ describe('settings 通道接线', () => {
       settings,
       broadcast,
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     // M4 起 settings schema 为 v2：合法载荷以出厂默认为底、仅改写 debounceMs
     const r = handlers.get(IPC.settingsSet)?.(fakeEvent('app://bundle'), {
@@ -477,6 +519,9 @@ describe('vfs:get 通道接线', () => {
       settings: makeSettingsStub(),
       broadcast: vi.fn(),
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     // 桩返回服务层 NodeMeta（Result 包装由 handleWith 统一完成，同既有桩形态）
     const meta: NodeMeta = {
@@ -540,6 +585,9 @@ describe('vfs:list-trashed 通道接线', () => {
       settings: makeSettingsStub(),
       broadcast,
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     const ok = handlers.get(IPC.vfsListTrashed)?.(fakeEvent('app://bundle'), null) as {
       ok: boolean;
@@ -573,6 +621,9 @@ describe('shell:force-close 接线', () => {
       settings: makeSettingsStub(),
       broadcast: vi.fn(),
       requestClose,
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     const bad = handlers.get(IPC.shellForceClose)?.(fakeEvent('app://bundle'), { x: 1 }) as {
       ok: boolean;
@@ -599,6 +650,9 @@ describe('广播版本号 rev', () => {
       settings: makeSettingsStub(),
       broadcast,
       requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
     });
     handlers.get(IPC.vfsWrite)?.(fakeEvent('app://bundle'), {
       nodeId: 2,
@@ -607,5 +661,114 @@ describe('广播版本号 rev', () => {
     const arg = broadcast.mock.calls[0]?.[0] as { rev: number; event: { type: string } };
     expect(typeof arg.rev).toBe('number');
     expect(arg.event.type).toBe('written');
+  });
+});
+
+// 备份三通道（M5 批次③ Task 9）：create/list 走服务透传，restore 走 app 层编排闭包
+// （关库 → 服务替换）+ requestRelaunch；create/list/restore 均无 vfs 写事务 → 不广播
+describe('backup 通道接线', () => {
+  interface BackupDeps {
+    backup: BackupService;
+    restoreBackup: (fileName: string) => void;
+    requestRelaunch: () => void;
+  }
+
+  function registerWith(overrides: Partial<BackupDeps> = {}): BackupDeps {
+    const deps: BackupDeps = {
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
+      ...overrides,
+    };
+    handlers.clear();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      settings: makeSettingsStub(),
+      broadcast: vi.fn(),
+      requestClose: vi.fn(),
+      backup: deps.backup,
+      restoreBackup: deps.restoreBackup,
+      requestRelaunch: deps.requestRelaunch,
+    });
+    return deps;
+  }
+
+  it('backup:create 无参载荷透传服务；非法载荷 E_IPC_BAD_PAYLOAD；不广播', () => {
+    registerWith();
+    const ok = handlers.get(IPC.backupCreate)?.(fakeEvent('app://bundle'), null) as {
+      ok: boolean;
+      value: { fileName: string };
+    };
+    expect(ok).toEqual({ ok: true, value: { fileName: 'lt-20260921-080000.db' } });
+    const bad = handlers.get(IPC.backupCreate)?.(fakeEvent('app://bundle'), { x: 1 }) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+  });
+
+  it('backup:list 无参载荷透传服务列表；非白名单 origin 拒绝', () => {
+    const entries = [
+      {
+        fileName: 'lt-20260921-080000.db',
+        sizeBytes: 8,
+        modifiedAt: '2026-09-21T08:00:00.000+08:00',
+      },
+    ];
+    const backup = makeBackupStub();
+    (backup.list as ReturnType<typeof vi.fn>).mockReturnValue(entries);
+    registerWith({ backup });
+    const ok = handlers.get(IPC.backupList)?.(fakeEvent('app://bundle'), null) as {
+      ok: boolean;
+      value: unknown;
+    };
+    expect(ok).toEqual({ ok: true, value: entries });
+    const forbidden = handlers.get(IPC.backupList)?.(fakeEvent('http://evil'), null) as {
+      ok: boolean;
+    };
+    expect(forbidden.ok).toBe(false);
+  });
+
+  it('backup:restore 合法请求：先 app 层编排（关库+替换）后 relaunch，响应 { relaunch: true }', () => {
+    const order: string[] = [];
+    const deps = registerWith({
+      restoreBackup: vi.fn((fileName: string) => {
+        order.push(`restore:${fileName}`);
+      }),
+      requestRelaunch: vi.fn(() => {
+        order.push('relaunch');
+      }),
+    });
+    const ok = handlers.get(IPC.backupRestore)?.(fakeEvent('app://bundle'), {
+      fileName: 'lt-20260921-080000.db',
+    }) as { ok: boolean; value: { relaunch: boolean } };
+    expect(ok).toEqual({ ok: true, value: { relaunch: true } });
+    expect(deps.restoreBackup).toHaveBeenCalledWith('lt-20260921-080000.db');
+    // 顺序契约：还原（数据覆盖）完成后才允许重启
+    expect(order).toEqual(['restore:lt-20260921-080000.db', 'relaunch']);
+  });
+
+  it('backup:restore 非法载荷 E_IPC_BAD_PAYLOAD；业务错误码保真透传（E_BACKUP_CORRUPT）', () => {
+    const deps = registerWith();
+    const bad = handlers.get(IPC.backupRestore)?.(fakeEvent('app://bundle'), {}) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    // 还原失败（如备份损坏）不得触发 relaunch：错误经 Result 到达渲染层
+    (deps.restoreBackup as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new AppError(E_BACKUP_CORRUPT, '备份文件已损坏，无法还原');
+    });
+    registerWith({ restoreBackup: deps.restoreBackup });
+    const corrupt = handlers.get(IPC.backupRestore)?.(fakeEvent('app://bundle'), {
+      fileName: 'lt-20260920-080000.db',
+    }) as { ok: boolean; error: { code: string; message: string } };
+    expect(corrupt.ok).toBe(false);
+    expect(corrupt.error).toEqual({ code: E_BACKUP_CORRUPT, message: '备份文件已损坏，无法还原' });
+    expect(deps.requestRelaunch).not.toHaveBeenCalled();
   });
 });

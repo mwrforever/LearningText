@@ -21,12 +21,19 @@ interface ExposedApi {
   settingsSet(request: unknown): Promise<unknown>;
   getNode(request: unknown): Promise<unknown>;
   forceClose(request: unknown): Promise<unknown>;
+  backupCreate(request: unknown): Promise<unknown>;
+  backupList(request: unknown): Promise<unknown>;
+  backupRestore(request: unknown): Promise<unknown>;
   onShellCommand(callback: (event: unknown) => void): () => void;
   onVfsChanged(callback: (event: unknown) => void): () => void;
+  onBackupDone(callback: (event: unknown) => void): () => void;
 }
 
-/** invoke 类通道的包装方法名（ping 与两个订阅通道单独用例覆盖） */
-type InvokeMethod = Exclude<keyof ExposedApi, 'ping' | 'onVfsChanged' | 'onShellCommand'>;
+/** invoke 类通道的包装方法名（ping 与三个订阅通道单独用例覆盖） */
+type InvokeMethod = Exclude<
+  keyof ExposedApi,
+  'ping' | 'onVfsChanged' | 'onShellCommand' | 'onBackupDone'
+>;
 
 const mocks = vi.hoisted(() => ({
   exposeInMainWorld: vi.fn<(name: string, api: ExposedApi) => void>(),
@@ -73,8 +80,12 @@ describe('preload 桥注册', () => {
       'settingsSet',
       'getNode',
       'forceClose',
+      'backupCreate',
+      'backupList',
+      'backupRestore',
       'onShellCommand',
       'onVfsChanged',
+      'onBackupDone',
     ]);
   });
 
@@ -111,6 +122,10 @@ describe('preload 桥注册', () => {
       ['settingsSet', IPC.settingsSet, payload],
       ['getNode', IPC.vfsGet, payload],
       ['forceClose', IPC.shellForceClose, null],
+      // 备份域（M5 批次③）：create/list 无参通道沿 settingsGet 先例固定发 null，restore 透传请求
+      ['backupCreate', IPC.backupCreate, null],
+      ['backupList', IPC.backupList, null],
+      ['backupRestore', IPC.backupRestore, { fileName: 'lt-20260921-080000.db' }],
     ];
     mocks.invoke.mockResolvedValue({ ok: true, value: null });
     for (const [method, channel, request] of channelCases) {
@@ -156,5 +171,23 @@ describe('preload 桥注册', () => {
     // 退订必须移除同一个监听器实例，避免泄漏
     unsubscribe();
     expect(mocks.removeListener).toHaveBeenCalledWith(IPC.shellCommand, listener);
+  });
+
+  it('onBackupDone 订阅：剥离 event 首参仅回传备份文件名，退订移除同一监听器', () => {
+    const callback = vi.fn<(event: unknown) => void>();
+    const unsubscribe = exposedApi.onBackupDone(callback);
+    // 订阅固定挂在 backup:done 广播通道上（M5 批次③）
+    const onCall = mocks.on.mock.calls.at(-1);
+    expect(onCall?.[0]).toBe(IPC.backupDone);
+    const listener = onCall?.[1];
+    if (listener === undefined) {
+      throw new Error('onBackupDone 未注册监听器');
+    }
+    // 模拟主进程广播：首个参数为 IpcRendererEvent 形态，必须被剥离后不透传
+    listener({ sender: 'ipc-event' }, 'lt-20260921-080000.db');
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith('lt-20260921-080000.db');
+    unsubscribe();
+    expect(mocks.removeListener).toHaveBeenCalledWith(IPC.backupDone, listener);
   });
 });

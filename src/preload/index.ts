@@ -30,6 +30,10 @@ const api: WindowApi = {
   settingsSet: (request) => ipcRenderer.invoke(IPC.settingsSet, request),
   getNode: (request) => ipcRenderer.invoke(IPC.vfsGet, request),
   forceClose: () => ipcRenderer.invoke(IPC.shellForceClose, null),
+  // —— 备份域（M5 批次③）：create/list 无参通道沿 settingsGet 先例固定发 null ——
+  backupCreate: () => ipcRenderer.invoke(IPC.backupCreate, null),
+  backupList: () => ipcRenderer.invoke(IPC.backupList, null),
+  backupRestore: (request) => ipcRenderer.invoke(IPC.backupRestore, request),
   /** 订阅外壳命令：同 onVfsChanged 先例，包装内部消化 ipcRenderer */
   onShellCommand: (callback) => {
     const listener = (_event: IpcRendererEvent, value: ShellCommand): void => callback(value);
@@ -43,6 +47,12 @@ const api: WindowApi = {
       callback(value);
     ipcRenderer.on(IPC.vfsChanged, listener);
     return () => ipcRenderer.removeListener(IPC.vfsChanged, listener);
+  },
+  /** 订阅备份完成广播（载荷为备份文件名）：同 onVfsChanged 先例，退订成对 */
+  onBackupDone: (callback) => {
+    const listener = (_event: IpcRendererEvent, value: string): void => callback(value);
+    ipcRenderer.on(IPC.backupDone, listener);
+    return () => ipcRenderer.removeListener(IPC.backupDone, listener);
   },
 };
 

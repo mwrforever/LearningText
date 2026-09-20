@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-// 设置页（M5 批次③ Task 8）冒烟：SettingsPage 表单交互（四区导航/主题三选/字号与去抖、
-// 自动保存滑块钳制/返回钮）+ Workspace 设置态接线（状态栏与菜单 open-settings 双入口、
-// 写链 get→merge→set 全量、.dark 类切换与 matchMedia system 态监听、字号 props 透传、
-// 保存失败 toast 回滚）。
+// 设置页（M5 批次③ Task 8/9）冒烟：SettingsPage 表单交互（四区导航/主题三选/字号与去抖、
+// 自动保存滑块钳制/备份区自动开关与立即备份/还原强确认/维护区占位/返回钮）+ Workspace 设置
+// 态接线（状态栏与菜单 open-settings 双入口、写链 get→merge→set 全量、.dark 类切换与
+// matchMedia system 态监听、字号 props 透传、保存失败 toast 回滚、备份列表拉取与广播重拉、
+// 还原失败 toast）。
 // 断言以 role/aria 语义为主；radix Select 沿 search-panel 键盘驱动先例（Enter 开启 →
 // ArrowDown 高亮 → 目标项 Enter 选中）；jsdom 无 matchMedia（setup.ts 空桩兜底既有用例），
 // system 态监听断言以可编程桩替换并翻转 matches 派发 change。
@@ -12,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { DEFAULT_SETTINGS } from '../../../src/shared/settings-contract';
 import type { SettingsData } from '../../../src/shared/settings-contract';
 import type { ShellCommand } from '../../../src/shared/shell-contract';
+import type { BackupEntry } from '../../../src/shared/backup-contract';
 import { SettingsPage } from '../../../src/renderer/src/features/settings/SettingsPage';
 import { ToastHost } from '../../../src/renderer/src/features/ui/Toast';
 import { Workspace } from '../../../src/renderer/src/features/workspace/Workspace';
@@ -27,14 +29,16 @@ vi.mock('../../../src/renderer/src/features/editor/EditorPanel', () => ({
 }));
 
 // —— Workspace 桥桩（quick-open 先例）：设置域可编程（get 失败/set 失败两异常面）——
-function stubWorkspaceApi(overrides: { settingsSetOk?: boolean } = {}): {
+function stubWorkspaceApi(overrides: { settingsSetOk?: boolean; backupRestoreOk?: boolean } = {}): {
   api: Record<string, ReturnType<typeof vi.fn>>;
   settingsGet: ReturnType<typeof vi.fn>;
   settingsSet: ReturnType<typeof vi.fn>;
   shellHandlers: Array<(command: ShellCommand) => void>;
+  backupDoneHandlers: Array<(fileName: string) => void>;
 } {
   let current: SettingsData = structuredClone(DEFAULT_SETTINGS);
   const shellHandlers: Array<(command: ShellCommand) => void> = [];
+  const backupDoneHandlers: Array<(fileName: string) => void> = [];
   const settingsGet = vi.fn(() => Promise.resolve({ ok: true as const, value: current }));
   const settingsSet = vi.fn((next: SettingsData) => {
     if (overrides.settingsSetOk === false) {
@@ -45,6 +49,28 @@ function stubWorkspaceApi(overrides: { settingsSetOk?: boolean } = {}): {
     }
     current = next;
     return Promise.resolve({ ok: true as const, value: next });
+  });
+  // 备份域桩（M5 Task 9）：列表返回单条真实形态条目（还原流程以它驱动）
+  const backupEntry: BackupEntry = {
+    fileName: 'lt-20260920-080000.db',
+    sizeBytes: 1024,
+    modifiedAt: '2026-09-20T08:00:00.000+08:00',
+  };
+  const backupList = vi.fn(() => Promise.resolve({ ok: true as const, value: [backupEntry] }));
+  const backupCreate = vi.fn(() =>
+    Promise.resolve({
+      ok: true as const,
+      value: { fileName: 'lt-20260921-080000.db' },
+    }),
+  );
+  const backupRestore = vi.fn(() => {
+    if (overrides.backupRestoreOk === false) {
+      return Promise.resolve({
+        ok: false as const,
+        error: { code: 'E_BACKUP_CORRUPT', message: '备份文件已损坏，无法还原' },
+      });
+    }
+    return Promise.resolve({ ok: true as const, value: { relaunch: true } });
   });
   const api = {
     listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
@@ -59,14 +85,21 @@ function stubWorkspaceApi(overrides: { settingsSetOk?: boolean } = {}): {
     ),
     settingsGet,
     settingsSet,
+    backupList,
+    backupCreate,
+    backupRestore,
     onShellCommand: vi.fn((callback: (command: ShellCommand) => void) => {
       shellHandlers.push(callback);
       return vi.fn();
     }),
     onVfsChanged: vi.fn(() => vi.fn()),
+    onBackupDone: vi.fn((callback: (fileName: string) => void) => {
+      backupDoneHandlers.push(callback);
+      return vi.fn();
+    }),
   };
   Object.defineProperty(window, 'api', { value: api, configurable: true, writable: true });
-  return { api, settingsGet, settingsSet, shellHandlers };
+  return { api, settingsGet, settingsSet, shellHandlers, backupDoneHandlers };
 }
 
 // —— matchMedia 可编程桩：matches 可翻转 + change 监听记账（cleanup 成对断言面）——
@@ -135,6 +168,21 @@ beforeEach(() => {
   onDebounceChange = vi.fn();
   onAutoSaveChange = vi.fn();
   onBack = vi.fn();
+  // 备份域（M5 Task 9）：受控值与回调桩（开关桩同步受控值并重渲染，checkbox 同 Select 先例）
+  currentBackups = [
+    {
+      fileName: 'lt-20260920-080000.db',
+      sizeBytes: 1024,
+      modifiedAt: '2026-09-20T08:00:00.000+08:00',
+    },
+  ];
+  backupAutoEnabled = true;
+  onBackupAutoEnabledChange = vi.fn((enabled: boolean) => {
+    backupAutoEnabled = enabled;
+    renderPage();
+  });
+  onCreateBackup = vi.fn();
+  onRestoreBackup = vi.fn();
 });
 
 afterEach(() => {
@@ -157,8 +205,14 @@ let onFontSizeChange: Mock<(fontSize: number) => void>;
 let onDebounceChange: Mock<(debounceMs: number) => void>;
 let onAutoSaveChange: Mock<(autoSaveMs: number) => void>;
 let onBack: Mock<() => void>;
+// 备份域受控值与回调桩（M5 Task 9）
+let currentBackups: BackupEntry[];
+let backupAutoEnabled: boolean;
+let onBackupAutoEnabledChange: Mock<(enabled: boolean) => void>;
+let onCreateBackup: Mock<() => void>;
+let onRestoreBackup: Mock<(fileName: string) => void>;
 
-/** 以受控 props 渲染设置页（默认外观区；主题显示值随主题桩联动） */
+/** 以受控 props 渲染设置页（默认外观区；主题/备份显示值随各桩联动） */
 function renderPage(): void {
   act(() => {
     tree.render(
@@ -167,6 +221,11 @@ function renderPage(): void {
         editorFontSize={14}
         debounceMs={300}
         autoSaveMs={3000}
+        backups={currentBackups}
+        backupAutoEnabled={backupAutoEnabled}
+        onBackupAutoEnabledChange={onBackupAutoEnabledChange}
+        onCreateBackup={onCreateBackup}
+        onRestoreBackup={onRestoreBackup}
         onThemeChange={onThemeChange}
         onFontSizeChange={onFontSizeChange}
         onDebounceChange={onDebounceChange}
@@ -178,6 +237,9 @@ function renderPage(): void {
 }
 
 const settingsRoot = (): Element | null => document.querySelector('[aria-label="设置"]');
+/** 最新一条 toast（toast 模块级队列跨用例存活——3s 定时器为真实时钟，断言取队尾新条） */
+const latestToastText = (): string =>
+  [...document.querySelectorAll('.lt-toast')].at(-1)?.textContent ?? '';
 const navButton = (label: string): HTMLButtonElement | null => {
   const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('nav button'));
   return buttons.find((b) => b.textContent === label) ?? null;
@@ -186,6 +248,8 @@ const themeTrigger = (): HTMLElement | null =>
   container.querySelector<HTMLElement>('[data-slot="select-trigger"]');
 const range = (label: string): HTMLInputElement | null =>
   container.querySelector<HTMLInputElement>(`input[type="range"][aria-label="${label}"]`);
+const checkbox = (label: string): HTMLInputElement | null =>
+  container.querySelector<HTMLInputElement>(`input[type="checkbox"][aria-label="${label}"]`);
 
 /** 向滑块注入越界/界内值并派发 input（原生 setter + input 事件，rename-dialog 同款先例） */
 function setRangeValue(label: string, value: number): void {
@@ -246,15 +310,105 @@ describe('SettingsPage 设置页表单', () => {
     expect(themeTrigger()).not.toBeNull();
   });
 
-  it('备份/维护导航项 disabled 占位（Task 9 填充，不渲染对应表单）', () => {
+  it('备份/维护导航项启用：备份区渲染自动开关与立即备份钮，维护区渲染禁用占位钮', () => {
     renderPage();
-    expect(navButton('备份')?.disabled).toBe(true);
-    expect(navButton('维护')?.disabled).toBe(true);
     act(() => {
-      navButton('备份')?.click(); // disabled 钮点击无效
+      navButton('备份')?.click();
     });
-    expect(navButton('外观')?.getAttribute('aria-current')).toBe('true'); // 仍停留外观区
-    expect(range('预览去抖')).toBeNull(); // 未切到编辑器区
+    expect(checkbox('每日自动备份')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="立即备份"]')).not.toBeNull();
+    act(() => {
+      navButton('维护')?.click();
+    });
+    // 重建搜索索引归后续批次（M2 §7.1 例程接线降级，登记 TASK.md）：disabled 占位
+    const rebuild = container.querySelector<HTMLButtonElement>('button[aria-label="重建搜索索引"]');
+    expect(rebuild).not.toBeNull();
+    expect(rebuild?.disabled).toBe(true);
+    act(() => {
+      navButton('外观')?.click();
+    });
+    expect(themeTrigger()).not.toBeNull();
+  });
+
+  it('备份区：空列表呈现空态提示，有备份时按文件名渲染条目（大小/时间/还原入口）', () => {
+    currentBackups = [];
+    renderPage();
+    act(() => {
+      navButton('备份')?.click();
+    });
+    expect(document.querySelector('.lt-backup-empty')?.textContent).toContain('暂无备份');
+    currentBackups = [
+      {
+        fileName: 'lt-20260920-080000.db',
+        sizeBytes: 1024,
+        modifiedAt: '2026-09-20T08:00:00.000+08:00',
+      },
+    ];
+    renderPage();
+    const item = document.querySelector('.lt-backup-item');
+    expect(item?.textContent).toContain('lt-20260920-080000.db');
+    expect(item?.textContent).toContain('1.0KB');
+    expect(item?.querySelector('button[aria-label="还原到 lt-20260920-080000.db"]')).not.toBeNull();
+  });
+
+  it('立即备份钮回调 onCreateBackup', () => {
+    renderPage();
+    act(() => {
+      navButton('备份')?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="立即备份"]')?.click();
+    });
+    expect(onCreateBackup).toHaveBeenCalledTimes(1);
+  });
+
+  it('每日自动备份开关切换回调 onBackupAutoEnabledChange（true→false→true）', () => {
+    renderPage();
+    act(() => {
+      navButton('备份')?.click();
+    });
+    const toggle = checkbox('每日自动备份');
+    if (!toggle) throw new Error('无自动备份开关');
+    act(() => {
+      toggle.click();
+    });
+    expect(onBackupAutoEnabledChange).toHaveBeenCalledWith(false);
+    act(() => {
+      checkbox('每日自动备份')?.click();
+    });
+    expect(onBackupAutoEnabledChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it('还原强确认：描述含「将覆盖当前全部数据并重启应用」；取消不还原，确认才回调 onRestoreBackup', () => {
+    renderPage();
+    act(() => {
+      navButton('备份')?.click();
+    });
+    // 第一层：点「还原到此点」弹出强确认（radix alert-dialog，role=alertdialog）
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="还原到 lt-20260920-080000.db"]')
+        ?.click();
+    });
+    const confirmDialog = document.querySelector('[role="alertdialog"]');
+    expect(confirmDialog?.textContent).toContain('将覆盖当前全部数据并重启应用');
+    // 取消：不触发还原，浮层收起
+    act(() => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="取消还原"]')?.click();
+    });
+    expect(onRestoreBackup).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    // 第二层：确认后回调 onRestoreBackup 并收起浮层
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="还原到 lt-20260920-080000.db"]')
+        ?.click();
+    });
+    act(() => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="确认还原"]')?.click();
+    });
+    expect(onRestoreBackup).toHaveBeenCalledWith('lt-20260920-080000.db');
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
   it('主题三选即改即回调 onThemeChange（light/dark/system 全枚举）', async () => {
@@ -303,10 +457,14 @@ const statusSettingsButton = (): HTMLButtonElement | null =>
   container.querySelector<HTMLButtonElement>('button[aria-label="打开设置"]');
 
 /** 以 Workspace 渲染设置态（默认已挂 matchMedia 桩 + 桥桩），返回桩引用 */
-function renderWorkspace(overrides: { settingsSetOk?: boolean; withToastHost?: boolean } = {}): {
+function renderWorkspace(
+  overrides: { settingsSetOk?: boolean; backupRestoreOk?: boolean; withToastHost?: boolean } = {},
+): {
+  api: Record<string, ReturnType<typeof vi.fn>>;
   settingsGet: ReturnType<typeof vi.fn>;
   settingsSet: ReturnType<typeof vi.fn>;
   shellHandlers: Array<(command: ShellCommand) => void>;
+  backupDoneHandlers: Array<(fileName: string) => void>;
 } {
   stubMatchMedia(false); // system 意图 + 系统亮色 → 解析 light，.dark 初始不挂
   const stub = stubWorkspaceApi(overrides);
@@ -322,7 +480,7 @@ function renderWorkspace(overrides: { settingsSetOk?: boolean; withToastHost?: b
       ),
     );
   });
-  return stub;
+  return { ...stub, backupDoneHandlers: stub.backupDoneHandlers };
 }
 
 describe('Workspace 设置态接线', () => {
@@ -422,5 +580,89 @@ describe('Workspace 设置态接线', () => {
     const toast = document.querySelector('.lt-toast');
     expect(toast?.textContent).toContain('设置保存失败');
     expect(editorPanelCapture.last?.['editorFontSize']).toBe(14); // 失败回滚显示
+  });
+
+  // —— 备份域接线（M5 批次③ Task 9）——
+
+  /** 打开设置页并切入备份区（Workspace 级备份用例的公共前导） */
+  async function openBackupSection(): Promise<void> {
+    act(() => {
+      statusSettingsButton()?.click();
+    });
+    await flushMicrotasks();
+    act(() => {
+      navButton('备份')?.click();
+    });
+  }
+
+  it('打开设置后拉取备份列表；backup:done 广播到达重拉；关闭设置退订成对', async () => {
+    const { api, backupDoneHandlers } = renderWorkspace();
+    await flushMicrotasks();
+    expect(api.backupList).not.toHaveBeenCalled(); // 未开设置不预取
+    await openBackupSection();
+    expect(api.backupList).toHaveBeenCalledTimes(1);
+    const item = document.querySelector('.lt-backup-item');
+    expect(item?.textContent).toContain('lt-20260920-080000.db');
+    // 备份完成广播到达 → 列表重拉（立即备份/每日自动共用同一刷新链）
+    act(() => {
+      backupDoneHandlers[0]?.('lt-20260921-080000.db');
+    });
+    await flushMicrotasks();
+    expect(api.backupList).toHaveBeenCalledTimes(2);
+    // 关闭设置：列表随覆盖层卸载，订阅退订成对
+    const back = container.querySelector<HTMLButtonElement>('button[aria-label="返回工作台"]');
+    act(() => {
+      back?.click();
+    });
+    expect(api.onBackupDone).toHaveBeenCalledTimes(1);
+    const unsubscribe = (api.onBackupDone as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    expect(unsubscribe).toBeDefined();
+    expect((unsubscribe as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it('每日自动备份开关切换写入 backup 域（get→merge→set 全量写）', async () => {
+    const { settingsSet } = renderWorkspace();
+    await flushMicrotasks();
+    await openBackupSection();
+    const toggle = checkbox('每日自动备份');
+    if (!toggle) throw new Error('无自动备份开关');
+    act(() => {
+      toggle.click();
+    });
+    await flushMicrotasks();
+    expect(settingsSet).toHaveBeenCalledWith({
+      ...DEFAULT_SETTINGS,
+      backup: { autoEnabled: false },
+    });
+  });
+
+  it('立即备份经 backup:create，成功 toast 呈现备份文件名（列表刷新归 backup:done 广播）', async () => {
+    const { api } = renderWorkspace({ withToastHost: true });
+    await flushMicrotasks();
+    await openBackupSection();
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="立即备份"]')?.click();
+    });
+    await flushMicrotasks();
+    expect(api.backupCreate).toHaveBeenCalledTimes(1);
+    expect(latestToastText()).toContain('lt-20260921-080000.db');
+  });
+
+  it('还原失败（未达 relaunch）toast 呈现原因；成功路径 fire-and-forget 不做 UI 态处理', async () => {
+    const { api } = renderWorkspace({ backupRestoreOk: false, withToastHost: true });
+    await flushMicrotasks();
+    await openBackupSection();
+    // 强确认链在 SettingsPage 级用例已覆盖，此处直接驱动确认钮验证 Workspace 失败分支
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="还原到 lt-20260920-080000.db"]')
+        ?.click();
+    });
+    act(() => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="确认还原"]')?.click();
+    });
+    await flushMicrotasks();
+    expect(api.backupRestore).toHaveBeenCalledWith({ fileName: 'lt-20260920-080000.db' });
+    expect(latestToastText()).toContain('还原失败');
   });
 });

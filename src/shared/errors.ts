@@ -16,3 +16,11 @@ export const E_STORE_BUSY = 'E_STORE_BUSY';
 export const E_STORE_DB_DAMAGED = 'E_STORE_DB_DAMAGED';
 export const E_STORE_DISK_FULL = 'E_STORE_DISK_FULL';
 export const E_STORE_INTERNAL = 'E_STORE_INTERNAL';
+
+// —— 以下为 M5 备份域实际使用的码（docs/03 §7.3 同步，禁预定义未使用码）——
+/** 备份创建/还原执行失败（checkpoint/复制/替换等 IO 环节出错） */
+export const E_BACKUP_FAILED = 'E_BACKUP_FAILED';
+/** 目标备份不存在（名形不合法或已被滚动清理，含路径逃逸入参） */
+export const E_BACKUP_NOT_FOUND = 'E_BACKUP_NOT_FOUND';
+/** 备份文件完整性校验未通过（无法作为数据库打开或 integrity_check 非 ok） */
+export const E_BACKUP_CORRUPT = 'E_BACKUP_CORRUPT';

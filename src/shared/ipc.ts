@@ -36,6 +36,15 @@ export const IPC = {
   settingsGet: 'settings:get',
   /** 全量写设置（渲染端 get→merge→set，schema 闸口 IPC 层） */
   settingsSet: 'settings:set',
+  // —— 备份域（M5 批次③）：命名 <域>:<动作>（宪法 B.2-5）——
+  /** 立即创建备份（checkpoint + 整文件复制 + 滚动裁剪） */
+  backupCreate: 'backup:create',
+  /** 列出备份条目（文件名/字节数/修改时刻，新→旧） */
+  backupList: 'backup:list',
+  /** 还原到指定备份（integrity 校验 + 原子替换，成功后主进程 relaunch） */
+  backupRestore: 'backup:restore',
+  /** 主→渲染：备份创建完成广播（载荷为备份文件名），设置页据以刷新列表 */
+  backupDone: 'backup:done',
   /** 主→渲染：树变更广播（事务提交成功后发出，宪法 B.3-4） */
   vfsChanged: 'vfs:changed',
   // —— 外壳域（M4）：命名 <域>:<动作>（宪法 B.2-5）——

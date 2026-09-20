@@ -1,6 +1,6 @@
-// 本地时区 ISO 8601 时间戳（docs/03 §3.2-5）
+// 本地时区 ISO 8601 时间戳（docs/03 §3.2-5）与本地日期串（M5 每日自动备份「今天」判定）
 import { describe, expect, it } from 'vitest';
-import { toLocalIsoTime } from '../../../src/shared/time';
+import { toLocalIsoDate, toLocalIsoTime } from '../../../src/shared/time';
 
 describe('toLocalIsoTime', () => {
   it('按本地时区含偏移量输出', () => {
@@ -29,5 +29,18 @@ describe('toLocalIsoTime', () => {
     const text = toLocalIsoTime(new UtcMinusFive(2026, 0, 15, 10, 30, 5, 0));
     expect(text.startsWith('2026-01-15T10:30:05.000')).toBe(true);
     expect(text.endsWith('-05:00')).toBe(true);
+  });
+});
+
+describe('toLocalIsoDate 本地日期串（M5 Task 9）', () => {
+  it('按本地时区输出 YYYY-MM-DD，单位数月/日补零', () => {
+    // 本地时间构造（各时区语义一致）：2026-09-21 14:30 本地
+    expect(toLocalIsoDate(new Date(2026, 8, 21, 14, 30, 0))).toBe('2026-09-21');
+    expect(toLocalIsoDate(new Date(2026, 0, 3, 5, 7, 9))).toBe('2026-01-03');
+  });
+
+  it('与 toLocalIsoTime 的日期段同源（同一 Date 两种形态日期一致）', () => {
+    const date = new Date(2026, 11, 31, 23, 59, 59);
+    expect(toLocalIsoDate(date)).toBe(toLocalIsoTime(date).slice(0, 10));
   });
 });

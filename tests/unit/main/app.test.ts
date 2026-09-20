@@ -13,6 +13,27 @@ const mocks = vi.hoisted(() => {
   const vfsStub = { __vfsServiceStub: true } as const;
   // 搜索服务桩标记对象：断言 search:query 通道的装配注入链路（M2 spec §7.3）
   const searchStub = { __searchServiceStub: true } as const;
+  // 备份服务桩（M5 批次③ Task 9）：记录构造 deps 供装配断言；各实例方法独立 vi.fn，
+  // restore/autoBackupIfNeeded 按用例编程（还原编排/每日触发链路断言面）
+  class BackupServiceStub {
+    readonly deps: {
+      readonly backupsDir: string;
+      readonly dbFile: string;
+      readonly checkpoint: () => void;
+      readonly onDone: (fileName: string) => void;
+    };
+    autoBackupIfNeeded = vi.fn<(todayIsoDate: string, autoEnabled: boolean) => void>();
+    create = vi.fn<() => { readonly fileName: string }>(() => ({
+      fileName: 'lt-20260921-080000.db',
+    }));
+    list = vi.fn<() => unknown[]>(() => []);
+    restore = vi.fn<(fileName: string) => void>();
+    constructor(deps: typeof BackupServiceStub.prototype.deps) {
+      this.deps = deps;
+      backupStubs.push(this);
+    }
+  }
+  const backupStubs: BackupServiceStub[] = [];
   const m = {
     registerSchemesAsPrivileged: vi.fn<(schemes: unknown[]) => void>(),
     protocolHandle:
@@ -21,12 +42,16 @@ const mocks = vi.hoisted(() => {
     appOn: vi.fn<(event: string, listener: () => void) => void>(),
     appExit: vi.fn<(code?: number) => void>(),
     appQuit: vi.fn<() => void>(),
+    // 还原成功后重启链路（M5 Task 9）：app.relaunch + app.exit(0)
+    appRelaunch: vi.fn<() => void>(),
     getAppPath: vi.fn<() => string>(),
     getPath: vi.fn<(name: string) => string>(),
     openDatabase:
       vi.fn<(options: { readonly file: string }) => { readonly file: string; close: () => void }>(),
-    // db 句柄 close 桩：断言 will-quit 优雅关库接线（spec §2.2 / 宪法 A.4-1）
+    // db 句柄 close/pragma 桩：断言 will-quit 优雅关库（spec §2.2 / A.4-1）与
+    // checkpoint 供给闭包的 TRUNCATE 分支（M5 Task 9）
     dbClose: vi.fn<() => void>(),
+    dbPragma: vi.fn<(statement: string) => unknown>(),
     runMigrations: vi.fn<(db: unknown) => void>(),
     createVfsService: vi.fn<(db: unknown) => typeof vfsStub>(),
     createSearchService: vi.fn<(db: unknown) => typeof searchStub>(),
@@ -60,6 +85,9 @@ const mocks = vi.hoisted(() => {
           readonly settings: unknown;
           readonly broadcast: (event: unknown) => void;
           readonly requestClose: () => void;
+          readonly backup: unknown;
+          readonly restoreBackup: (fileName: string) => void;
+          readonly requestRelaunch: () => void;
         }) => void
       >(),
   };
@@ -68,9 +96,13 @@ const mocks = vi.hoisted(() => {
   m.getAppPath.mockImplementation(() => '/mock-app-path');
   // userData 指向真实临时目录：dataDir 的 ensureDataDir 递归建目录可安全落盘（测试结束后由系统回收）
   m.getPath.mockImplementation(() => mkdtempSync(path.join(tmpdir(), 'lt-app-userdata-')));
-  // 开库桩：返回带 close 桩的句柄对象（选项展开保留 file 字段供既有断言复用），
-  // 供 will-quit 优雅关库用例断言 close 调用
-  m.openDatabase.mockImplementation((options) => ({ ...options, close: m.dbClose }));
+  // 开库桩：返回带 close/pragma 桩的句柄对象（选项展开保留 file 字段供既有断言复用），
+  // 供 will-quit 优雅关库与 checkpoint 供给闭包用例断言
+  m.openDatabase.mockImplementation((options) => ({
+    ...options,
+    close: m.dbClose,
+    pragma: m.dbPragma,
+  }));
   // vfs 工厂桩：单元测试不触原生 SQLite（真实行为由集成测试与 E2E 覆盖）
   m.createVfsService.mockImplementation(() => vfsStub);
   // 搜索工厂桩：同上，产物标记对象仅供注入链路断言（工厂本身会立刻 prepare 语句，禁触真库）
@@ -95,8 +127,9 @@ const mocks = vi.hoisted(() => {
       },
     };
   });
-  // vfsStub/searchStub 供用例断言 deps 与工厂产物同一引用
-  return Object.assign(m, { vfsStub, searchStub });
+  // vfsStub/searchStub 供用例断言 deps 与工厂产物同一引用；
+  // BackupServiceStub 以 vi.mock 工厂注入（backup 模块替换），backupStubs 供用例取实例
+  return Object.assign(m, { vfsStub, searchStub, BackupServiceStub, backupStubs });
 });
 
 vi.mock('electron', () => ({
@@ -109,6 +142,7 @@ vi.mock('electron', () => ({
     on: mocks.appOn,
     exit: mocks.appExit,
     quit: mocks.appQuit,
+    relaunch: mocks.appRelaunch,
     getAppPath: mocks.getAppPath,
     getPath: mocks.getPath,
   },
@@ -129,10 +163,14 @@ vi.mock('../../../src/main/vfs/vfsService', () => ({
 vi.mock('../../../src/main/search/searchService', () => ({
   createSearchService: mocks.createSearchService,
 }));
+vi.mock('../../../src/main/backup/backupService', () => ({
+  BackupService: mocks.BackupServiceStub,
+}));
 
 import { bootstrapMain } from '../../../src/main/app';
 import { handleAppResource } from '../../../src/main/protocol/appProtocol';
 import { IPC } from '../../../src/shared/ipc';
+import { AppError } from '../../../src/shared/result';
 
 // 等待 whenReady().then 微任务链执行完毕（宏任务边界足够让全部 then 回调落地）
 async function flushReadyChain(): Promise<void> {
@@ -173,6 +211,7 @@ describe('主进程装配 bootstrapMain', () => {
     vi.clearAllMocks();
     delete process.env.VITE_DEV_SERVER_URL;
     mocks.whenReady.mockResolvedValue(undefined);
+    mocks.backupStubs.length = 0;
     // BrowserWindow 以 new 调用，桩实现必须用 function 声明（箭头函数不可构造）
     mocks.BrowserWindow.mockImplementation(function () {
       return {
@@ -431,6 +470,114 @@ describe('主进程装配 bootstrapMain', () => {
       template[0]?.click();
       expect(mocks.wcInspectElement).toHaveBeenCalledTimes(1);
       expect(mocks.wcInspectElement).toHaveBeenCalledWith(12, 34);
+    });
+  });
+
+  // —— 备份服务装配与还原编排（M5 批次③ Task 9）——
+  describe('备份服务装配与还原编排', () => {
+    interface IpcDeps {
+      readonly restoreBackup: (fileName: string) => void;
+      readonly requestRelaunch: () => void;
+    }
+
+    async function bootstrapWithBackup(): Promise<{
+      deps: IpcDeps;
+      stub: NonNullable<(typeof mocks.backupStubs)[number]>;
+      userDataDir: string;
+    }> {
+      bootstrapMain();
+      await flushReadyChain();
+      const deps = mocks.registerIpcHandlers.mock.calls[0]?.[0] as unknown as IpcDeps;
+      const stub = mocks.backupStubs[0];
+      const userDataDir = mocks.getPath.mock.results[0]?.value ?? '';
+      if (stub === undefined) {
+        throw new Error('备份服务未被装配');
+      }
+      return { deps, stub, userDataDir };
+    }
+
+    it('备份服务按 dataDir 布局装配：backupsDir/dbFile 注入，每日自动备份按设置开关触发一次', async () => {
+      const { stub, userDataDir } = await bootstrapWithBackup();
+      expect(stub.deps.backupsDir).toBe(path.join(userDataDir, 'LearningText', 'backups'));
+      expect(stub.deps.dbFile).toBe(path.join(userDataDir, 'LearningText', 'learningtext.db'));
+      // todayIsoDate 由 app 层以本地时区日期串传入（服务不摸钟），开关取设置域缓存（默认开）
+      expect(stub.autoBackupIfNeeded).toHaveBeenCalledTimes(1);
+      expect(stub.autoBackupIfNeeded).toHaveBeenCalledWith(
+        expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+        true,
+      );
+    });
+
+    it('checkpoint 供给闭包：常规路径对当前库执行 TRUNCATE 冲刷（A.4-9）', async () => {
+      const { stub } = await bootstrapWithBackup();
+      stub.deps.checkpoint();
+      expect(mocks.dbPragma).toHaveBeenCalledWith('wal_checkpoint(TRUNCATE)');
+    });
+
+    it('onDone 供给闭包：遍历全部窗口以 backup:done 发送备份文件名（宪法 B.3-4 同型广播）', async () => {
+      const { stub } = await bootstrapWithBackup();
+      const sendA = vi.fn<(channel: string, payload: unknown) => void>();
+      const sendB = vi.fn<(channel: string, payload: unknown) => void>();
+      mocks.getAllWindows.mockReturnValue([
+        { webContents: { send: sendA } },
+        { webContents: { send: sendB } },
+      ]);
+      stub.deps.onDone('lt-20260921-080000.db');
+      expect(sendA).toHaveBeenCalledWith(IPC.backupDone, 'lt-20260921-080000.db');
+      expect(sendB).toHaveBeenCalledWith(IPC.backupDone, 'lt-20260921-080000.db');
+    });
+
+    it('restoreBackup 编排：替换点（checkpoint 调用）改为干净关闭释放文件锁，不重开不重启', async () => {
+      const { deps, stub } = await bootstrapWithBackup();
+      // 服务固定时序：替换点前调用 deps.checkpoint——供给闭包此刻消费 swap 标记执行关库
+      stub.restore.mockImplementation((fileName: string) => {
+        if (fileName === 'lt-20260921-080000.db') stub.deps.checkpoint();
+      });
+      deps.restoreBackup('lt-20260921-080000.db');
+      expect(stub.restore).toHaveBeenCalledWith('lt-20260921-080000.db');
+      // 干净关闭已执行（自带最终 checkpoint），库未重开（relaunch 由 IPC 层随后触发）
+      expect(mocks.dbClose).toHaveBeenCalledTimes(1);
+      expect(mocks.openDatabase).toHaveBeenCalledTimes(1);
+      // 防御路径：同一进程生命周期内二次还原（正常被 relaunch 收场，不会发生）——
+      // 库句柄已空时关库与 TRUNCATE 两分支均须安全跳过
+      deps.restoreBackup('lt-20260921-080000.db');
+      stub.deps.checkpoint();
+      expect(mocks.dbClose).toHaveBeenCalledTimes(1);
+      expect(mocks.dbPragma).not.toHaveBeenCalled();
+    });
+
+    it('restoreBackup 编排：替换点前失败（如备份损坏）不关库不重开，错误外抛', async () => {
+      const { deps, stub } = await bootstrapWithBackup();
+      stub.restore.mockImplementation(() => {
+        throw new AppError('E_BACKUP_CORRUPT', '备份文件已损坏，无法还原');
+      });
+      expect(() => deps.restoreBackup('lt-20260920-080000.db')).toThrowError(AppError);
+      expect(mocks.dbClose).not.toHaveBeenCalled();
+      expect(mocks.openDatabase).toHaveBeenCalledTimes(1);
+    });
+
+    it('restoreBackup 编排：替换点后极端失败重开原库，错误外抛（rename 原子，原库未损）', async () => {
+      // 重开原库的 error 留痕属预期路径：静音以保证测试输出无杂音
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const { deps, stub } = await bootstrapWithBackup();
+        stub.restore.mockImplementation(() => {
+          stub.deps.checkpoint(); // 已到替换点：库被干净关闭
+          throw new Error('模拟替换阶段 IO 失败');
+        });
+        expect(() => deps.restoreBackup('lt-20260921-080000.db')).toThrowError(Error);
+        expect(mocks.dbClose).toHaveBeenCalledTimes(1);
+        expect(mocks.openDatabase).toHaveBeenCalledTimes(2);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('requestRelaunch 注入实现：app.relaunch 注册重启意图后以退出码 0 退出（D11：服务不直接 relaunch）', async () => {
+      const { deps } = await bootstrapWithBackup();
+      deps.requestRelaunch();
+      expect(mocks.appRelaunch).toHaveBeenCalledTimes(1);
+      expect(mocks.appExit).toHaveBeenCalledWith(0);
     });
   });
 });

@@ -21,6 +21,8 @@ import { createSettingsService } from './settings/settingsService';
 import { IPC } from '../shared/ipc';
 import type { VfsChangedBroadcast } from '../shared/vfs-contract';
 import { attachWindowCloseGuard, installApplicationMenu } from './menu/menu';
+import { BackupService } from './backup/backupService';
+import { toLocalIsoDate } from '../shared/time';
 import type { BrowserWindow as BrowserWindowType } from 'electron';
 
 const APP_ORIGIN = 'app://bundle';
@@ -153,6 +155,52 @@ export function bootstrapMain(): void {
       const allowClose = { value: false };
       // 窗口句柄引用：闭包捕获须先于 registerIpcHandlers 声明（requestClose 引用 winRef）
       const winRef: { current: BrowserWindowType | null } = { current: null };
+      // 还原替换点标记（restoreBackup 唯一置位点）：BackupService 固定时序走到 checkpoint
+      // 调用 = 全部校验已过、即将 rename 覆盖——此刻须已释放库文件锁（见 checkpoint 供给注）
+      const restoreSwapPending = { value: false };
+      // 备份服务（M5 批次③）：checkpoint 供给实现双语义——常规建份路径 TRUNCATE 冲刷 WAL
+      // （A.4-9 空闲时刻 checkpoint + 复制）；还原替换点改走干净关闭释放文件锁（Windows 下
+      // 打开中的库文件 rename 覆盖/删除一律 EPERM/EBUSY，实测见 Task 9 报告），而干净关闭
+      // 自带最终 checkpoint 并清理 -wal/-shm，是替换前一致性准备的最强形态。
+      // onDone 即 backup:done 广播（遍历全部窗口，宪法 B.3-4 同型广播面）
+      const backup = new BackupService({
+        backupsDir: layout.backupDir,
+        dbFile: layout.dbFile,
+        checkpoint: () => {
+          if (restoreSwapPending.value) {
+            restoreSwapPending.value = false;
+            const closing = db;
+            db = undefined;
+            closing?.close();
+            return;
+          }
+          db?.pragma('wal_checkpoint(TRUNCATE)');
+        },
+        onDone: (fileName) => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send(IPC.backupDone, fileName);
+          }
+        },
+      });
+      /**
+       * 还原编排（照 requestClose 先例的依赖注入，D11：服务不摸连接不摸生命周期）：
+       * 置替换点标记后进入服务——存在性/integrity 校验等失败发生在替换点之前，库未关、
+       * 错误照常上抛由 handler 转 Result（渲染层 toast 呈现）；关库后的极端失败（rename
+       * 阶段 IO 错误）原库未损（rename 原子，失败即未发生），重开原库恢复服务后外抛。
+       */
+      const restoreBackup = (fileName: string): void => {
+        try {
+          restoreSwapPending.value = true;
+          backup.restore(fileName);
+        } catch (error: unknown) {
+          restoreSwapPending.value = false;
+          if (db === undefined) {
+            db = openDatabase({ file: layout.dbFile });
+            console.error('[main] 还原失败后已重开原库（建议重启应用以完全恢复服务）', error);
+          }
+          throw error;
+        }
+      };
       registerIpcHandlers({
         allowedOrigins: allowed,
         vfs,
@@ -165,10 +213,20 @@ export function bootstrapMain(): void {
           allowClose.value = true;
           winRef.current?.close();
         },
+        backup,
+        restoreBackup,
+        // 还原成功响应 { relaunch: true } 后重启（D11：服务不直接 relaunch）
+        requestRelaunch: () => {
+          app.relaunch();
+          app.exit(0);
+        },
       });
       winRef.current = createMainWindow(devServerUrl, allowed, allowClose);
       // 应用菜单装配（M4 spec §5.2）：窗口创建后一次（命令经 shell:command 下发渲染层）
       installApplicationMenu();
+      // 每日自动备份（M5 批次③）：装配完成后判定一次（窗口先行创建，复制不阻塞首帧）；
+      // 到期判定与建份失败容错均在服务内（warn 不阻断启动）
+      backup.autoBackupIfNeeded(toLocalIsoDate(new Date()), settings.get().backup.autoEnabled);
     })
     .catch((e: unknown) => {
       // 装配失败禁止带伤运行（B.3-1）

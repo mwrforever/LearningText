@@ -16,3 +16,12 @@ export function toLocalIsoTime(date: Date): string {
     `${pad(date.getMilliseconds(), 3)}${sign}${pad(offsetHours)}:${pad(offsetRest)}`
   );
 }
+
+/**
+ * 本地时区日期串（YYYY-MM-DD，无时间与偏移段）：每日自动备份「今天」的判定输入
+ * （M5 批次③）。与 toLocalIsoTime 的日期段同源同口径（本地时区，禁 Date.toISOString 的 UTC）。
+ */
+export function toLocalIsoDate(date: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}

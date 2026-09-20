@@ -28,7 +28,10 @@
  * 关闭后工作台状态原样还原），入口 = 状态栏「设置」钮 + 菜单 'open-settings' 命令；主题装配
  * 在此收口（意图 → resolveTheme 解析 → documentElement .dark 切换 + resolvedTheme props 传导
  * EditorPanel 同 state 重配，system 态经 matchMedia 监听，cleanup 成对摘除）；字号/去抖/自动
- * 保存表单即改即存——经既有串行写链（get→merge→set）落盘，失败 toast 回滚显示。
+ * 保存表单即改即存——经既有串行写链（get→merge→set）落盘，失败 toast 回滚显示。备份/维护区
+ * （M5 批次③ Task 9）：备份条目列表在设置页打开期间拉取并随 backup:done 广播重拉（订阅成对
+ * 摘除）；自动备份开关走 backup 域串行写链；立即备份/还原经专用通道（还原为数据覆盖级操作，
+ * 强确认与 fire-and-forget 语义见 restoreBackupNow）。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -39,6 +42,7 @@ import type {
   ShellLayout,
   WorkspaceSettings,
 } from '../../../../shared/settings-contract';
+import type { BackupEntry } from '../../../../shared/backup-contract';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import { toLocalIsoTime } from '../../../../shared/time';
 import {
@@ -121,6 +125,10 @@ export function Workspace({
   const [themeIntent, setThemeIntent] = useState<ThemeIntent>('system');
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light');
   const [editorFontSize, setEditorFontSize] = useState(14);
+  // 备份域（M5 批次③ Task 9）：每日自动备份开关显示值 + 备份条目列表（设置页打开期间
+  // 拉取与 backup:done 广播刷新，见下方 effect；Workspace 只做数据提升，页面纯受控）
+  const [backupAutoEnabled, setBackupAutoEnabled] = useState(true);
+  const [backups, setBackups] = useState<readonly BackupEntry[]>([]);
   // 布局实时镜像（settingsRef/tabsRef 同款同步模式）：拖拽 pointerup 持久化必须读「此刻」
   // 布局——pointermove 高频更新下事件闭包 layout 必陈旧；事件处理器内同步记账，渲染期不写
   const layoutRef = useRef<ShellLayout>(layout);
@@ -193,6 +201,8 @@ export function Workspace({
         // effect / EditorPanel 外观 props 派生应用（意图变化即重跑）
         setThemeIntent(result.value.appearance.theme);
         setEditorFontSize(result.value.appearance.editorFontSize);
+        // 备份域装载（M5 Task 9）：每日自动备份开关显示值
+        setBackupAutoEnabled(result.value.backup.autoEnabled);
         // 布局记忆恢复（FR-SHELL-01）：ref 同步记账（后续拖拽持久化以恢复值为基准）
         layoutRef.current = result.value.shell.layout;
         setLayout(result.value.shell.layout);
@@ -311,6 +321,24 @@ export function Workspace({
       });
     }
   }, [roots, expanded]);
+
+  // 备份列表装载（M5 批次③ Task 9）：设置页打开期间首拉 + backup:done 广播重拉；订阅随
+  // 设置页进出成对摘除（关闭即无列表可刷新，不必常驻监听），alive 防卸载后续体回写
+  useEffect(() => {
+    if (!settingsOpen) return undefined;
+    let alive = true;
+    const refresh = (): void => {
+      void window.api.backupList().then((result) => {
+        if (alive && result.ok) setBackups(result.value);
+      });
+    };
+    refresh();
+    const unsubscribe = window.api.onBackupDone(refresh);
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, [settingsOpen]);
 
   function onToggle(id: number): void {
     const next = new Set(expanded);
@@ -523,6 +551,45 @@ export function Workspace({
       if (!ok) {
         showToast('设置保存失败，已恢复原值');
         setAutoSaveMs(previous);
+      }
+    });
+  }
+
+  /** 每日自动备份开关变更（backup 域即改即存）：同外观/编辑器域失败 toast 回滚口径 */
+  function changeBackupAutoEnabled(enabled: boolean): void {
+    const previous = backupAutoEnabled;
+    setBackupAutoEnabled(enabled);
+    void enqueueSettingsWrite((settings) => ({
+      ...settings,
+      backup: { autoEnabled: enabled },
+    })).then((ok) => {
+      if (!ok) {
+        showToast('设置保存失败，已恢复原值');
+        setBackupAutoEnabled(previous);
+      }
+    });
+  }
+
+  /** 立即备份：低频显式操作；成败 toast 呈现，列表刷新经 backup:done 广播到达 */
+  function createBackupNow(): void {
+    void window.api.backupCreate().then((result) => {
+      if (result.ok) {
+        showToast(`已创建备份 ${result.value.fileName}`);
+      } else {
+        showToast(`备份失败：${result.error.message}`);
+      }
+    });
+  }
+
+  /**
+   * 还原到指定备份（数据覆盖级操作，已经 alert-dialog 强确认到达）：成功响应
+   * { relaunch: true } 后主进程随即重启——本调用续体可能因进程退出不落地，故成功侧
+   * 不做任何 UI 收尾；失败（未达 relaunch）toast 呈现原因
+   */
+  function restoreBackupNow(fileName: string): void {
+    void window.api.backupRestore({ fileName }).then((result) => {
+      if (!result.ok) {
+        showToast(`还原失败：${result.error.message}`);
       }
     });
   }
@@ -1133,6 +1200,11 @@ export function Workspace({
           editorFontSize={editorFontSize}
           debounceMs={debounceMs}
           autoSaveMs={autoSaveMs}
+          backups={backups}
+          backupAutoEnabled={backupAutoEnabled}
+          onBackupAutoEnabledChange={changeBackupAutoEnabled}
+          onCreateBackup={createBackupNow}
+          onRestoreBackup={restoreBackupNow}
           onThemeChange={changeThemeIntent}
           onFontSizeChange={changeEditorFontSize}
           onDebounceChange={changeDebounceMs}

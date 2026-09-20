@@ -17,6 +17,18 @@ import type { SearchQueryRequest, SearchQueryResponse } from '../shared/search-c
 import { SettingsGetRequestSchema, SettingsSchema } from '../shared/settings-contract';
 import type { SettingsData } from '../shared/settings-contract';
 import {
+  BackupCreateRequestSchema,
+  BackupListRequestSchema,
+  BackupRestoreRequestSchema,
+} from '../shared/backup-contract';
+import type {
+  BackupCreateResponse,
+  BackupEntry,
+  BackupRestoreRequest,
+  BackupRestoreResponse,
+} from '../shared/backup-contract';
+import type { BackupService } from './backup/backupService';
+import {
   CreateNodeRequestSchema,
   ListChildrenRequestSchema,
   MoveNodeRequestSchema,
@@ -54,6 +66,16 @@ export interface IpcHandlerDeps {
   readonly broadcast: (broadcast: VfsChangedBroadcast) => void;
   /** guard 确认后强制关闭（app.ts 提供：置放行标记 + win.close()） */
   readonly requestClose: () => void;
+  /** 备份服务（M5 批次③）：create/list 通道直接透传；restore 经下方编排闭包 */
+  readonly backup: BackupService;
+  /**
+   * 还原编排（app.ts 提供，照 requestClose 先例的依赖注入）：先在替换点干净关闭数据库
+   * 连接释放文件锁（Windows 下打开中的库文件禁止 rename 覆盖），再由服务执行 integrity
+   * 校验与原子替换。服务自身不摸连接（BackupServiceDeps 无 close——D11 职责切分）。
+   */
+  readonly restoreBackup: (fileName: string) => void;
+  /** 还原成功后重启（app.ts 提供：app.relaunch() + app.exit(0)，D11：服务不直接 relaunch） */
+  readonly requestRelaunch: () => void;
 }
 
 /** origin 白名单判定（B.5-6）：senderFrame 可能为 null，null/空串/非白名单一律拒绝 */
@@ -235,6 +257,30 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     handleWith(deps, z.null(), () => {
       deps.requestClose();
       return { result: null };
+    }),
+  );
+
+  // —— 备份域（M5 批次③）：文件级操作无 vfs 写事务 → 返回对象无 event 键 → 不广播；
+  //    建份完成的列表刷新经 backup:done 专用广播到达（onDone 供给，宪法 B.3-4 不涉 vfs 事务）——
+  ipcMain.handle(
+    IPC.backupCreate,
+    handleWith(deps, BackupCreateRequestSchema, () => ({
+      result: deps.backup.create() satisfies BackupCreateResponse,
+    })),
+  );
+  ipcMain.handle(
+    IPC.backupList,
+    handleWith(deps, BackupListRequestSchema, () => ({
+      result: deps.backup.list() satisfies readonly BackupEntry[],
+    })),
+  );
+  // 还原走 app 层编排闭包（替换点关库 → 服务替换 → 失败重开原库），成功即 relaunch（D11）
+  ipcMain.handle(
+    IPC.backupRestore,
+    handleWith(deps, BackupRestoreRequestSchema, (q: BackupRestoreRequest) => {
+      deps.restoreBackup(q.fileName);
+      deps.requestRelaunch();
+      return { result: { relaunch: true } satisfies BackupRestoreResponse };
     }),
   );
 }
