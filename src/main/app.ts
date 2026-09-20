@@ -156,7 +156,8 @@ export function bootstrapMain(): void {
       // 窗口句柄引用：闭包捕获须先于 registerIpcHandlers 声明（requestClose 引用 winRef）
       const winRef: { current: BrowserWindowType | null } = { current: null };
       // 还原替换点标记（restoreBackup 唯一置位点）：BackupService 固定时序走到 checkpoint
-      // 调用 = 全部校验已过、即将 rename 覆盖——此刻须已释放库文件锁（见 checkpoint 供给注）
+      // 调用 = 全部校验已过、即将 rename 覆盖——此刻须已释放库文件锁（见 checkpoint 供给注）。
+      // 「swap 标记」为内存态闭包标志，随进程消亡，无持久化文件（评审 Minor 4 澄清）
       const restoreSwapPending = { value: false };
       // 备份服务（M5 批次③）：checkpoint 供给实现双语义——常规建份路径 TRUNCATE 冲刷 WAL
       // （A.4-9 空闲时刻 checkpoint + 复制）；还原替换点改走干净关闭释放文件锁（Windows 下

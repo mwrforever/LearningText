@@ -91,12 +91,13 @@ export class BackupService {
    * @throws AppError(E_BACKUP_FAILED) checkpoint/复制/裁剪计数等 IO 环节失败
    */
   create(): { readonly fileName: string } {
+    // 文件名先于 IO 生成（纯函数）：失败日志需含业务标识（全局 §二），见 catch
+    const fileName = formatBackupFileName(new Date());
     try {
       // 幂等建目录（首启由 ensureDataDir 创建；直驱服务场景兜底）
       mkdirSync(this.deps.backupsDir, { recursive: true });
       // A.4-9：复制前完成 WAL checkpoint（还原路径供给方实现为干净关闭，语义见 deps 注）
       this.deps.checkpoint();
-      const fileName = formatBackupFileName(new Date());
       copyFileSync(this.deps.dbFile, path.join(this.deps.backupsDir, fileName));
       this.pruneOldBackups();
       const size = statSync(path.join(this.deps.backupsDir, fileName)).size;
@@ -105,8 +106,10 @@ export class BackupService {
       return { fileName };
     } catch (error: unknown) {
       if (error instanceof AppError) throw error;
-      console.error('[backup] 创建备份失败', error);
-      throw new AppError(E_BACKUP_FAILED, '创建备份失败，请检查磁盘与数据目录');
+      // 失败 error 日志含业务错误码与业务标识（全局 §二），原始异常随行保留堆栈
+      const failure = new AppError(E_BACKUP_FAILED, '创建备份失败，请检查磁盘与数据目录');
+      console.error(`[backup] ${failure.code} ${failure.message}（目标 ${fileName}）`, error);
+      throw failure;
     }
   }
 
@@ -148,13 +151,16 @@ export class BackupService {
       copyFileSync(source, tmp);
     } catch (error: unknown) {
       this.cleanupTmp(tmp);
-      console.error(`[backup] 还原失败：复制备份 ${fileName} 到临时文件出错`, error);
-      throw new AppError(E_BACKUP_FAILED, '还原失败：备份文件无法读取');
+      // 失败 error 日志含业务错误码与业务标识（全局 §二），原始异常随行保留堆栈
+      const failure = new AppError(E_BACKUP_FAILED, '还原失败：备份文件无法读取');
+      console.error(`[backup] ${failure.code} ${failure.message}（备份 ${fileName}）`, error);
+      throw failure;
     }
     if (!verifyIntegrity(tmp)) {
       this.cleanupTmp(tmp);
-      console.error(`[backup] 还原失败：备份 ${fileName} 完整性校验未通过`);
-      throw new AppError(E_BACKUP_CORRUPT, '备份文件已损坏，无法还原');
+      const failure = new AppError(E_BACKUP_CORRUPT, '备份文件已损坏，无法还原');
+      console.error(`[backup] ${failure.code} ${failure.message}（备份 ${fileName}）`);
+      throw failure;
     }
     try {
       // A.4-9：替换前冲刷当前库（还原路径供给方此刻干净关闭释放文件锁）
@@ -164,8 +170,11 @@ export class BackupService {
       this.cleanupTmp(tmp);
     } catch (error: unknown) {
       this.cleanupTmp(tmp);
-      console.error(`[backup] 还原失败：替换当前库文件出错（${fileName}）`, error);
-      throw new AppError(E_BACKUP_FAILED, '还原失败：当前库文件无法替换');
+      // 此刻库已被供给方关闭（app 层随后重开原库，vfs/search 旧连接不可用直至重启）：
+      // message 面向用户附重启指引（评审 Important 2）
+      const failure = new AppError(E_BACKUP_FAILED, '还原失败：当前库文件无法替换，请重启应用');
+      console.error(`[backup] ${failure.code} ${failure.message}（备份 ${fileName}）`, error);
+      throw failure;
     }
     const size = statSync(this.deps.dbFile).size;
     console.info(`[backup] 已还原备份 ${fileName}（${String(size)} 字节），应用即将重启`);

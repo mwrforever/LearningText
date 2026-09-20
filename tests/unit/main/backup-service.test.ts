@@ -78,10 +78,20 @@ describe('BackupService.create', () => {
     expect(onDone).toHaveBeenCalledWith(fileName);
   });
 
-  it('复制失败（库文件缺失）抛 E_BACKUP_FAILED，onDone 不触发', () => {
-    const service = makeService({ dbFile: path.join(root, 'missing.db') });
-    expectBackupCode(() => service.create(), E_BACKUP_FAILED);
-    expect(onDone).not.toHaveBeenCalled();
+  it('复制失败（库文件缺失）抛 E_BACKUP_FAILED，onDone 不触发，error 日志含业务错误码', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const service = makeService({ dbFile: path.join(root, 'missing.db') });
+      expectBackupCode(() => service.create(), E_BACKUP_FAILED);
+      // 全局 §二：失败 error 日志含错误码与业务标识（目标文件名）
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('E_BACKUP_FAILED'),
+        expect.anything(),
+      );
+      expect(onDone).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('checkpoint 供给抛出的业务错误原样透传，不被二次包装为 E_BACKUP_FAILED', () => {
@@ -123,29 +133,54 @@ describe('BackupService.restore 三错误路径', () => {
     expectBackupCode(() => service.restore('lt-20000101-000000.db'), E_BACKUP_NOT_FOUND);
   });
 
-  it('备份内容损坏 → E_BACKUP_CORRUPT，且库文件同目录不残留还原临时文件', () => {
-    writeFileSync(
-      path.join(backupsDir, 'lt-20260920-080000.db'),
-      Buffer.from('garbage-not-sqlite'),
-    );
-    const service = makeService();
-    expectBackupCode(() => service.restore('lt-20260920-080000.db'), E_BACKUP_CORRUPT);
-    expect(leftoverTmp(root)).toEqual([]);
+  it('备份内容损坏 → E_BACKUP_CORRUPT，error 日志含业务错误码，且不残留还原临时文件', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      writeFileSync(
+        path.join(backupsDir, 'lt-20260920-080000.db'),
+        Buffer.from('garbage-not-sqlite'),
+      );
+      const service = makeService();
+      expectBackupCode(() => service.restore('lt-20260920-080000.db'), E_BACKUP_CORRUPT);
+      // 全局 §二：失败 error 日志含错误码与业务标识（备份文件名）
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('E_BACKUP_CORRUPT'));
+      expect(leftoverTmp(root)).toEqual([]);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
-  it('替换阶段失败（目标被目录占用不可覆盖）→ E_BACKUP_FAILED，且临时文件被清理', () => {
-    // 空文件即合法空库（integrity_check 返回 ok，可推进到替换阶段）；
-    // 当前库位被同名目录占用 → rename 覆盖必失败
-    writeFileSync(path.join(backupsDir, 'lt-20260919-080000.db'), Buffer.alloc(0));
-    rmSync(dbFile);
-    mkdirSync(dbFile);
-    const service = makeService();
-    expectBackupCode(() => service.restore('lt-20260919-080000.db'), E_BACKUP_FAILED);
-    expect(leftoverTmp(root)).toEqual([]);
+  it('替换阶段失败 → E_BACKUP_FAILED 且 message 附重启指引，error 日志含错误码，临时文件被清理', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // 空文件即合法空库（integrity_check 返回 ok，可推进到替换阶段）；
+      // 当前库位被同名目录占用 → rename 覆盖必失败
+      writeFileSync(path.join(backupsDir, 'lt-20260919-080000.db'), Buffer.alloc(0));
+      rmSync(dbFile);
+      mkdirSync(dbFile);
+      const service = makeService();
+      // 评审 Important 2：此刻库已被供给方关闭，用户必须被告知需重启
+      try {
+        service.restore('lt-20260919-080000.db');
+        expect.unreachable('应当抛出业务错误');
+      } catch (e) {
+        expect(e).toBeInstanceOf(AppError);
+        expect((e as AppError).code).toBe(E_BACKUP_FAILED);
+        expect((e as AppError).message).toContain('请重启应用');
+      }
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('E_BACKUP_FAILED'),
+        expect.anything(),
+      );
+      expect(leftoverTmp(root)).toEqual([]);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('临时文件无法清理（被目录占位）时清理失败仅 warn，原业务错误码不被掩盖', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       // 预置还原临时位为同名目录：复制阶段（copyFileSync 目标为目录）即失败，
       // 清理临时文件对目录 unlink 同样失败——失败链双层命中仍须抛原始错误码
@@ -159,6 +194,7 @@ describe('BackupService.restore 三错误路径', () => {
       );
     } finally {
       warnSpy.mockRestore();
+      errorSpy.mockRestore();
     }
   });
 });
@@ -193,6 +229,7 @@ describe('BackupService.autoBackupIfNeeded', () => {
 
   it('建份失败仅 warn 不外抛（装配契约：每日自动备份不阻断启动）', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       // 备份目录与库文件均不存在：命中「目录缺失按空名单处理」分支后进入建份，复制失败告警
       const service = makeService({
@@ -203,6 +240,7 @@ describe('BackupService.autoBackupIfNeeded', () => {
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('自动备份'), expect.anything());
     } finally {
       warnSpy.mockRestore();
+      errorSpy.mockRestore();
     }
   });
 });
