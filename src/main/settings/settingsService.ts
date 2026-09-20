@@ -1,8 +1,8 @@
 /**
- * 设置服务（M3 spec §5 / M4 spec §7）：userData/settings/settings.json 的独占读写——启动同步加载
- * （几 KB JSON，A.5-4 预算内）、内存缓存、set 原子写（tmp+rename）。
- * 装载链三级：v2 直读 → v1 静默迁移（补默认域 + 原子回写）→ 损坏/版本不识别 warn 回退默认，
- * 禁止阻断启动（fail-fast 仅数据库适用，A.5-1；设置属可丢弃缓存）。
+ * 设置服务（M3 spec §5 / M4 spec §7 / M5 批次③）：userData/settings/settings.json 的独占读写——
+ * 启动同步加载（几 KB JSON，A.5-4 预算内）、内存缓存、set 原子写（tmp+rename）。
+ * 装载链：v3 直读 → v2 静默迁移（补默认域 + 原子回写）→ v1 两级链式迁移（v1→v2→v3）→
+ * 损坏/版本不识别 warn 回退默认，禁止阻断启动（fail-fast 仅数据库适用，A.5-1；设置属可丢弃缓存）。
  * 校验唯一闸口在 IPC 层 handleWith（A.7-5），服务侧收 typed 数据直接落盘（不留不可达死分支）。
  */
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -10,7 +10,9 @@ import {
   DEFAULT_SETTINGS,
   SettingsSchema,
   SettingsSchemaV1,
+  SettingsSchemaV2,
   migrateV1ToV2,
+  migrateV2ToV3,
   type SettingsData,
 } from '../../shared/settings-contract';
 
@@ -39,16 +41,25 @@ export function createSettingsService(deps: { settingsFile: string }): SettingsS
   try {
     if (existsSync(deps.settingsFile)) {
       const raw = JSON.parse(readFileSync(deps.settingsFile, 'utf8')) as unknown;
-      const asV2 = SettingsSchema.safeParse(raw);
-      if (asV2.success) {
-        cached = asV2.data;
+      const asV3 = SettingsSchema.safeParse(raw);
+      if (asV3.success) {
+        cached = asV3.data;
       } else {
-        // v2 不中先试 v1 迁移（M4 spec §7）：成功则补默认域原子回写，失败才告警回退
-        const asV1 = SettingsSchemaV1.safeParse(raw);
-        if (asV1.success) {
-          writeSettings(migrateV1ToV2(asV1.data), '配置已从 schemaVersion 1 迁移至 2');
+        // v3 不中先试 v2 迁移（M5 批次③）：成功则补四新域默认原子回写，旧域用户值原样保留
+        const asV2 = SettingsSchemaV2.safeParse(raw);
+        if (asV2.success) {
+          writeSettings(migrateV2ToV3(asV2.data), '配置已从 schemaVersion 2 迁移至 3');
         } else {
-          console.warn('[settings] 配置文件校验失败，回退默认值', asV2.error.name);
+          // 再试 v1 两级链式迁移：v1 补 M4 域后经 v2→v3 续迁，一次落盘一条 info
+          const asV1 = SettingsSchemaV1.safeParse(raw);
+          if (asV1.success) {
+            writeSettings(
+              migrateV2ToV3(migrateV1ToV2(asV1.data)),
+              '配置已从 schemaVersion 1 迁移至 3',
+            );
+          } else {
+            console.warn('[settings] 配置文件校验失败，回退默认值', asV3.error.name);
+          }
         }
       }
     }

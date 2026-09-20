@@ -1,13 +1,14 @@
 /**
- * 设置域 IPC 契约（宪法 A.7-5 单一来源，M4 spec §7 D4）：schemaVersion 2 在 v1（M3 仅
- * preview.debounceMs）之上 additive 扩展 editor.autoSaveMs 与 shell.layout；迁移例程在
- * settingsService 启动装载期执行（v1 读入 → 补默认域 → 原子回写）。
+ * 设置域 IPC 契约（宪法 A.7-5 单一来源，M4 spec §7 D4 / M5 批次③）：schemaVersion 3 在 v2
+ * （preview + editor + shell）之上 additive 扩展 appearance/backup/recent/workspace 四域；
+ * 迁移例程为纯函数，由 settingsService 启动装载期执行（v2 读入 → 补默认域 → 原子回写；
+ * v1 经 v1→v2→v3 两级链式续迁）。
  * 校验失败由 handler 统一映射 E_IPC_BAD_PAYLOAD。
  */
 import { z } from 'zod';
 
-/** 设置 schema 版本号：v1（M3）→ v2（M4 additive）；不识别版本回退默认值 */
-export const SETTINGS_SCHEMA_VERSION = 2;
+/** 设置 schema 版本号：v1（M3）→ v2（M4 additive）→ v3（M5 additive 四域）；不识别版本回退默认值 */
+export const SETTINGS_SCHEMA_VERSION = 3;
 
 /** 三栏布局态（M4 spec §5.1）：折叠三态 + 树/预览宽度比例（编辑器自适应占余） */
 export const ShellLayoutSchema = z.strictObject({
@@ -28,6 +29,38 @@ export const DEFAULT_LAYOUT: ShellLayout = {
   previewWidthRatio: 0.4,
 };
 
+/** 外观域（M5 批次③）：UI 主题三态 + 编辑器字号（12–24 整数闭区间） */
+export const AppearanceSchema = z.strictObject({
+  theme: z.enum(['light', 'dark', 'system']),
+  editorFontSize: z.number().int().min(12).max(24),
+});
+export type Appearance = z.infer<typeof AppearanceSchema>;
+
+/** 备份域（M5 批次③）：每日滚动备份开关（A.4-2 WAL NORMAL 持久性由备份补偿，默认开启） */
+export const BackupSettingsSchema = z.strictObject({ autoEnabled: z.boolean() });
+export type BackupSettings = z.infer<typeof BackupSettingsSchema>;
+
+/** 最近打开条目（M5 批次③）：openedAt 为 ISO 8601 本地时区形态（shared/time.ts 既有格式） */
+export const RecentEntrySchema = z.strictObject({
+  nodeId: z.number().int(),
+  virtualPath: z.string().min(1),
+  name: z.string().min(1),
+  openedAt: z.string().min(1),
+});
+export type RecentEntry = z.infer<typeof RecentEntrySchema>;
+
+/** 最近打开域（M5 批次③）：最多保留 20 条 */
+export const RecentSchema = z.strictObject({ opened: z.array(RecentEntrySchema).max(20) });
+export type Recent = z.infer<typeof RecentSchema>;
+
+/** 工作区会话域（M5 批次③）：打开标签集 + 激活标签（未开标签为 null）+ 启动恢复开关 */
+export const WorkspaceSettingsSchema = z.strictObject({
+  tabNodeIds: z.array(z.number().int()),
+  activeTabNodeId: z.number().int().nullable(),
+  restoreOnStart: z.boolean(),
+});
+export type WorkspaceSettings = z.infer<typeof WorkspaceSettingsSchema>;
+
 export const SettingsSchema = z.strictObject({
   schemaVersion: z.literal(SETTINGS_SCHEMA_VERSION),
   /** 预览域：编辑→写库去抖（FR-RENDER-03），M3 既有 */
@@ -40,8 +73,29 @@ export const SettingsSchema = z.strictObject({
   }),
   /** 外壳域（M4）：三栏折叠与宽度记忆（FR-SHELL-01） */
   shell: z.strictObject({ layout: ShellLayoutSchema }),
+  /** 外观域（M5）：主题 + 编辑器字号 */
+  appearance: AppearanceSchema,
+  /** 备份域（M5）：每日滚动备份开关 */
+  backup: BackupSettingsSchema,
+  /** 最近打开域（M5）：最近打开文档条目（≤20 条） */
+  recent: RecentSchema,
+  /** 工作区会话域（M5）：标签集与启动恢复 */
+  workspace: WorkspaceSettingsSchema,
 });
 export type SettingsData = z.infer<typeof SettingsSchema>;
+
+/** v2 遗留 schema（迁移入口专用；v2 校验失败不告警，交由 v1 尝试与迁移链） */
+export const SettingsSchemaV2 = z.strictObject({
+  schemaVersion: z.literal(2),
+  preview: z.strictObject({
+    debounceMs: z.number().int().min(100).max(2000),
+  }),
+  editor: z.strictObject({
+    autoSaveMs: z.number().int().min(1000).max(60000),
+  }),
+  shell: z.strictObject({ layout: ShellLayoutSchema }),
+});
+export type SettingsDataV2 = z.infer<typeof SettingsSchemaV2>;
 
 /** v1 遗留 schema（迁移入口专用；v1 校验失败不告警，交由 v2 尝试与迁移链） */
 export const SettingsSchemaV1 = z.strictObject({
@@ -52,13 +106,27 @@ export const SettingsSchemaV1 = z.strictObject({
 });
 export type SettingsDataV1 = z.infer<typeof SettingsSchemaV1>;
 
-/** v1 → v2 迁移：preview 保留用户值，editor/shell 补出厂默认（M4 spec §7） */
-export function migrateV1ToV2(legacy: SettingsDataV1): SettingsData {
+/** v1 → v2 迁移：preview 保留用户值，editor/shell 补出厂默认（M4 spec §7）；返回 v2 形态，由调用方沿迁移链续迁 v3 */
+export function migrateV1ToV2(legacy: SettingsDataV1): SettingsDataV2 {
   return {
-    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    schemaVersion: 2,
     preview: legacy.preview,
     editor: { autoSaveMs: 3000 },
     shell: { layout: DEFAULT_LAYOUT },
+  };
+}
+
+/** v2 → v3 迁移（M5 批次③）：preview/editor/shell 保留用户值，四新域补出厂默认——只补默认不改旧值，既有用户偏好零损失 */
+export function migrateV2ToV3(legacy: SettingsDataV2): SettingsData {
+  return {
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    preview: legacy.preview,
+    editor: legacy.editor,
+    shell: legacy.shell,
+    appearance: { theme: 'system', editorFontSize: 14 },
+    backup: { autoEnabled: true },
+    recent: { opened: [] },
+    workspace: { tabNodeIds: [], activeTabNodeId: null, restoreOnStart: true },
   };
 }
 
@@ -71,4 +139,8 @@ export const DEFAULT_SETTINGS: SettingsData = {
   preview: { debounceMs: 300 },
   editor: { autoSaveMs: 3000 },
   shell: { layout: DEFAULT_LAYOUT },
+  appearance: { theme: 'system', editorFontSize: 14 },
+  backup: { autoEnabled: true },
+  recent: { opened: [] },
+  workspace: { tabNodeIds: [], activeTabNodeId: null, restoreOnStart: true },
 };
