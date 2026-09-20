@@ -1,12 +1,24 @@
 // 搜索契约 schema 的合法/非法边界（A.7-5：schema 即字段级规格）
 import { describe, expect, it } from 'vitest';
 import {
+  MatchInSchema,
   SearchFiltersSchema,
   SearchQueryRequestSchema,
   SearchQueryResponseSchema,
 } from '../../../src/shared/search-contract';
+import type { MatchIn } from '../../../src/shared/search-contract';
 
 describe('搜索契约 schema', () => {
+  it('MatchIn 由 MatchInSchema 单一来源派生（M2 双源收口）：值域 name/body/both', () => {
+    expect(MatchInSchema.safeParse('name').success).toBe(true);
+    expect(MatchInSchema.safeParse('body').success).toBe(true);
+    expect(MatchInSchema.safeParse('both').success).toBe(true);
+    expect(MatchInSchema.safeParse('other').success).toBe(false);
+    // 类型面：派生类型与手写联合逐字等价（编译期由 z.infer 保证，此处落运行时锚点）
+    const derived: MatchIn = 'both';
+    expect(derived).toBe('both');
+  });
+
   it('request 接受最小载荷与超限 limit（截断语义，200 恰好上界）并拒绝负 offset/多余字段', () => {
     expect(SearchQueryRequestSchema.safeParse({ keyword: '指数' }).success).toBe(true);
     expect(SearchQueryRequestSchema.safeParse({}).success).toBe(false);

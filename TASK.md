@@ -64,12 +64,8 @@
 | 搜索索引重建修复例程（设置页：v1 对账不平或用户自修复触发——同 v2 复制范式重跑；M5 辅助功能批次） | docs/superpowers/specs/2026-09-17-搜索-design.md §7.1 | M5 | 待办 |
 | electron-builder v27 `electronGet` 更名复核 | 同上 §三（C.6-11） | v27 发布后 |
 | A.5-4 交互/批量预算分档与基句悬空指针清理（终审建议：交互单点写与批量导入分档、删「见 TASK.md」悬空引用） | M2 终审 | 下一修宪周期 | 待办 |
-| MatchIn 双源声明收口：手写 `'name'|'body'|'both'` 联合改 `MatchInSchema` + `z.infer` 派生（值域由 spec §6 锁定，当前两处漂移会被 typecheck 拦截） | M2 终审 deferred（Task 4 评审） | M4 触碰搜索契约时 | 待办（M4 核对：未触碰对应文件，保留） |
 | searchService `filterFragments` 类型白名单形态仅覆盖 ≤2 值（0/1/2 三分支，≥3 静默失真）——nodeTypes 枚举扩展时须同步参数化改造 | M2 终审 deferred（Task 7 评审） | M4 契约/枚举变更时 | 待办（M4 核对：未触碰对应文件，保留） |
-| 搜索测试细化批次：preload 通道映射载荷改 search 形、vfs-contract.test 三条重复断言清理、queryBuilder 注释措辞（「上限校验」→「空词项校验」）与 @throws 硬编码 8/255、ipc.test AppError 抛出形态对齐 isMock 先例 + origin 拒绝补 `ok === false` 断言 | M2 各任务评审 deferred | M4 触碰对应文件时顺手清 | 待办（M4 核对：M4 仅以 settings/shell 新通道触碰 preload/ipc.test，search 语义段未动，保留） |
-| 片段高亮 `toLowerCase` 1→2 码元展开字符（İ 类）致命中区间偏移 +1（展示级降级，不崩溃）——M4 渲染高亮消费区间时评估码点对齐折叠策略 | M2 终审 deferred（Task 6 评审） | M4 片段渲染实现时 | 待办（M4 核对：片段渲染未实现，未触碰对应文件，保留） |
 | 滚动同步（FR-RENDER-06）：编辑器与预览按行级锚点双向跟随（postMessage 比例+锚点协议，spec §7.2 已给协议级设计）——预览 P1 三项余项，DevTools（FR-RENDER-05）/CSS 热替换（FR-RENDER-07）已于 M4 落地 | docs/superpowers/specs/2026-09-18-预览-design.md §7.2 | M5 | 待办 |
-| 搜索 UI 批次：FR-SEARCH-01/02 渲染层呈现（结果列表/命中片段与高亮/点击定位打开）+ 原生菜单「快速打开」「全局搜索」启用（现 disabled 占位）+ 最近打开（FR-AUX-02） | docs/superpowers/specs/2026-09-17-搜索-design.md + docs/03 §4.6/§4.8 | M5 | 待办 |
 | 树目录 rename/move 选中语义扩展：目录作为 rename/move 源在当前 UI 不可达（选中锚 selectedId=激活标签，仅文件可开签），服务层 renameNode/moveNode 已支持目录——M5 树批次补树内目录入口与接线用例 | M4 Task 8 评审登记 | M5 树批次 | 待办 |
 | move 模式状态条引导文案「在树中选择目标目录并确认」：spec §6.2 字面要求，M4 计划漏列未落地——move 模式期间状态条补引导文案 | docs/superpowers/specs/2026-09-18-编辑器与保存管线-design.md §6.2 | M5 树批次（与上一条同批） | 待办 |
 | settingsService `set` 日志域摘要化：`set` 侧 info 文案硬编码「已更新 preview.debounceMs=…」与实际写入域无关，shell.layout 高频写后误导扩大——改为按实际写入域摘要 | M4 Task 7 评审登记 | 下次触碰 settingsService 时顺手清 | 待办 |

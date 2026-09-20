@@ -8,12 +8,8 @@ import {
 } from '../../../src/shared/vfs-contract';
 
 describe('VFS 契约 schema', () => {
-  it('listChildren 接受 parentId 或 virtualPath 二选一', () => {
-    expect(ListChildrenRequestSchema.safeParse({ parentId: 1 }).success).toBe(true);
-    expect(ListChildrenRequestSchema.safeParse({ virtualPath: '/笔记' }).success).toBe(true);
-    expect(ListChildrenRequestSchema.safeParse({}).success).toBe(false);
-  });
-
+  // M2 deferred 顺手清：原「接受 parentId 或 virtualPath 二选一」用例的三条断言与下方
+  // 互斥用例完全重复，按 TASK.md「三条重复断言清理」删除（接受面由互斥用例一并覆盖）
   it('listChildren 双字段并存或缺一字段一律拒绝（strictObject 互斥，M2 spec §3.3）', () => {
     expect(ListChildrenRequestSchema.safeParse({ parentId: 1 }).success).toBe(true);
     expect(ListChildrenRequestSchema.safeParse({ virtualPath: '/a' }).success).toBe(true);

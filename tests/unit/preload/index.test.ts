@@ -89,6 +89,8 @@ describe('preload 桥注册', () => {
 
   it('invoke 类通道的包装：通道名常量与载荷原样透传（不感知通道字符串）', async () => {
     const payload = { nodeId: 3 };
+    // searchQuery 载荷取 search 形（M2 deferred 顺手清：通道语义与载荷形态对应）
+    const searchPayload = { keyword: '指数' };
     // 通道名必须取自 shared 常量，方法与通道一一对应（契约 window-api.ts）；
     // settingsGet/forceClose 无参沿 system:ping 先例固定发 null，其余通道载荷原样透传
     const channelCases: Array<[InvokeMethod, string, unknown]> = [
@@ -104,7 +106,7 @@ describe('preload 桥注册', () => {
       // 无参通道沿 settingsGet 先例固定发 null（回收站列表，M5 批次②）
       ['listTrashed', IPC.vfsListTrashed, null],
       ['resolvePath', IPC.vfsResolve, payload],
-      ['searchQuery', IPC.searchQuery, payload],
+      ['searchQuery', IPC.searchQuery, searchPayload],
       ['settingsGet', IPC.settingsGet, null],
       ['settingsSet', IPC.settingsSet, payload],
       ['getNode', IPC.vfsGet, payload],

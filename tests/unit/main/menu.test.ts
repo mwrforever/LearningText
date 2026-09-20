@@ -33,8 +33,11 @@ describe('createMenuTemplate', () => {
     const quickOpen = searchItems.find((item) => item['label'] === '快速打开');
     expect(quickOpen?.['enabled']).not.toBe(false);
     expect(quickOpen?.['accelerator']).toBe('CmdOrCtrl+P');
+    // M5 Task 7：全局搜索启用（search 态 UI 落地），经 id 触发面下发命令
     const globalSearch = searchItems.find((item) => item['label'] === '全局搜索');
-    expect(globalSearch?.['enabled']).toBe(false);
+    expect(globalSearch?.['enabled']).not.toBe(false);
+    expect(globalSearch?.['accelerator']).toBe('CmdOrCtrl+Shift+F');
+    expect(globalSearch?.['id']).toBe('menu-global-search');
     const ioMenu = template.find((m) => m.label === '导入导出');
     expect(ioMenu).toBeDefined();
   });
@@ -72,6 +75,18 @@ describe('createMenuTemplate', () => {
     expect(quickOpen).toBeDefined();
     (quickOpen?.['click'] as () => void)();
     expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'quick-open' });
+  });
+
+  it('点击全局搜索项 → 同通道下发 { type: "global-search" }（ShellCommand 联合扩型）', () => {
+    const template = createMenuTemplate(false) as Array<{
+      label: string;
+      submenu: Array<Record<string, unknown>>;
+    }>;
+    const items = template.find((m) => m.label === '搜索')?.submenu ?? [];
+    const globalSearch = items.find((item) => item['id'] === 'menu-global-search');
+    expect(globalSearch).toBeDefined();
+    (globalSearch?.['click'] as () => void)();
+    expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'global-search' });
   });
 
   it('macOS 模板首项为 appMenu role；Windows 非 mac 无', () => {

@@ -8,8 +8,10 @@
  * shell 域持久化（get→merge→set 全量写回），拖拽中仅本地态防 settings 写风暴。
  * 树 rename/move（M4 spec §6.2 D8）：重命名行内模态与 move 选择模式态在此提升；
  * renamed/moved 广播后 getNode 反查回写标签 meta（§6.1 同步链，selected 即 activeTab）。
- * 树栏三态视图容器（M5 批次②）：view 'tree'|'trash' 切换（search 态归 Task 7）——
- * 工具栏「回收站」钮进入、返回钮/Esc 退出；trash 态由 TrashPanel 数据自持渲染。
+ * 树栏三态视图容器（M5 批次① Task 7 三态齐备）：view 'tree'|'search'|'trash' 切换——
+ * 标题栏「搜索」钮/菜单 Ctrl+Shift+F 进入 search 态、「回收站」钮进入 trash 态、返回钮/Esc
+ * 退出；search/trash 内容由对应面板数据自持渲染，树数据（roots/expanded）挂在 Workspace
+ * 不随态销毁（spec §2.2 切回保持展开态）。呈现面（标题栏 + 三态分发）由 TreePane 插槽承载。
  * 最近打开与工作区恢复（M5 批次②）：openFile 成功（聚焦/新建两会话分支）记录 recent 域
  * （去重置顶，时刻由写入方补）；trash/purge 广播后对 recent 逐个验活剔除；启动时按
  * workspace 域恢复标签（planWorkspaceRestore 失效剔除 + active 右邻继承，恢复式打开豁免
@@ -53,8 +55,9 @@ import {
   type TreeNode,
 } from '../tree/treeModel';
 import { RenameDialog } from '../tree/RenameDialog';
-import { TreePanel } from '../tree/TreePanel';
+import { TreePanel, TreePane, type TreePaneView } from '../tree/TreePanel';
 import { TrashPanel } from '../trash/TrashPanel';
+import { SearchPanel } from '../search/SearchPanel';
 import { QuickOpenDialog } from '../quickopen/QuickOpenDialog';
 import { showToast } from '../ui/Toast';
 import { TabBar } from './TabBar';
@@ -89,10 +92,10 @@ export function Workspace({
   const [renameTarget, setRenameTarget] = useState<{ id: number; name: string } | null>(null);
   // rename 请求在途（模态确认钮防重复提交）
   const [renameInFlight, setRenameInFlight] = useState(false);
-  // 树栏视图态（M5 批次②三态容器，本任务先立 trash 态最小切换，search 态归 Task 7）：
-  // 'tree'=资源树 / 'trash'=回收站；回收站面板数据自持（挂载首拉 + trash 域广播重拉），
-  // Workspace 只负责态切换与退出通道（返回钮 / Esc），不代理其数据拉取
-  const [view, setView] = useState<'tree' | 'trash'>('tree');
+  // 树栏视图态（M5 三态容器，Task 7 三态齐备）：'tree'=资源树 / 'search'=全局搜索 /
+  // 'trash'=回收站；search/trash 面板数据自持（各自挂载首拉 + 域广播重拉），Workspace
+  // 只负责态切换与退出通道（返回钮 / Esc / 菜单命令），不代理其数据拉取
+  const [view, setView] = useState<TreePaneView>('tree');
   // 快速打开浮层开关（M5 批次① Task 6）：唯一写入口是 shell:command dispatch（菜单
   // Ctrl+P），点选/取消由浮层经 onOpenChange 回传收口
   const [quickOpen, setQuickOpen] = useState(false);
@@ -478,9 +481,10 @@ export function Workspace({
     };
   }, [moveMode]);
 
-  // trash 态 Esc 返回资源树（M5 批次②）：与 moveMode Esc 同款 window 级成对挂卸
+  // search/trash 态 Esc 返回资源树（M5）：与 moveMode Esc 同款 window 级成对挂卸；
+  // search 态下 Esc 退出搜索（spec §2.2），输入焦点不阻断（window 级监听）
   useEffect(() => {
-    if (view !== 'trash') return undefined;
+    if (view === 'tree') return undefined;
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') setView('tree');
     };
@@ -665,6 +669,10 @@ export function Workspace({
           // 菜单「快速打开」/Ctrl+P：置开关浮层（数据自持，点选经 onPick 回 openFile）
           setQuickOpen(true);
           break;
+        case 'global-search':
+          // 菜单「全局搜索」/Ctrl+Shift+F（M5 Task 7）：切入树栏 search 态（三态容器）
+          setView('search');
+          break;
         case 'confirm-close':
           // 关窗确认链（spec §2.3）：无脏直接放行 forceClose；有脏弹原生 confirm，
           // 用户确认才放行（取消则留在应用）。放行动作即 shell:force-close，
@@ -732,48 +740,13 @@ export function Workspace({
             </button>
           </aside>
         ) : (
-          <aside className="lt-pane lt-pane-tree flex min-h-0 min-w-0 flex-col bg-background">
-            {/* 树栏标题栏随视图态换题与操作（三态容器，M5 批次②）：tree 态提供回收站入口，
-                trash 态提供返回口；折叠钮两态常驻（布局行为与视图态正交） */}
-            <div className="lt-pane-titlebar flex h-8 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
-              <span className="text-xs font-medium text-muted-foreground">
-                {view === 'trash' ? '回收站' : '资源树'}
-              </span>
-              <div className="flex items-center gap-1">
-                {view === 'trash' ? (
-                  <button
-                    type="button"
-                    aria-label="返回资源树"
-                    className="inline-flex h-5 items-center justify-center rounded-sm px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-                    onClick={() => setView('tree')}
-                  >
-                    返回
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    aria-label="打开回收站"
-                    className="inline-flex h-5 items-center justify-center rounded-sm px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-                    onClick={() => setView('trash')}
-                  >
-                    回收站
-                  </button>
-                )}
-                <button
-                  type="button"
-                  aria-label="折叠树栏"
-                  className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-                  onClick={() => updateLayout({ treeCollapsed: true })}
-                >
-                  «
-                </button>
-              </div>
-            </div>
-            {view === 'trash' ? (
-              // trash 态：回收站面板整体替换树内容（move 选择条/重命名模态同属树态，不渲染）；
-              // 面板数据自持（首拉 + trash 域广播重拉），随态卸载即退订
-              <TrashPanel />
-            ) : (
+          <TreePane
+            view={view}
+            onOpenSearch={() => setView('search')}
+            onOpenTrash={() => setView('trash')}
+            onBackToTree={() => setView('tree')}
+            onCollapse={() => updateLayout({ treeCollapsed: true })}
+            treeContent={
               <>
                 <TreePanel
                   roots={roots}
@@ -829,8 +802,21 @@ export function Workspace({
                   />
                 ) : null}
               </>
-            )}
-          </aside>
+            }
+            searchContent={
+              // search 态：搜索面板数据自持（查询态在面板内部）；点选走 openFile 统一入口
+              //（大文件/二进制拦截与 recent 记录一并生效）；「在树中显示」= 退出搜索态回树
+              <SearchPanel
+                onOpen={(node) => void openFile(node)}
+                onReveal={() => setView('tree')}
+              />
+            }
+            trashContent={
+              // trash 态：回收站面板整体替换树内容（move 选择条/重命名模态同属树态，不渲染）；
+              // 面板数据自持（首拉 + trash 域广播重拉），随态卸载即退订
+              <TrashPanel />
+            }
+          />
         )}
         {/* 树分隔条（可拖拽调宽；树栏折叠时收窄条、不响应拖拽，比例维持记忆值） */}
         <div

@@ -34,8 +34,10 @@ export interface Snippet {
   readonly ranges: readonly SearchHitRange[];
 }
 
-/** 命中列归属：仅文件名 / 仅正文 / 两列皆有 */
-export type MatchIn = 'name' | 'body' | 'both';
+/** 命中列归属 schema（单一来源）：仅文件名 / 仅正文 / 两列皆有（M2 双源收口——值域唯一声明点） */
+export const MatchInSchema = z.enum(['name', 'body', 'both']);
+/** 命中列归属：由 MatchInSchema 派生（z.infer），手写联合已收口，两处漂移不再可能 */
+export type MatchIn = z.infer<typeof MatchInSchema>;
 
 export const SearchFiltersSchema = z.strictObject({
   /** 类型白名单（FR-SEARCH-03）；空数组语义非法（min(1)） */
@@ -60,7 +62,7 @@ export type SearchQueryRequest = z.infer<typeof SearchQueryRequestSchema>;
 
 export const SearchHitSchema = z.strictObject({
   node: NodeMetaSchema,
-  matchIn: z.enum(['name', 'body', 'both']),
+  matchIn: MatchInSchema,
   /** 相关性分数（bm25 越小越优）；LIKE 回退通道无分数 → null（spec §5） */
   score: z.number().nullable(),
   /** 名称片段：全文本 + 命中区间（≤255 码点无需窗口化，spec §6） */

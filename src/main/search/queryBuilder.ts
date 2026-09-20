@@ -1,4 +1,4 @@
-// 搜索查询构造（spec §4）：纯函数——NFC 规范化、空格分词 + 双引号短语、上限校验、
+// 搜索查询构造（spec §4）：纯函数——NFC 规范化、空格分词 + 双引号短语、词数/码点校验、
 // trigram/LIKE 通道选择与 LIKE 模式转义。不触库、不感知 db；上限常量取 shared 契约。
 import { E_IPC_BAD_PAYLOAD } from '../../shared/errors';
 import { AppError } from '../../shared/result';
@@ -59,7 +59,7 @@ function tokenize(input: string): string[] {
       }
       if (ch === '"') {
         inQuotes = true;
-        started = true; // 空短语 "" 也置 started：产出空词项由上限校验统一拒绝
+        started = true; // 空短语 "" 也置 started：产出空词项由空词项校验统一拒绝
         continue;
       }
       current += ch;
@@ -89,10 +89,12 @@ function quotePhrase(term: string): string {
 }
 
 /**
- * 构造查询（spec §4 管线）：trim + NFC → 分词 → 上限校验 → 通道选择。
+ * 构造查询（spec §4 管线）：trim + NFC → 分词 → 词数/码点校验 → 通道选择。
  * 全词 ≥3 码点 → trigram 索引通道；任一词 <3 → 整条 LIKE 回退通道（保 AND 可组合，不承诺 P95）。
  * @param keyword 用户原始查询串（渲染端输入）
- * @throws AppError(E_IPC_BAD_PAYLOAD) 空 / 词数超 8 / 词项超 255 码点 / 引号未闭合 / 空短语
+ * @throws AppError(E_IPC_BAD_PAYLOAD) 空 / 词数超 MAX_SEARCH_TERMS / 词项超
+ *   MAX_SEARCH_TERM_CODEPOINTS 码点 / 引号未闭合 / 空短语（拒绝阈值引用 shared 契约常量，
+ *   注释不硬编码数值——契约调整时本注释不漂移）
  */
 export function buildSearchQuery(keyword: string): BuiltQuery {
   const normalized = keyword.normalize('NFC').trim();

@@ -3,9 +3,16 @@
  * dir 点击展开折叠、file 点击选中；工具栏最小操作集（新建/删除/重命名/移动到…）。
  * move 选择模式（M4 spec §6.2 D8）下点选语义临时切换：dir 点选=选定移动目标
  * （data-move-target 高亮），file 点选禁用——合法性判定与确认归 Workspace。
+ * 树栏视图插槽（M5 批次① Task 7）：TreePane 承载树栏标题栏与 tree/search/trash 三态内容
+ * 分发（view 态由 Workspace 三态容器持有并注入，本组件无内部视图态）；tree 内容即既有
+ * TreePanel 实现引用不动，search/trash 内容由 Workspace 装配注入。
  */
+import type { ReactNode } from 'react';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import type { TreeNode } from '../tree/treeModel';
+
+/** 树栏视图态（M5 三态容器）：资源树 / 全局搜索（Task 7）/ 回收站（M5 批次②） */
+export type TreePaneView = 'tree' | 'search' | 'trash';
 
 /** 根节点约定 id=1（M1 v1 种子）：根不可重命名/移动（UI 禁用入口） */
 const ROOT_ID = 1;
@@ -170,4 +177,97 @@ function findContextParent(roots: readonly TreeNode[], selectedId: number | null
   if (selected === null) return ROOT_ID;
   // 契约上 parentId 为 null 的只有根，根恒为 dir 走上分支；此处兜底 ROOT_ID 仅满足 null 类型收窄
   return selected.nodeType === 'dir' ? selected.id : (selected.parentId ?? ROOT_ID);
+}
+
+/** 标题栏文本钮标准类串（设计系统文档 §7.2，与 Workspace 迁出前逐字一致） */
+const TITLE_BUTTON_CLASS =
+  'inline-flex h-5 items-center justify-center rounded-sm px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground';
+
+/** 标题栏图标钮标准类串（折叠钮两态常驻） */
+const TITLE_ICON_BUTTON_CLASS =
+  'inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground';
+
+export interface TreePaneProps {
+  /** 当前视图（Workspace 三态容器唯一事实来源，经 props 注入分发） */
+  readonly view: TreePaneView;
+  /** tree 态内容：既有 TreePanel + move 选择条 + 重命名模态（Workspace 装配注入） */
+  readonly treeContent: ReactNode;
+  /** search 态内容：全局搜索面板（Workspace 装配注入） */
+  readonly searchContent: ReactNode;
+  /** trash 态内容：回收站面板（Workspace 装配注入） */
+  readonly trashContent: ReactNode;
+  /** 标题栏入口：进入全局搜索态 */
+  onOpenSearch(): void;
+  /** 标题栏入口：进入回收站态 */
+  onOpenTrash(): void;
+  /** 标题栏入口：返回资源树态（search/trash 两态共用） */
+  onBackToTree(): void;
+  /** 折叠树栏（布局行为与视图态正交） */
+  onCollapse(): void;
+}
+
+/**
+ * 树栏视图插槽（三态容器呈现面）：标题栏随视图换题与操作——tree 态提供全局搜索/回收站
+ * 入口，search/trash 态提供返回口；折叠钮两态常驻。三态内容由 Workspace 装配注入，
+ * 本组件只做呈现与分发，不持有任何业务态（A.7-6 单向数据流）。
+ */
+export function TreePane({
+  view,
+  treeContent,
+  searchContent,
+  trashContent,
+  onOpenSearch,
+  onOpenTrash,
+  onBackToTree,
+  onCollapse,
+}: TreePaneProps): React.JSX.Element {
+  const title = view === 'trash' ? '回收站' : view === 'search' ? '全局搜索' : '资源树';
+  return (
+    <aside className="lt-pane lt-pane-tree flex min-h-0 min-w-0 flex-col bg-background">
+      <div className="lt-pane-titlebar flex h-8 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
+        <span className="text-xs font-medium text-muted-foreground">{title}</span>
+        <div className="flex items-center gap-1">
+          {view === 'tree' ? (
+            <>
+              <button
+                type="button"
+                aria-label="打开全局搜索"
+                className={TITLE_BUTTON_CLASS}
+                onClick={onOpenSearch}
+              >
+                搜索
+              </button>
+              <button
+                type="button"
+                aria-label="打开回收站"
+                className={TITLE_BUTTON_CLASS}
+                onClick={onOpenTrash}
+              >
+                回收站
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              aria-label="返回资源树"
+              className={TITLE_BUTTON_CLASS}
+              onClick={onBackToTree}
+            >
+              返回
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label="折叠树栏"
+            className={TITLE_ICON_BUTTON_CLASS}
+            onClick={onCollapse}
+          >
+            «
+          </button>
+        </div>
+      </div>
+      {/* 三态内容分发：互斥渲染，随态卸载即回收内部订阅（面板各自数据自持） */}
+      {view === 'tree' ? treeContent : view === 'search' ? searchContent : trashContent}
+    </aside>
+  );
 }

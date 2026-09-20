@@ -48,10 +48,16 @@ export function createMenuTemplate(isMac: boolean): MenuItemConstructorOptions[]
           id: 'menu-quick-open',
           label: '快速打开',
           accelerator: 'CmdOrCtrl+P',
-          // M5 批次① Task 6：浮层 UI 落地，启用并经命令单通道下发（全局搜索仍归 Task 7）
+          // M5 批次① Task 6：浮层 UI 落地，启用并经命令单通道下发
           click: () => sendCommand({ type: 'quick-open' }),
         },
-        { label: '全局搜索', accelerator: 'CmdOrCtrl+Shift+F', enabled: false }, // M5
+        {
+          id: 'menu-global-search',
+          label: '全局搜索',
+          accelerator: 'CmdOrCtrl+Shift+F',
+          // M5 批次① Task 7：全局搜索面板落地（树栏 search 态），启用并经命令单通道下发
+          click: () => sendCommand({ type: 'global-search' }),
+        },
       ],
     },
     {

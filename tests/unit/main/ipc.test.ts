@@ -379,7 +379,10 @@ describe('search 通道接线', () => {
   it('非白名单 origin 拒绝；服务抛 AppError 保真为 err 且全程不广播', () => {
     const search = makeSearchStub();
     (search.query as ReturnType<typeof vi.fn>).mockImplementation(() => {
-      throw new AppError('E_VFS_NOT_FOUND', '子树过滤路径不存在或已在回收站');
+      // 抛出形态对齐 vfs 通道 isMock 先例：真正的 AppError 实例，handleWith 按 instanceof 转换
+      throw Object.assign(new AppError('E_VFS_NOT_FOUND', '子树过滤路径不存在或已在回收站'), {
+        isMock: true,
+      });
     });
     const broadcast = vi.fn();
     registerIpcHandlers({
@@ -393,6 +396,8 @@ describe('search 通道接线', () => {
     const forbidden = handlers.get(IPC.searchQuery)?.(fakeEvent('http://evil'), {
       keyword: 'x',
     }) as { ok: boolean; error: { code: string } };
+    // M2 deferred 顺手清：origin 拒绝补 ok === false 断言（Result 失败分支语义完整）
+    expect(forbidden.ok).toBe(false);
     expect(forbidden.error.code).toBe(E_IPC_FORBIDDEN_ORIGIN);
     const errResult = handlers.get(IPC.searchQuery)?.(fakeEvent('app://bundle'), {
       keyword: 'x',
