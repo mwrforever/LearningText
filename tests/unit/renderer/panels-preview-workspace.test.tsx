@@ -44,6 +44,8 @@ function stubApi(overrides: Partial<Record<string, unknown>> = {}): Record<strin
     // shell 命令订阅/forceClose 已入挂载路径（Task 6 外壳命令链），桩按契约形态注入
     getNode: vi.fn(() => Promise.resolve({ ok: true, value: meta(2, 'x.html') })),
     forceClose: vi.fn(() => Promise.resolve({ ok: true, value: null })),
+    // 回收站面板挂载首拉（trash 态内容自持数据；Task 10 move 复位用例切入 trash 态时需要）
+    listTrashed: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
     onShellCommand: vi.fn((callback: (command: ShellCommand) => void) => {
       // 退订函数为 vi.fn 桩，卸载后可断言 cleanup 确实调用（同 onVfsChanged 强化先例）
       const unsub = vi.fn(() => {
@@ -1064,18 +1066,21 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="确认移动"]');
     expect(bar()).not.toBeNull();
     expect(confirmBtn()?.disabled).toBe(true); // 目标未点选：确认禁用
+    // 引导文案（M4 spec §6.2 字面，M5 批次④补欠账）：目标未定时状态条呈现指引
+    expect(bar()?.textContent).toContain('在树中选择目标目录并确认');
     // file 点选禁用（spec §6.2 D8）
     const treeFileBtn = Array.from(
       container.querySelectorAll<HTMLButtonElement>('nav[aria-label="资源树"] button'),
     ).find((b) => b.textContent === 'a.html');
     expect(treeFileBtn?.disabled).toBe(true);
-    // dir 点选=选定目标：data-move-target 高亮、确认解禁
+    // dir 点选=选定目标：data-move-target 高亮、确认解禁、引导文案退场
     await clickButton('笔记');
     const dirBtn = Array.from(container.querySelectorAll('button')).find(
       (b) => b.textContent === '笔记',
     );
     expect(dirBtn?.getAttribute('data-move-target')).toBe('true');
     expect(confirmBtn()?.disabled).toBe(false);
+    expect(bar()?.textContent).not.toContain('在树中选择目标目录并确认');
     await act(async () => {
       confirmBtn()?.click();
     });
@@ -1084,6 +1089,64 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
     act(() => {
       tree.unmount();
     });
+  });
+
+  it('dir 行内菜单重命名（不开标签、无选中锚）：renameNode 以 dir id 直传', async () => {
+    const { api } = stubApiCaptureVfs({
+      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(2, '笔记', 'dir')] })),
+      renameNode: vi.fn(() => Promise.resolve({ ok: true, value: { affectedCount: 1 } })),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    // 行内菜单键盘驱动（radix 先例同 panels-tree-editor）：触发器 Enter 开启 → 菜单项 Enter
+    // 激活；行级定位走 data-node-id（可访问名「更多操作」为独占锚，不含节点名防 E2E 串扰）
+    const trigger = container.querySelector<HTMLElement>('button[data-node-id="2"]');
+    expect(trigger).not.toBeNull();
+    await act(async () => {
+      trigger?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+      (el) => el.textContent === '重命名',
+    );
+    expect(item).toBeDefined();
+    await act(async () => {
+      item?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    // 模态以树内当前名预填；改名确认后 renameNode 收到 dir id（2）
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="新名称"]');
+    expect(input?.value).toBe('笔记');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      setter?.call(input, '新目录');
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="确认重命名"]')?.click();
+    });
+    expect(api.renameNode).toHaveBeenCalledWith({ nodeId: 2, newName: '新目录' });
+    // 选中锚退役佐证：全程无标签打开、树无 aria-current 高亮，操作依然可达
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(container.querySelector('nav[aria-label="资源树"] button[aria-current]')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('move 模式中切往回收站态即复位 moveMode：返回树不再复现选择条（Task 4 deferred 顺手闭环）', async () => {
+    await setupWithFileTab();
+    await clickButton('移动到…');
+    expect(container.querySelector('[aria-label="移动选择模式"]')).not.toBeNull();
+    // 标题栏进入回收站态再返回：moveMode 已随视图切离复位，选择条不得带残态复现
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="打开回收站"]')?.click();
+    });
+    expect(container.querySelector('[aria-label="移动选择模式"]')).toBeNull();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="返回资源树"]')?.click();
+    });
+    expect(container.querySelector('[aria-label="移动选择模式"]')).toBeNull();
   });
 
   it('move 选择模式取消钮与 Esc 均退出（取消语义，不发起 moveNode）', async () => {

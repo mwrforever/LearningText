@@ -28,7 +28,7 @@ export function createSettingsService(deps: { settingsFile: string }): SettingsS
 
   /**
    * 原子落盘（tmp + 同目录 rename）+ 内存缓存更新 + 单条 info（调用方保证已过 zod 闸）。
-   * message 由调用方给定：set 报「已更新」、迁移报「已迁移」，保证每次写盘只打一条 info。
+   * message 由调用方给定：set 报实际写入域摘要、迁移报「已迁移」，保证每次写盘只打一条 info。
    */
   function writeSettings(data: SettingsData, message: string): void {
     const tmp = deps.settingsFile + '.tmp';
@@ -36,6 +36,18 @@ export function createSettingsService(deps: { settingsFile: string }): SettingsS
     renameSync(tmp, deps.settingsFile); // 同目录 rename 原子覆盖（POSIX 与 NTFS replace 语义）
     cached = data;
     console.info(`[settings] ${message}`);
+  }
+
+  /**
+   * set 侧 info 域摘要（TASK.md「set 日志域摘要化」闭环，M5 批次④）：全量写形态下逐域
+   * 比对写前缓存，仅列出内容真正变化的域——shell.layout 高频写不再误报 preview 等无关域。
+   * 无域变更（等值全量写）时显式报「无域变更」，不产出误导性的空清单。
+   */
+  function summarizeChangedDomains(previous: SettingsData, next: SettingsData): string {
+    const changed = (Object.keys(next) as Array<keyof SettingsData>).filter(
+      (domain) => JSON.stringify(next[domain]) !== JSON.stringify(previous[domain]),
+    );
+    return changed.length === 0 ? '已更新设置（无域变更）' : `已更新设置域：${changed.join('、')}`;
   }
 
   try {
@@ -72,7 +84,7 @@ export function createSettingsService(deps: { settingsFile: string }): SettingsS
       return cached;
     },
     set(request: SettingsData): SettingsData {
-      writeSettings(request, `已更新 preview.debounceMs=${String(request.preview.debounceMs)}`);
+      writeSettings(request, summarizeChangedDomains(cached, request));
       return request;
     },
   };

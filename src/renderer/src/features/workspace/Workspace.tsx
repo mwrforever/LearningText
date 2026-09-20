@@ -8,6 +8,9 @@
  * shell 域持久化（get→merge→set 全量写回），拖拽中仅本地态防 settings 写风暴。
  * 树 rename/move（M4 spec §6.2 D8）：重命名行内模态与 move 选择模式态在此提升；
  * renamed/moved 广播后 getNode 反查回写标签 meta（§6.1 同步链，selected 即 activeTab）。
+ * move 源锚退役（M5 批次④ Task 10）：sourceId 改由入口直传（工具栏传选中 id、树行内
+ * 「⋯」菜单传本行 id），不再读 tabsOp.activeId——selectedId 锚退役为树高亮专用；
+ * 切往 search/trash 态即复位 move 态（Task 4 deferred Esc 双监听耦合顺手闭环）。
  * 树栏三态视图容器（M5 批次① Task 7 三态齐备）：view 'tree'|'search'|'trash' 切换——
  * 标题栏「搜索」钮/菜单 Ctrl+Shift+F 进入 search 态、「回收站」钮进入 trash 态、返回钮/Esc
  * 退出；search/trash 内容由对应面板数据自持渲染，树数据（roots/expanded）挂在 Workspace
@@ -96,10 +99,13 @@ export function Workspace({
   const [autoSaveMs, setAutoSaveMs] = useState(3000);
   // 三栏布局态（FR-SHELL-01）：折叠三态 + 宽度比例；启动时由 settingsGet 恢复（装配 effect）
   const [layout, setLayout] = useState<ShellLayout>(DEFAULT_LAYOUT);
-  // move 选择模式（M4 spec §6.2 D8）：null=未进入；targetId=已点选的目标目录（null=尚待点选）。
-  // 源节点不单独存态——进入模式要求有选中，且模式期间 file 点选禁用、dir 点选仅记账目标，
-  // 选中（activeId）不可能变化，直接以 tabsOp.activeId 为源
-  const [moveMode, setMoveMode] = useState<{ targetId: number | null } | null>(null);
+  // move 选择模式（M4 spec §6.2 D8；M5 批次④ Task 10 源锚退役）：null=未进入；sourceId=
+  // 进入模式时直传的移动源（树工具栏传选中 id、行内菜单传本行 id——不再读 tabsOp.activeId，
+  // 消灭「覆盖高亮/激活态瞬态错位」窗口），targetId=已点选的目标目录（null=尚待点选）。
+  // 模式期间 file 点选禁用、dir 点选仅记账目标，sourceId 恒不变
+  const [moveMode, setMoveMode] = useState<{ sourceId: number; targetId: number | null } | null>(
+    null,
+  );
   // move 请求在途（确认钮防重复提交）
   const [moveInFlight, setMoveInFlight] = useState(false);
   // 行内重命名模态目标（M4 spec §6.2 D8）：null=关闭；name 取树内当前名预填
@@ -653,9 +659,9 @@ export function Workspace({
   }
 
   // —— 树 rename/move（M4 spec §6.2 D8）——
-  // move 模式派生量（渲染期纯读）：源 = 选中节点（模式期间选中不可变，见 moveMode 注），
+  // move 模式派生量（渲染期纯读）：源 = 进入模式时直传的 id（Task 10 起不再锚 activeId），
   // 目标为自身/其后代时确认禁用 + 提示（isDescendant 不含自身，自移在此并判）
-  const moveSourceId = moveMode !== null ? tabsOp.activeId : null;
+  const moveSourceId = moveMode?.sourceId ?? null;
   const moveTargetId = moveMode !== null ? moveMode.targetId : null;
   const moveInvalid =
     moveSourceId !== null &&
@@ -664,19 +670,25 @@ export function Workspace({
 
   /**
    * 树点选统一入口：常规模式走 openFile（开标签）；move 选择模式下 dir 点选临时变为
-   * 「选定目标」记账（file 点选已被 TreePanel 禁用），合法性判定归确认钮
+   * 「选定目标」记账（file 点选已被 TreePanel 禁用），合法性判定归确认钮。
+   * 记账保留进入时直传的 sourceId（Task 10 源锚语义：模式生命周期内源恒不变）
    */
   function onSelectNode(node: NodeMeta): void {
     if (moveMode !== null) {
-      if (node.nodeType === 'dir') setMoveMode({ targetId: node.id });
+      if (node.nodeType === 'dir') {
+        setMoveMode((prev) => (prev === null ? prev : { ...prev, targetId: node.id }));
+      }
       return;
     }
     openFile(node);
   }
 
-  /** 进入 move 选择模式：目标待点选（源 = 当前选中，入口钮仅在非根选中时可达） */
-  function startMove(): void {
-    setMoveMode({ targetId: null });
+  /**
+   * 进入 move 选择模式（树工具栏钮 / 行内「⋯」菜单共用）：源 = 入参 id 直传
+   * （Task 10 起脱离 selectedId 锚），目标待点选
+   */
+  function startMove(id: number): void {
+    setMoveMode({ sourceId: id, targetId: null });
   }
 
   /** 确认移动：目标非法/未定直接返回（钮已禁用的同源守卫）；成功退出模式，失败 toast 保留模式可重试 */
@@ -694,7 +706,7 @@ export function Workspace({
     });
   }
 
-  /** 重命名入口（树工具栏钮）：取树内当前名预填模态；树未命中静默忽略（入口仅在树选中时可达） */
+  /** 重命名入口（树工具栏钮 / 行内「⋯」菜单共用）：取树内当前名预填模态；树未命中静默忽略（菜单入口以本行 id 直传） */
   function onRename(id: number): void {
     const node = findNode(roots, id);
     if (node === null) return;
@@ -726,6 +738,16 @@ export function Workspace({
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [moveMode]);
+
+  /**
+   * 视图切离统一入口（Task 4 deferred Esc 双监听耦合的顺手闭环，M5 批次④ Task 10）：
+   * search/trash 态内容不含 move 选择条，moveMode 若带离 tree 会在返回后带残态复现
+   * （且双 Esc 监听并存时一次按键双态齐动）——切离即复位；返回 tree 不经此口。
+   */
+  function switchViewAway(next: Exclude<TreePaneView, 'tree'>): void {
+    setMoveMode(null);
+    setView(next);
+  }
 
   // search/trash 态 Esc 返回资源树（M5）：与 moveMode Esc 同款 window 级成对挂卸；
   // search 态下 Esc 退出搜索（spec §2.2），输入焦点不阻断（window 级监听）
@@ -918,8 +940,8 @@ export function Workspace({
           setQuickOpen(true);
           break;
         case 'global-search':
-          // 菜单「全局搜索」/Ctrl+Shift+F（M5 Task 7）：切入树栏 search 态（三态容器）
-          setView('search');
+          // 菜单「全局搜索」/Ctrl+Shift+F（M5 Task 7）：切入树栏 search 态（三态容器，切离复位 move 态）
+          switchViewAway('search');
           break;
         case 'open-settings':
           // 菜单「设置…」/CmdOrCtrl+,（M5 Task 8）：全屏覆盖设置页（工作台状态保持，关闭即还原）
@@ -994,8 +1016,8 @@ export function Workspace({
         ) : (
           <TreePane
             view={view}
-            onOpenSearch={() => setView('search')}
-            onOpenTrash={() => setView('trash')}
+            onOpenSearch={() => switchViewAway('search')}
+            onOpenTrash={() => switchViewAway('trash')}
             onBackToTree={() => setView('tree')}
             onCollapse={() => updateLayout({ treeCollapsed: true })}
             treeContent={
@@ -1013,13 +1035,19 @@ export function Workspace({
                   onStartMove={startMove}
                 />
                 {/* move 选择模式操作条（spec §6.2 D8）：目标未定/自身或后代/在途时确认禁用；
-                    Esc 或取消退出。目标非法提示就地呈现（不占 toast 生命周期） */}
+                    Esc 或取消退出。引导文案（§6.2 字面，Task 10 补欠账）于目标未定时呈现，
+                    与「不能移动到自身或其后代」提示互斥（后者以目标已定为前提） */}
                 {moveMode !== null ? (
                   <div
                     className="lt-move-bar flex flex-wrap items-center gap-2 border-t border-border bg-muted/50 px-2 py-1"
                     role="group"
                     aria-label="移动选择模式"
                   >
+                    {moveTargetId === null ? (
+                      <span className="lt-move-hint text-xs text-muted-foreground">
+                        在树中选择目标目录并确认
+                      </span>
+                    ) : null}
                     {moveInvalid ? (
                       <span className="lt-move-hint text-xs text-destructive">
                         不能移动到自身或其后代

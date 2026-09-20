@@ -62,6 +62,24 @@ describe('settingsService', () => {
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(next);
   });
 
+  it('set 日志按实际写入域摘要（TASK.md 闭环）：单域报该域、多域并列、无变更不误报', () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const s = createSettingsService({ settingsFile: file });
+      // 单域写：仅报实际变化的域，不再硬编码 preview.debounceMs=…（与写入域无关的误导文案）
+      s.set({ ...DEFAULT_SETTINGS, preview: { debounceMs: 900 } });
+      expect(infoSpy).toHaveBeenLastCalledWith('[settings] 已更新设置域：preview');
+      // 多域写：相对当前缓存同时变化的域逐域并列
+      s.set({ ...DEFAULT_SETTINGS, preview: { debounceMs: 800 }, editor: { autoSaveMs: 1000 } });
+      expect(infoSpy).toHaveBeenLastCalledWith('[settings] 已更新设置域：preview、editor');
+      // 等值全量写：无域变更时不产出误导性的「已更新」域清单
+      s.set({ ...DEFAULT_SETTINGS, preview: { debounceMs: 800 }, editor: { autoSaveMs: 1000 } });
+      expect(infoSpy).toHaveBeenLastCalledWith('[settings] 已更新设置（无域变更）');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
   it('v2 文件启动静默迁移：get 得 v3 全量（用户值保留 + 四新域默认）+ 原子回写 + info 一次', () => {
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     const v2File: SettingsDataV2 = {
