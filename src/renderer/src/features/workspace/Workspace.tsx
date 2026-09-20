@@ -10,12 +10,31 @@
  * renamed/moved 广播后 getNode 反查回写标签 meta（§6.1 同步链，selected 即 activeTab）。
  * 树栏三态视图容器（M5 批次②）：view 'tree'|'trash' 切换（search 态归 Task 7）——
  * 工具栏「回收站」钮进入、返回钮/Esc 退出；trash 态由 TrashPanel 数据自持渲染。
+ * 最近打开与工作区恢复（M5 批次②）：openFile 成功（聚焦/新建两会话分支）记录 recent 域
+ * （去重置顶，时刻由写入方补）；trash/purge 广播后对 recent 逐个验活剔除；启动时按
+ * workspace 域恢复标签（planWorkspaceRestore 失效剔除 + active 右邻继承，恢复式打开豁免
+ * 5–50MB 征询）；标签操作经 throttleTrailing 尾沿 300ms 写 workspace 域（D8，卸载 flush+dispose）。
+ * recent/workspace 域写统一经串行 get→merge→set 队列（restoreWorkspace 同链），防启动期
+ * 并发记录点丢更新；recentToItems 数据接口落在 features/quickopen（Task 6 浮层消费）。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
 import { DEFAULT_LAYOUT } from '../../../../shared/settings-contract';
-import type { ShellLayout } from '../../../../shared/settings-contract';
+import type {
+  RecentEntry,
+  SettingsData,
+  ShellLayout,
+  WorkspaceSettings,
+} from '../../../../shared/settings-contract';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
+import { toLocalIsoTime } from '../../../../shared/time';
+import {
+  planWorkspaceRestore,
+  pruneRecentByNodes,
+  recordRecent,
+  throttleTrailing,
+  type RecentInput,
+} from '../recent/recentModel';
 import { createEditorState } from '../editor/codemirror';
 import { EditorPanel } from '../editor/EditorPanel';
 import { SaveController } from '../editor/saveController';
@@ -95,6 +114,18 @@ export function Workspace({
   useEffect(() => {
     dirtyRef.current = tabsOp.tabs.some((t) => t.dirty);
   }, [tabsOp]);
+  // —— 最近打开 / 工作区会话持久化（M5 批次②，settings recent/workspace 域）——
+  // 设置写串行链：recent/workspace 域全部写经「get→merge→set」promise 链逐笔串行——启动
+  // 恢复期多个记录点近同时完成，裸并发各自 get 读到同一旧值、后写覆盖先写丢条目；串行化
+  // 保证每笔写基于前一笔落盘后的全量（persistLayout 用户交互写节奏稀疏，维持既有裸写不动）
+  const settingsWriteChainRef = useRef<Promise<void>>(Promise.resolve());
+  // 标签操作写节流（D8 尾沿 300ms）：openTab/closeTab/activate 合并为尾沿一次全量写，防
+  // 快速连续操作打爆 settings；渲染期惰性初始化单例（sessionsRef 同款豁免），闭包仅捕获
+  // tabsRef/settingsWriteChainRef 等稳定引用（首渲染实例恒等价，见 persistTabsFromRef）
+  const tabWriteThrottleRef = useRef<ReturnType<typeof throttleTrailing> | null>(null);
+  if (tabWriteThrottleRef.current === null) {
+    tabWriteThrottleRef.current = throttleTrailing(persistTabsFromRef, 300);
+  }
   // 激活标签由 tabs 状态派生（单一事实来源，禁另存副本）
   const activeTab = tabsOp.tabs.find((t) => t.meta.id === tabsOp.activeId) ?? null;
   // 保存管线控制器（M4 spec §2）：渲染期惰性初始化单例（sessionsRef 同款豁免）；
@@ -124,6 +155,10 @@ export function Workspace({
         // 布局记忆恢复（FR-SHELL-01）：ref 同步记账（后续拖拽持久化以恢复值为基准）
         layoutRef.current = result.value.shell.layout;
         setLayout(result.value.shell.layout);
+        // 工作区恢复（M5 批次②）：开关开启才恢复；恢复链异步贯穿存活校验，卸载即中止
+        if (result.value.workspace.restoreOnStart) {
+          void restoreWorkspace(result.value.workspace, () => alive);
+        }
       }
     });
     void window.api.listChildren({ parentId: ROOT_ID }).then((result) => {
@@ -141,6 +176,60 @@ export function Workspace({
     };
   }, []);
 
+  /**
+   * 启动恢复链（M5 批次②）：逐个 getNode 验活 → planWorkspaceRestore 出恢复计划（失效
+   * 剔除 + active 右邻继承）→ 一次性写修剪后的 workspace 域（后续恢复即使全部失败也不残留
+   * 死引用）→ 逐个恢复式 openFile（confirm 豁免、拒开红线照常；顺序 await 保证标签序 =
+   * 会话序）→ 聚焦计划激活点（逐个打开后激活态停在末位，计划点已不在会话则保持现状）。
+   * isAlive 由装配 effect 注入（mount 存活标记），卸载后各续体即中止。
+   */
+  async function restoreWorkspace(
+    workspace: WorkspaceSettings,
+    isAlive: () => boolean,
+  ): Promise<void> {
+    // 逐个验活：主进程 getNode 按 deleted_at IS NULL 过滤，trash/purge 节点一律 NOT_FOUND
+    const metas = await Promise.all(
+      workspace.tabNodeIds.map(async (id) => {
+        const found = await window.api.getNode({ nodeId: id });
+        return found.ok ? found.value : null;
+      }),
+    );
+    if (!isAlive()) return;
+    const metaById = new Map<number, NodeMeta>();
+    const aliveIds = new Set<number>();
+    for (const meta of metas) {
+      if (meta !== null) {
+        metaById.set(meta.id, meta);
+        aliveIds.add(meta.id);
+      }
+    }
+    const plan = planWorkspaceRestore(workspace.tabNodeIds, workspace.activeTabNodeId, aliveIds);
+    // 修剪结果即刻落盘（串行队列）：失效 id 出清，与后续恢复进度解耦
+    queueSettingsWrite((settings) => ({
+      ...settings,
+      workspace: {
+        ...settings.workspace,
+        tabNodeIds: [...plan.restoreIds],
+        activeTabNodeId: plan.activeId,
+      },
+    }));
+    for (const id of plan.restoreIds) {
+      if (!isAlive()) return;
+      const meta = metaById.get(id);
+      if (meta !== undefined) await openFile(meta, { restore: true });
+    }
+    if (!isAlive()) return;
+    const plannedActive = plan.activeId;
+    if (plannedActive !== null) {
+      // 聚焦计划激活点：该点恢复失败（readFile 失败/触顶拒开）时保持末位现状，不指空
+      setTabsOp((prev) =>
+        prev.tabs.some((t) => t.meta.id === plannedActive)
+          ? { ...prev, activeId: plannedActive }
+          : prev,
+      );
+    }
+  }
+
   // 树广播订阅（cleanup 成对）：结构同步 + stale 展开层重取（spec §4.3）；rename/move 后
   // meta 同步链（spec §6.1）：getNode 反查新鲜 meta 回写标签（selected 即 activeTab，
   // 路径/预览自然新鲜）；未开标签时 updateTabMeta 按 id 精确同步、无命中即无副作用
@@ -154,6 +243,10 @@ export function Workspace({
             setTabsOp((prev) => updateTabMeta(prev, result.value.id, result.value));
           }
         });
+      }
+      // trash/purge 后剔除最近打开中的失效条目（事务提交后广播，宪法 B.3-4——到达即事实）
+      if (event.type === 'trashed' || event.type === 'purged') {
+        pruneDeadRecent();
       }
     });
     return unsubscribe;
@@ -224,6 +317,82 @@ export function Workspace({
       if (result.ok && sessions.has(nodeId)) {
         closeTabById(nodeId);
       }
+    });
+  }
+
+  /**
+   * 设置全量串行写（recent/workspace 域唯一写出口）：get→apply→set 经 promise 链逐笔串行。
+   * 串行化的必要性：启动恢复期多个记录点近同时完成，裸并发读改写各自读到同一旧值、后写
+   * 覆盖先写丢条目；串行链使每笔写基于前一笔落盘后的全量。get 失败放弃本笔写（服务侧默认
+   * 值兜底，persistLayout 同口径）；set 失败静默不阻断后续排队写（链尾 catch 吞 IPC 层异常）。
+   */
+  function queueSettingsWrite(
+    apply: (settings: SettingsData) => SettingsData | Promise<SettingsData>,
+  ): void {
+    settingsWriteChainRef.current = settingsWriteChainRef.current
+      .then(async () => {
+        const current = await window.api.settingsGet();
+        if (!current.ok) return;
+        await window.api.settingsSet(await apply(current.value));
+      })
+      .catch(() => undefined);
+  }
+
+  /**
+   * 最近打开记录点（openFile 聚焦/新建两会话分支共用）：时刻由写入方以本地 ISO 补齐
+   * （shared/time.ts 既有格式），经串行队列全量 get→merge→set 写 recent 域。断言理由
+   * （A.1-5）：recordRecent 顶部条目盖 now 戳、其余元素原样透传，入参来自 settings 持久化
+   * 形态（全元素含 openedAt），输出按超集知识收窄回 RecentEntry[]。
+   */
+  function recordRecentOpen(node: NodeMeta): void {
+    const entry: RecentInput = { nodeId: node.id, virtualPath: node.virtualPath, name: node.name };
+    queueSettingsWrite((settings) => ({
+      ...settings,
+      recent: {
+        opened: recordRecent(
+          settings.recent.opened,
+          entry,
+          toLocalIsoTime(new Date()),
+        ) as RecentEntry[],
+      },
+    }));
+  }
+
+  /**
+   * 工作区会话持久化（节流尾沿写体）：读 tabsRef 实时镜像（事件闭包 tabsOp 必陈旧），
+   * 全量 get→merge→set 写 workspace 域；restoreOnStart 用户开关原样保留
+   */
+  function persistTabsFromRef(): void {
+    const op = tabsRef.current;
+    queueSettingsWrite((settings) => ({
+      ...settings,
+      workspace: {
+        ...settings.workspace,
+        tabNodeIds: op.tabs.map((t) => t.meta.id),
+        activeTabNodeId: op.activeId,
+      },
+    }));
+  }
+
+  /**
+   * 最近打开失效剔除（trash/purge 广播后，回收站面板与树栏删除两入口共同经广播到达）：
+   * 对持久化条目逐个 getNode 验活（trash/purge 节点一律 NOT_FOUND），存活集外全部剔除并
+   * 写回。断言理由（A.1-5）：pruneRecentByNodes 为纯过滤透传，输出元素即输入元素（含
+   * openedAt）。验活在队列续体内对 freshly-get 的列表执行，与并发写天然不竞态。
+   */
+  function pruneDeadRecent(): void {
+    queueSettingsWrite(async (settings) => {
+      const opened = settings.recent.opened;
+      const aliveFlags = await Promise.all(
+        opened.map((entry) => window.api.getNode({ nodeId: entry.nodeId }).then((r) => r.ok)),
+      );
+      const aliveIds = new Set(
+        opened.filter((_, i) => aliveFlags[i] === true).map((entry) => entry.nodeId),
+      );
+      return {
+        ...settings,
+        recent: { opened: pruneRecentByNodes(opened, aliveIds) as RecentEntry[] },
+      };
     });
   }
 
@@ -315,67 +484,78 @@ export function Workspace({
   }, [view]);
 
   /**
-   * 打开文件为标签（树点选/新建文件唯一入口）：非文本前置拦截（FR-EDIT-04 归后续批次，
-   * 不读库不开标签）→ 大小三分支前置判定（spec §2.4 裁决 D7：渲染层以 meta.size 前置判定，
-   * 不发起 readFile）→ readFile 成功才建会话与标签（失败 toast；续体内 MAX_TABS 判满防
-   * 孤儿会话）→ 同文件唯一实例仅聚焦
+   * 打开文件为标签（树点选/新建文件/启动恢复统一入口）：非文本前置拦截（FR-EDIT-04 归后续
+   * 批次，不读库不开标签）→ 大小三分支前置判定（spec §2.4 裁决 D7：渲染层以 meta.size 前置
+   * 判定，不发起 readFile）→ readFile 成功才建会话与标签（失败 toast；续体内 MAX_TABS 判满
+   * 防孤儿会话）→ 同文件唯一实例仅聚焦。两成功分支（聚焦/新建）都记录 recent 域并尾沿写
+   * workspace 域。opts.restore（M5 批次② D7 恢复豁免）：启动恢复路径跳过 5–50MB 征询
+   * （会话重建不得卡在启动模态），>50MB 拒开与 MAX_TABS 护栏照常生效。await 化使启动恢复
+   * 可顺序驱动（标签序 = 会话序）。
+   * @param node 目标文件节点 meta（树数据/恢复验活反查所得）
+   * @param opts.restore 是否为启动恢复式打开（true 时豁免软阈值 confirm；缺省 false）
+   * @returns 打开流程完成信号（拒绝/失败亦正常返回；恢复链据此串行推进）
    */
-  function openFile(node: NodeMeta): void {
+  async function openFile(node: NodeMeta, opts?: { readonly restore?: boolean }): Promise<void> {
     if (node.mimeType === null || !isTextLike(node.mimeType)) {
       showToast('二进制文件暂不支持编辑（FR-EDIT-04 归后续批次）');
       return;
     }
     // 大小三分支前置判定（spec §2.4 裁决 D7，阈值 5MB/50MB；size 为字节——NodeMeta 契约）：
     // >50MB 直接拒开且不发起 readFile（超大文档读入解码必拖垮渲染层，无征询意义）；5–50MB
-    // 经用户确认放行（大文档 CM 建档可能卡顿，交由用户权衡）；≤5MB 直开（现行为）。判定只读
-    // meta 本地字段、同步完成，天然早于任何 IPC；MAX_TABS 判满仍留在 readFile 续体内——
-    // tabsRef 实时态只在异步续体时刻才有意义（快速连点的中间态），前置同步判定反而引入
-    // 并发窗口（见续体内注释）
+    // 经用户确认放行（大文档 CM 建档可能卡顿，交由用户权衡；恢复路径豁免征询——启动期无人
+    // 应答模态，红线仍生效）；≤5MB 直开（现行为）。判定只读 meta 本地字段、同步完成，天然
+    // 早于任何 IPC；MAX_TABS 判满仍留在 readFile 续体内——tabsRef 实时态只在异步续体时刻
+    // 才有意义（快速连点的中间态），前置同步判定反而引入并发窗口（见续体内注释）
     if (node.size > LARGE_FILE_HARD_LIMIT_BYTES) {
       showToast('文件超过 50MB，无法打开');
       return;
     }
     if (
       node.size > LARGE_FILE_SOFT_LIMIT_BYTES &&
+      opts?.restore !== true &&
       !window.confirm('大文件打开可能卡顿，是否继续？')
     ) {
       return;
     }
-    void window.api.readFile({ nodeId: node.id }).then((result) => {
-      if (!result.ok) {
-        showToast(`打开失败：${result.error.message}`);
-        return;
-      }
-      // 同文件唯一实例（tabModel openTab 幂等语义）：会话已在，聚焦既有标签即可
-      if (sessions.has(node.id)) {
-        setTabsOp((prev) => openTab(prev, node));
-        return;
-      }
-      // 同开上限护栏（spec §3「同开上限 20（超限提示先关）」）：必须先判满再建会话——
-      // openTab 触顶静默拒开，若先 sessions.open 会残留无标签的孤儿会话（悬挂会话时序
-      // 缺陷）；判定读 tabsRef 实时态，闭包 tabsOp 在并发续体下必陈旧
-      if (tabsRef.current.tabs.length >= MAX_TABS) {
-        showToast(`最多同时打开 ${MAX_TABS} 个标签，请先关闭部分标签`);
-        return;
-      }
-      // mimeType 已过 isTextLike 白名单，`??` 仅为可空契约的收尾窄化
-      sessions.open(
-        node.id,
-        createEditorState(
-          new TextDecoder().decode(result.value.content),
-          node.mimeType ?? 'text/plain',
-          {
-            // 库以新实例整体替换 state（A.1-9）：会话态同步 + 输入回路进保存管线（双计时器调度落库）
-            onDocChanged: (text, state) => {
-              sessions.updateState(node.id, state);
-              saveController.edit(node.id, text);
-            },
-            onScroll: (top) => sessions.updateScroll(node.id, top),
-          },
-        ),
-      );
+    const result = await window.api.readFile({ nodeId: node.id });
+    if (!result.ok) {
+      showToast(`打开失败：${result.error.message}`);
+      return;
+    }
+    // 同文件唯一实例（tabModel openTab 幂等语义）：会话已在，聚焦既有标签即可；聚焦同样是
+    // 「最近使用」，与新建分支一样记录 recent + 尾沿写 workspace 激活态
+    if (sessions.has(node.id)) {
+      recordRecentOpen(node);
       setTabsOp((prev) => openTab(prev, node));
-    });
+      tabWriteThrottleRef.current?.call();
+      return;
+    }
+    // 同开上限护栏（spec §3「同开上限 20（超限提示先关）」）：必须先判满再建会话——
+    // openTab 触顶静默拒开，若先 sessions.open 会残留无标签的孤儿会话（悬挂会话时序
+    // 缺陷）；判定读 tabsRef 实时态，闭包 tabsOp 在并发续体下必陈旧
+    if (tabsRef.current.tabs.length >= MAX_TABS) {
+      showToast(`最多同时打开 ${MAX_TABS} 个标签，请先关闭部分标签`);
+      return;
+    }
+    // mimeType 已过 isTextLike 白名单，`??` 仅为可空契约的收尾窄化
+    sessions.open(
+      node.id,
+      createEditorState(
+        new TextDecoder().decode(result.value.content),
+        node.mimeType ?? 'text/plain',
+        {
+          // 库以新实例整体替换 state（A.1-9）：会话态同步 + 输入回路进保存管线（双计时器调度落库）
+          onDocChanged: (text, state) => {
+            sessions.updateState(node.id, state);
+            saveController.edit(node.id, text);
+          },
+          onScroll: (top) => sessions.updateScroll(node.id, top),
+        },
+      ),
+    );
+    recordRecentOpen(node);
+    setTabsOp((prev) => openTab(prev, node));
+    tabWriteThrottleRef.current?.call();
   }
 
   /**
@@ -388,6 +568,13 @@ export function Workspace({
     saveController.tabClosed(id);
     sessions.close(id);
     setTabsOp((prev) => closeTab(prev, id));
+    tabWriteThrottleRef.current?.call(); // 标签集/激活态变更 → workspace 域尾沿写（D8）
+  }
+
+  /** 激活标签（TabBar 点选统一入口）：仅改 activeId（tabs 不动），workspace 域随尾沿写 */
+  function activateTab(id: number): void {
+    setTabsOp((prev) => ({ ...prev, activeId: id }));
+    tabWriteThrottleRef.current?.call();
   }
 
   /**
@@ -488,6 +675,16 @@ export function Workspace({
       saveController.dispose();
     };
   }, [saveController]);
+
+  // 标签写节流卸载释放（资源成对）：先 flush 落掉挂起写（关窗前 300ms 窗口内的标签操作
+  // 不丢），再 dispose 清 timer 与挂起体——此后不再触发（throttleTrailing dispose 语义）
+  useEffect(() => {
+    const throttle = tabWriteThrottleRef.current;
+    return () => {
+      throttle?.flush();
+      throttle?.dispose();
+    };
+  }, []);
 
   // —— 渲染段：grid 模板列内联（M4 spec §5.1 D5）——
   // 列序：树 | 树分隔条 | 编辑器前分隔条（固定宽）| 编辑器（1fr 自适应占余）| 预览分隔条 | 预览；
@@ -668,7 +865,7 @@ export function Workspace({
             <TabBar
               tabs={tabsOp.tabs}
               activeId={tabsOp.activeId}
-              onActivate={(id) => setTabsOp((prev) => ({ ...prev, activeId: id }))}
+              onActivate={activateTab}
               onClose={closeTabById}
             />
           ) : null}
