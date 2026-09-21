@@ -1,9 +1,11 @@
-// preload 桥单元测试：仅暴露具名 api、ping 与 vfs 十通道与 search/settings/vfs:get/shell
-// 通道走类型化通道、广播订阅剥离 event 首参（宪法 A.7-4 / B.5 桥接面最小化）
+// preload 桥单元测试：仅暴露具名 api、platform 标识、ping 与 vfs 通道组（含 vfs:count）
+// 与 search/settings/vfs:get/shell 通道走类型化通道、广播订阅剥离 event 首参
+// （宪法 A.7-4 / B.5 桥接面最小化）
 import { describe, expect, it, vi } from 'vitest';
 
 /** exposeInMainWorld 注册到渲染层的 api 形态（与 src/shared/window-api.ts 契约对应） */
 interface ExposedApi {
+  readonly platform: string;
   ping(): Promise<unknown>;
   listChildren(request: unknown): Promise<unknown>;
   createNode(request: unknown): Promise<unknown>;
@@ -20,6 +22,7 @@ interface ExposedApi {
   settingsGet(request: unknown): Promise<unknown>;
   settingsSet(request: unknown): Promise<unknown>;
   getNode(request: unknown): Promise<unknown>;
+  countNodes(request: unknown): Promise<unknown>;
   forceClose(request: unknown): Promise<unknown>;
   backupCreate(request: unknown): Promise<unknown>;
   backupList(request: unknown): Promise<unknown>;
@@ -35,10 +38,10 @@ interface ExposedApi {
   onIoProgress(callback: (event: unknown) => void): () => void;
 }
 
-/** invoke 类通道的包装方法名（ping 与四个订阅通道单独用例覆盖） */
+/** invoke 类通道的包装方法名（ping 与四个订阅通道单独用例覆盖；platform 为只读字段非方法） */
 type InvokeMethod = Exclude<
   keyof ExposedApi,
-  'ping' | 'onVfsChanged' | 'onShellCommand' | 'onBackupDone' | 'onIoProgress'
+  'ping' | 'platform' | 'onVfsChanged' | 'onShellCommand' | 'onBackupDone' | 'onIoProgress'
 >;
 
 const mocks = vi.hoisted(() => ({
@@ -69,6 +72,7 @@ describe('preload 桥注册', () => {
   it('以具名 api 暴露契约全量成员（禁暴露 ipcRenderer 本体与多余通道）', () => {
     expect(bridgeName).toBe('api');
     expect(Object.keys(exposedApi)).toEqual([
+      'platform',
       'ping',
       'listChildren',
       'createNode',
@@ -85,6 +89,7 @@ describe('preload 桥注册', () => {
       'settingsGet',
       'settingsSet',
       'getNode',
+      'countNodes',
       'forceClose',
       'backupCreate',
       'backupList',
@@ -99,6 +104,10 @@ describe('preload 桥注册', () => {
       'onVfsChanged',
       'onBackupDone',
     ]);
+  });
+
+  it('platform 只读直传 process.platform（TitleBar 平台差异判定消费，不经 invoke）', () => {
+    expect(exposedApi.platform).toBe(process.platform);
   });
 
   it('ping 经 system:ping 通道调用主进程且载荷为 null，结果原样回传', async () => {
@@ -133,6 +142,8 @@ describe('preload 桥注册', () => {
       ['settingsGet', IPC.settingsGet, null],
       ['settingsSet', IPC.settingsSet, payload],
       ['getNode', IPC.vfsGet, payload],
+      // 无参通道沿 settingsGet 先例固定发 null（状态栏文档计数，M6 spec §2.6）
+      ['countNodes', IPC.vfsCount, null],
       ['forceClose', IPC.shellForceClose, null],
       // 备份域（M5 批次③）：create/list 无参通道沿 settingsGet 先例固定发 null，restore 透传请求
       ['backupCreate', IPC.backupCreate, null],

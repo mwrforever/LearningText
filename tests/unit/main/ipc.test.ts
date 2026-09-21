@@ -52,6 +52,7 @@ function makeVfsStub(): VfsService {
     listTrashed: vi.fn(() => []),
     resolvePath: vi.fn(() => ({ nodeId: 2 })),
     getNode: vi.fn(() => ({ id: 2, parentId: 1 })),
+    countNodes: vi.fn(() => 3),
   } as unknown as VfsService;
 }
 
@@ -126,6 +127,7 @@ describe('system:ping 入口校验', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
   });
 
@@ -199,6 +201,7 @@ describe('vfs 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     const okResult = handlers.get(IPC.vfsResolve)?.(fakeEvent('app://bundle'), {
       virtualPath: '/a',
@@ -244,6 +247,7 @@ describe('vfs 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
@@ -280,6 +284,7 @@ describe('vfs 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     const dup = handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
@@ -316,6 +321,7 @@ describe('vfs 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     const r = handlers.get(IPC.vfsList)?.(fakeEvent('http://evil'), { parentId: 1 }) as {
       ok: boolean;
@@ -363,6 +369,7 @@ describe('vfs 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
 
     const read = handlers.get(IPC.vfsRead)?.(fakeEvent('app://bundle'), { nodeId: 5 }) as {
@@ -463,6 +470,7 @@ describe('search 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     const okResult = handlers.get(IPC.searchQuery)?.(fakeEvent('app://bundle'), {
       keyword: '指数',
@@ -500,6 +508,7 @@ describe('search 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     const forbidden = handlers.get(IPC.searchQuery)?.(fakeEvent('http://evil'), {
       keyword: 'x',
@@ -542,6 +551,7 @@ describe('settings 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     const ok = handlers.get(IPC.settingsGet)?.(fakeEvent('app://bundle'), null) as {
       ok: boolean;
@@ -573,6 +583,7 @@ describe('settings 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     // M4 起 settings schema 为 v2：合法载荷以出厂默认为底、仅改写 debounceMs
     const r = handlers.get(IPC.settingsSet)?.(fakeEvent('app://bundle'), {
@@ -586,6 +597,64 @@ describe('settings 通道接线', () => {
     }) as { ok: boolean; error: { code: string } };
     expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
     expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it('settings:set 前后 appearance.theme 变化 → onAppearanceThemeChange 恰一次且携带新意图（M6 主题联动）', () => {
+    const onAppearanceThemeChange = vi.fn();
+    handlers.clear();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      settings: makeSettingsStub(),
+      broadcast: vi.fn(),
+      requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange,
+    });
+    const r = handlers.get(IPC.settingsSet)?.(fakeEvent('app://bundle'), {
+      ...DEFAULT_SETTINGS,
+      appearance: { theme: 'dark', editorFontSize: 14 },
+    }) as { ok: boolean };
+    expect(r.ok).toBe(true); // 旧值 system → 新值 dark：联动触发
+    expect(onAppearanceThemeChange).toHaveBeenCalledTimes(1);
+    expect(onAppearanceThemeChange).toHaveBeenCalledWith('dark');
+  });
+
+  it('settings:set 主题未变化 → 不触发 onAppearanceThemeChange（等值写零联动）', () => {
+    const onAppearanceThemeChange = vi.fn();
+    handlers.clear();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      settings: makeSettingsStub(),
+      broadcast: vi.fn(),
+      requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange,
+    });
+    // DEFAULT_SETTINGS.appearance.theme 即服务桩缓存中的 'system'：等值写不得触发
+    const r = handlers.get(IPC.settingsSet)?.(fakeEvent('app://bundle'), {
+      ...DEFAULT_SETTINGS,
+      preview: { debounceMs: 900 },
+    }) as { ok: boolean };
+    expect(r.ok).toBe(true);
+    expect(onAppearanceThemeChange).not.toHaveBeenCalled();
   });
 });
 
@@ -609,6 +678,7 @@ describe('vfs:get 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     // 桩返回服务层 NodeMeta（Result 包装由 handleWith 统一完成，同既有桩形态）
     const meta: NodeMeta = {
@@ -639,6 +709,51 @@ describe('vfs:get 通道接线', () => {
     };
     expect(miss.ok).toBe(false);
     expect(miss.error.code).toBe(E_VFS_NOT_FOUND);
+  });
+});
+
+// vfs:count 通道（M6 spec §2.6 状态栏文档计数）：无参通道 null 载荷照 settingsGet 先例；
+// 纯读无写事务不广播
+describe('vfs:count 通道接线', () => {
+  it('合法 null 载荷透传服务 countNodes 数值；非 null 载荷 E_IPC_BAD_PAYLOAD；非白名单 origin 拒绝；不广播', () => {
+    handlers.clear();
+    const vfs = makeVfsStub();
+    const broadcast = vi.fn();
+    registerIpcHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs,
+      search: makeSearchStub(),
+      settings: makeSettingsStub(),
+      broadcast,
+      requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
+    });
+    const ok = handlers.get(IPC.vfsCount)?.(fakeEvent('app://bundle'), null) as {
+      ok: boolean;
+      value: number;
+    };
+    expect(ok).toEqual({ ok: true, value: 3 });
+    expect(vfs.countNodes).toHaveBeenCalledTimes(1);
+    const bad = handlers.get(IPC.vfsCount)?.(fakeEvent('app://bundle'), { x: 1 }) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    const forbidden = handlers.get(IPC.vfsCount)?.(fakeEvent('http://evil'), null) as {
+      ok: boolean;
+    };
+    expect(forbidden.ok).toBe(false);
+    // 纯读通道不产生变更事件 → 不广播（宪法 B.3-4）
+    expect(broadcast).not.toHaveBeenCalled();
   });
 });
 
@@ -680,6 +795,7 @@ describe('vfs:list-trashed 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     const ok = handlers.get(IPC.vfsListTrashed)?.(fakeEvent('app://bundle'), null) as {
       ok: boolean;
@@ -721,6 +837,7 @@ describe('shell:force-close 接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     const bad = handlers.get(IPC.shellForceClose)?.(fakeEvent('app://bundle'), { x: 1 }) as {
       ok: boolean;
@@ -755,6 +872,7 @@ describe('广播版本号 rev', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     handlers.get(IPC.vfsWrite)?.(fakeEvent('app://bundle'), {
       nodeId: 2,
@@ -798,6 +916,7 @@ describe('backup 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
     });
     return deps;
   }
@@ -890,6 +1009,7 @@ describe('io 通道接线', () => {
     export: ExportService;
     dialogProducedDirs: ReadonlySet<string>;
     openDirectoryInShell: (dir: string) => Promise<void>;
+    onAppearanceThemeChange: (intent: 'light' | 'dark' | 'system') => void;
   }
 
   function registerWith(overrides: Partial<IoDeps> = {}): IoDeps {
@@ -899,6 +1019,7 @@ describe('io 通道接线', () => {
       export: makeExportStub(),
       dialogProducedDirs: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
       ...overrides,
     };
     handlers.clear();
@@ -917,6 +1038,7 @@ describe('io 通道接线', () => {
       export: deps.export,
       dialogProducedDirs: deps.dialogProducedDirs,
       openDirectoryInShell: deps.openDirectoryInShell,
+      onAppearanceThemeChange: deps.onAppearanceThemeChange,
     });
     return deps;
   }

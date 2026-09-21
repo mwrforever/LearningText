@@ -30,27 +30,31 @@ function textResponse(body: string, status: number): Response {
 }
 
 /**
- * 预览接收器（M4 spec §5.4 裁决 D10 + M5 批次⑤ Task 11）：沙箱子文档注入脚本——
- * 消息入口监听两类父→子消息：lt:css-swap 热替换（按「href 相对解析 pathname === 消息
- * path」匹配 <link> 并替换为等值 <style>，滚动保持）；lt:scroll-ratio 滚动比例下行
- * （M3 spec §7.2，按 offsetFromRatio 同式就地换算 scrollTo——有限数校验防 NaN 落地）。
- * 另监听本窗口 scroll 上报 lt:scroll-report（比例 + 可视首行文本锚点快照，文档序首个
- * 视口内带文本块级元素、trim 后截 80 字符——渲染文本与编辑器源文按字面子串对齐，启发式
- * 已知边界：实体/空白差异时锚点失效由编辑器侧静默）。回环抑制由父侧 150ms 抑制窗承担
- * （D13），子端只上报不做抑制。
+ * 预览接收器 + 所见即所得编辑桥（M4 spec §5.4 裁决 D10 → M6 spec §3.1 扩展）：
+ * 沙箱子文档注入脚本，职责三段——
+ * ① lt:css-swap 热替换（按「href 相对解析 pathname === 消息 path」匹配 <link> 并替换为
+ *    等值 <style>，滚动保持）；pathname 侧 decodeURIComponent 是硬性必需——WHATWG URL
+ *    序列化对非 ASCII 路径恒百分号编码，而触发端 postMessage 的 path 为库内原始
+ *    virtualPath，不解码则 CJK 路径永不命中；解码失败由 try/catch 兜底静默跳过。
+ * ② 编辑会话（M6 spec §3.1）：父→子 lt:edit-enable（body contentEditable='true' +
+ *    spellcheck=false，挂 input 监听）/lt:edit-disable（撤销编辑态）；input 触发 200ms
+ *    去抖序列化上报 lt:doc-edit {html}——序列化 = clone documentElement → 摘除全部
+ *    [data-lt-injected]（本桥自身，永不落库，否则每轮保存累积脚本且污染 content_hash）
+ *    → 摘除 body 的 contenteditable/spellcheck 属性 → doctype 重建（name/publicId/systemId）
+ *    → outerHTML 拼接（spec §3.2）。M6 起滚动同步退役（编辑面=渲染面，spec D5），
+ *    原 lt:scroll-ratio / lt:scroll-report 注入段删除。
  * 注意：字符串内不得出现 </script> 序列（会在宿主页提前闭合标签），闭合标签以
- * `'</' + 'script>'` 拼接形态落地；拼接体的 JS 语法由注入集成测试以 new Function
- * 编译守卫兜底（语法破损在单测链路无从暴露，只在真实预览运行时爆发）。
- * pathname 侧 decodeURIComponent 是硬性必需——
- * WHATWG URL 序列化对非 ASCII 路径恒百分号编码（node 探针实证：
- * new URL('vfs://local/笔记/a.css').pathname === '/%E7%AC%94%E8%AE%B0/a.css'），
- * 而触发端（PreviewPanel）postMessage 的 path 为库内原始 virtualPath，不解码则
- * CJK 路径永不命中（本项目主要场景）；解码失败由既有 try/catch 兜底静默跳过。
+ * `'</' + 'script>'` 拼接形态落地；拼接体的 JS 语法由集成测试以 new Function 编译
+ * 守卫兜底，序列化行为由 jsdom 运行时用例覆盖（unit 层真实执行注入体）。
+ * 本桥带 data-lt-injected 标记：既是序列化剥离锚，也是集成测试注入断言锚。
  */
 const PREVIEW_RECEIVER =
-  '<script>' +
-  '(function () {window.addEventListener("message", function (e) {var m = e.data;if (m && m.type === "lt:css-swap" && typeof m.path === "string" && typeof m.text === "string") {var links = document.querySelectorAll(\'link[rel="stylesheet"]\');for (var i = 0; i < links.length; i++) {var href = links[i].getAttribute("href");if (href !== null) {try {if (decodeURIComponent(new URL(href, document.baseURI).pathname) === m.path) {var s = document.createElement("style");s.textContent = m.text;links[i].replaceWith(s);}} catch (_e) {}}}} else if (m && m.type === "lt:scroll-ratio" && typeof m.ratio === "number" && isFinite(m.ratio)) {var range = document.documentElement.scrollHeight - window.innerHeight;if (range > 0) {window.scrollTo(0, Math.max(0, Math.min(1, m.ratio)) * range);}}});' +
-  'window.addEventListener("scroll", function () {var max = document.documentElement.scrollHeight - window.innerHeight;var ratio = max <= 0 ? 0 : Math.min(1, Math.max(0, (window.scrollY || window.pageYOffset || 0) / max));var anchor = "";if (document.body) {var nodes = document.body.querySelectorAll("h1,h2,h3,h4,h5,h6,p,li,dt,dd,pre,blockquote,td,th");for (var j = 0; j < nodes.length; j++) {var rect = nodes[j].getBoundingClientRect();if (rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight) {var text = (nodes[j].textContent || "").trim();if (text) {anchor = text.slice(0, 80);break;}}}}parent.postMessage({ type: "lt:scroll-report", ratio: ratio, anchorText: anchor }, "*");});' +
+  '<script data-lt-injected="1">' +
+  '(function () {' +
+  'function ltSerialize() {var clone = document.documentElement.cloneNode(true);var injected = clone.querySelectorAll("[data-lt-injected]");for (var i = injected.length - 1; i >= 0; i--) {injected[i].parentNode.removeChild(injected[i]);}var b = clone.tagName === "BODY" ? clone : clone.querySelector("body");if (b) {b.removeAttribute("contenteditable");b.removeAttribute("spellcheck");}var head = "";var dt = document.doctype;if (dt) {head = "<!DOCTYPE " + dt.name;if (dt.publicId) {head += " PUBLIC \\"" + dt.publicId + "\\"";if (dt.systemId) {head += " \\"" + dt.systemId + "\\"";}} else if (dt.systemId) {head += " SYSTEM \\"" + dt.systemId + "\\"";}head += ">\\n";}return head + clone.outerHTML;}' +
+  'var ltTimer = 0;' +
+  'function ltReport() {if (ltTimer) {clearTimeout(ltTimer);}ltTimer = setTimeout(function () {ltTimer = 0;parent.postMessage({ type: "lt:doc-edit", html: ltSerialize() }, "*");}, 200);}' +
+  'window.addEventListener("message", function (e) {var m = e.data;if (m && m.type === "lt:css-swap" && typeof m.path === "string" && typeof m.text === "string") {var links = document.querySelectorAll(\'link[rel="stylesheet"]\');for (var i = 0; i < links.length; i++) {var href = links[i].getAttribute("href");if (href !== null) {try {if (decodeURIComponent(new URL(href, document.baseURI).pathname) === m.path) {var s = document.createElement("style");s.textContent = m.text;links[i].replaceWith(s);}} catch (_e) {}}}} else if (m && m.type === "lt:edit-enable") {if (document.body) {document.body.contentEditable = "true";document.body.spellcheck = false;document.body.addEventListener("input", ltReport);}} else if (m && m.type === "lt:edit-disable") {if (document.body) {document.body.contentEditable = "false";document.body.removeEventListener("input", ltReport);}}});' +
   '})();</' +
   'script>';
 

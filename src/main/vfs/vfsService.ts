@@ -56,6 +56,10 @@ export function createVfsService(db: Database.Database) {
     number,
     NodeRow & { deleted_at: string | null; content: Buffer | null }
   >('SELECT * FROM node WHERE id = ?');
+  // 活节点总数（M6 vfs:count）：COUNT 聚合纯读，工厂闭包内预编译复用（宪法 A.4-5）
+  const stmtCountAlive = db.prepare<[], { total: number }>(
+    'SELECT COUNT(*) AS total FROM node WHERE deleted_at IS NULL',
+  );
 
   /** 取未删除节点行（含 content 完整列）；不存在或已在回收站抛 E_VFS_NOT_FOUND（服务内高频路径） */
   function requireRow(id: number): NodeRow & { deleted_at: string | null; content: Buffer | null } {
@@ -160,6 +164,15 @@ export function createVfsService(db: Database.Database) {
         throw new AppError(E_VFS_NOT_FOUND, '节点不存在或已在回收站');
       }
       return toNodeMeta(row);
+    },
+
+    /**
+     * 活节点总数（M6 vfs:count，spec §2.6 状态栏文档计数）：COUNT(*) 聚合纯读，
+     * 万级库 <5ms（NFR-03 余量内），含目录——展示口径为「节点/文档总数」。
+     */
+    countNodes(): number {
+      const row = stmtCountAlive.get() as { total: number };
+      return row.total;
     },
 
     /** 建目录/文件（FR-VFS-01）：名称校验 → 重名预查 → 单事务落库 + FTS */

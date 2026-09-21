@@ -1,9 +1,13 @@
-// 标签状态机（M4 spec §3）：同文件唯一实例聚焦、关闭右邻优先、上限护栏、meta/dirty 同步
+// 标签状态机（M4 spec §3 → M6 spec §2.4 扩型）：同文件唯一实例聚焦、关闭右邻优先、上限护栏、
+// meta/dirty 同步；设置伪标签（settingsOpen + 'settings' 哨兵）开/关/幂等/回落语义
 import { describe, expect, it } from 'vitest';
 import type { NodeMeta } from '../../../src/shared/vfs-contract';
 import {
+  EMPTY_TABS_OP,
   MAX_TABS,
+  closeSettingsTab,
   closeTab,
+  openSettingsTab,
   openTab,
   setTabDirty,
   updateTabMeta,
@@ -24,9 +28,9 @@ function meta(id: number, name: string): NodeMeta {
     updatedAt: '2026-09-18T10:00:00.000+08:00',
   };
 }
-const EMPTY: TabsOp = { tabs: [], activeId: null };
+const EMPTY: TabsOp = EMPTY_TABS_OP;
 
-describe('tabModel', () => {
+describe('tabModel doc 标签状态机', () => {
   it('openTab：空开激活；重复打开同文件聚焦既有不重复建', () => {
     let op = openTab(EMPTY, meta(2, 'a.html'));
     expect(op.activeId).toBe(2);
@@ -76,7 +80,7 @@ describe('tabModel', () => {
     expect(op.activeId).toBeNull();
     expect(op.tabs).toHaveLength(0);
     const dirtied = setTabDirty(
-      { tabs: [{ meta: meta(2, 'a'), dirty: false }], activeId: 2 },
+      { tabs: [{ meta: meta(2, 'a'), dirty: false }], activeId: 2, settingsOpen: false },
       2,
       true,
     );
@@ -98,5 +102,62 @@ describe('tabModel', () => {
     expect(renamed.tabs[0]?.meta.name).toBe('a'); // 未命中的 2 不受影响
     expect(renamed.tabs[1]?.meta.name).toBe('新.html');
     expect(renamed.activeId).toBe(3);
+  });
+});
+
+describe('tabModel 设置伪标签（M6 spec §2.4）', () => {
+  it('openSettingsTab：空工作台打开即激活（哨兵 settings）且 settingsOpen 置位；不占 doc 标签位', () => {
+    const op = openSettingsTab(EMPTY);
+    expect(op.tabs).toHaveLength(0);
+    expect(op.activeId).toBe('settings');
+    expect(op.settingsOpen).toBe(true);
+  });
+
+  it('openSettingsTab：重复打开幂等聚焦（doc 激活态让位，标签集不变）', () => {
+    const op = openTab(openTab(EMPTY, meta(2, 'a')), meta(3, 'b'));
+    const once = openSettingsTab(op);
+    expect(once.activeId).toBe('settings');
+    expect(once.settingsOpen).toBe(true);
+    expect(once.tabs).toHaveLength(2);
+    // 设置已在后台驻留时再开：仍为聚焦语义，状态无二次变化
+    const twice = openSettingsTab(once);
+    expect(twice).toEqual(once);
+  });
+
+  it('openSettingsTab 后 openTab：聚焦既有 doc 标签，设置标签保持后台驻留（settingsOpen 不丢）', () => {
+    const op = openTab(openSettingsTab(openTab(EMPTY, meta(2, 'a'))), meta(2, 'a'));
+    expect(op.activeId).toBe(2);
+    expect(op.settingsOpen).toBe(true);
+    expect(op.tabs).toHaveLength(1);
+  });
+
+  it('closeSettingsTab：设置激活时关闭回落末位 doc 标签；无 doc 标签回落 null', () => {
+    const op = openSettingsTab(openTab(openTab(EMPTY, meta(2, 'a')), meta(3, 'b')));
+    const closed = closeSettingsTab(op);
+    expect(closed.settingsOpen).toBe(false);
+    expect(closed.activeId).toBe(3); // 设置标签恒在末位，左邻即末位 doc 标签
+    expect(closed.tabs).toHaveLength(2);
+    // 无 doc 标签的纯设置工作台：关闭后回空工作台（激活归 null）
+    const bare = closeSettingsTab(openSettingsTab(EMPTY));
+    expect(bare.activeId).toBeNull();
+    expect(bare.settingsOpen).toBe(false);
+    expect(bare.tabs).toHaveLength(0);
+  });
+
+  it('closeSettingsTab：doc 激活（设置后台驻留）时关闭仅摘设置标签，激活态不动', () => {
+    const op = openTab(
+      openSettingsTab(openTab(openTab(EMPTY, meta(2, 'a')), meta(3, 'b'))),
+      meta(2, 'a'),
+    );
+    const closed = closeSettingsTab(op);
+    expect(closed.settingsOpen).toBe(false);
+    expect(closed.activeId).toBe(2);
+    expect(closed.tabs).toHaveLength(2);
+  });
+
+  it('closeSettingsTab：设置本未打开时为 no-op', () => {
+    const op = openTab(EMPTY, meta(2, 'a'));
+    expect(closeSettingsTab(op)).toEqual(op);
+    expect(closeSettingsTab(EMPTY)).toEqual(EMPTY);
   });
 });

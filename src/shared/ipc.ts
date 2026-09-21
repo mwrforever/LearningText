@@ -67,4 +67,6 @@ export const IPC = {
   shellForceClose: 'shell:force-close',
   /** 按 nodeId 反查节点 meta（rename/move 后路径新鲜化，spec §6.1） */
   vfsGet: 'vfs:get',
+  /** 活节点总数（状态栏文档计数，M6 spec §2.6；无参 payload null 先例） */
+  vfsCount: 'vfs:count',
 } as const;

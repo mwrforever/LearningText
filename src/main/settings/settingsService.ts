@@ -1,8 +1,9 @@
 /**
- * 设置服务（M3 spec §5 / M4 spec §7 / M5 批次③）：userData/settings/settings.json 的独占读写——
- * 启动同步加载（几 KB JSON，A.5-4 预算内）、内存缓存、set 原子写（tmp+rename）。
- * 装载链：v3 直读 → v2 静默迁移（补默认域 + 原子回写）→ v1 两级链式迁移（v1→v2→v3）→
- * 损坏/版本不识别 warn 回退默认，禁止阻断启动（fail-fast 仅数据库适用，A.5-1；设置属可丢弃缓存）。
+ * 设置服务（M3 spec §5 / M4 spec §7 / M5 批次③ / M6 v4）：userData/settings/settings.json 的
+ * 独占读写——启动同步加载（几 KB JSON，A.5-4 预算内）、内存缓存、set 原子写（tmp+rename）。
+ * 装载链：v4 直读 → v3 迁移（shell.layout 改型侧栏形态 + 原子回写）→ v2 静默迁移 →
+ * v1 三级链式迁移（v1→v2→v3→v4）→ 损坏/版本不识别 warn 回退默认，禁止阻断启动
+ * （fail-fast 仅数据库适用，A.5-1；设置属可丢弃缓存）。
  * 校验唯一闸口在 IPC 层 handleWith（A.7-5），服务侧收 typed 数据直接落盘（不留不可达死分支）。
  */
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -11,8 +12,10 @@ import {
   SettingsSchema,
   SettingsSchemaV1,
   SettingsSchemaV2,
+  SettingsSchemaV3,
   migrateV1ToV2,
   migrateV2ToV3,
+  migrateV3ToV4,
   type SettingsData,
 } from '../../shared/settings-contract';
 
@@ -53,24 +56,33 @@ export function createSettingsService(deps: { settingsFile: string }): SettingsS
   try {
     if (existsSync(deps.settingsFile)) {
       const raw = JSON.parse(readFileSync(deps.settingsFile, 'utf8')) as unknown;
-      const asV3 = SettingsSchema.safeParse(raw);
-      if (asV3.success) {
-        cached = asV3.data;
+      const asV4 = SettingsSchema.safeParse(raw);
+      if (asV4.success) {
+        cached = asV4.data;
       } else {
-        // v3 不中先试 v2 迁移（M5 批次③）：成功则补四新域默认原子回写，旧域用户值原样保留
-        const asV2 = SettingsSchemaV2.safeParse(raw);
-        if (asV2.success) {
-          writeSettings(migrateV2ToV3(asV2.data), '配置已从 schemaVersion 2 迁移至 3');
+        // v4 不中先试 v3 迁移（M6）：shell.layout 改型侧栏形态，六域用户值原样保留
+        const asV3 = SettingsSchemaV3.safeParse(raw);
+        if (asV3.success) {
+          writeSettings(migrateV3ToV4(asV3.data), '配置已从 schemaVersion 3 迁移至 4');
         } else {
-          // 再试 v1 两级链式迁移：v1 补 M4 域后经 v2→v3 续迁，一次落盘一条 info
-          const asV1 = SettingsSchemaV1.safeParse(raw);
-          if (asV1.success) {
+          // 再试 v2 迁移（M5 批次③）：成功则补四新域默认并续迁 v4，旧域用户值原样保留
+          const asV2 = SettingsSchemaV2.safeParse(raw);
+          if (asV2.success) {
             writeSettings(
-              migrateV2ToV3(migrateV1ToV2(asV1.data)),
-              '配置已从 schemaVersion 1 迁移至 3',
+              migrateV3ToV4(migrateV2ToV3(asV2.data)),
+              '配置已从 schemaVersion 2 迁移至 4',
             );
           } else {
-            console.warn('[settings] 配置文件校验失败，回退默认值', asV3.error.name);
+            // 末试 v1 三级链式迁移：v1 补 M4 域后经 v2→v3→v4 续迁，一次落盘一条 info
+            const asV1 = SettingsSchemaV1.safeParse(raw);
+            if (asV1.success) {
+              writeSettings(
+                migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(asV1.data))),
+                '配置已从 schemaVersion 1 迁移至 4',
+              );
+            } else {
+              console.warn('[settings] 配置文件校验失败，回退默认值', asV4.error.name);
+            }
           }
         }
       }

@@ -12,6 +12,8 @@ import type { IoProgress } from '../shared/io-contract';
 import type { WindowApi } from '../shared/window-api';
 
 const api: WindowApi = {
+  // 平台标识（M6 spec §2.2）：contextBridge 原语直传，渲染层据此做菜单/控制钮平台差异
+  platform: process.platform,
   ping: (): Promise<Result<{ pong: true }>> => ipcRenderer.invoke(IPC.systemPing, null),
   // —— VFS 域（M1）：invoke 转发即最终形态，zod 校验与业务逻辑在主进程 handler ——
   listChildren: (request) => ipcRenderer.invoke(IPC.vfsList, request),
@@ -30,6 +32,8 @@ const api: WindowApi = {
   settingsGet: () => ipcRenderer.invoke(IPC.settingsGet, null),
   settingsSet: (request) => ipcRenderer.invoke(IPC.settingsSet, request),
   getNode: (request) => ipcRenderer.invoke(IPC.vfsGet, request),
+  // 无参通道沿 settingsGet 先例固定发 null（状态栏文档计数，M6 spec §2.6）
+  countNodes: () => ipcRenderer.invoke(IPC.vfsCount, null),
   forceClose: () => ipcRenderer.invoke(IPC.shellForceClose, null),
   // —— 备份域（M5 批次③）：create/list 无参通道沿 settingsGet 先例固定发 null ——
   backupCreate: () => ipcRenderer.invoke(IPC.backupCreate, null),

@@ -76,7 +76,7 @@ function page(
 
 /** 桥桩（trash-panel/quick-open 先例）：返回对象供测试取 spy */
 function stubSearchApi(overrides: Partial<Record<string, unknown>> = {}): {
-  api: Record<string, ReturnType<typeof vi.fn>>;
+  api: Record<string, unknown>;
   shellHandlers: Array<(command: ShellCommand) => void>;
 } {
   const shellHandlers: Array<(command: ShellCommand) => void> = [];
@@ -100,6 +100,9 @@ function stubSearchApi(overrides: Partial<Record<string, unknown>> = {}): {
     onVfsChanged: vi.fn(() => vi.fn()),
     // 导入进度订阅（M5 批次⑥ Task 12）：Workspace 挂载即订阅
     onIoProgress: vi.fn(() => vi.fn()),
+    // M6 壳层装配路径补员：状态栏文档计数与 TitleBar 平台标识
+    countNodes: vi.fn(() => Promise.resolve({ ok: true, value: 0 })),
+    platform: 'win32',
     ...overrides,
   };
   Object.defineProperty(window, 'api', { value: api, configurable: true, writable: true });
@@ -340,9 +343,9 @@ describe('SearchPanel 全局搜索面板', () => {
   });
 });
 
-// Workspace search 态接线：标题栏入口 / shell:command 分支 / Esc 回树态 / 搜索→打开主链路
+// Workspace search 态接线：活动栏入口 / shell:command 分支 / Esc 回树态 / 搜索→打开主链路
 describe('Workspace search 态接线', () => {
-  it('「打开全局搜索」进入 search 态（SearchPanel 挂载、树内容卸载）；「返回资源树」回树', async () => {
+  it('活动栏「全局搜索」进入 search 态（SearchPanel 挂载、树内容卸载）；「返回资源树」回树', async () => {
     stubSearchApi();
     act(() => {
       tree.render(<Workspace />);
@@ -350,7 +353,7 @@ describe('Workspace search 态接线', () => {
     await flushMicrotasks();
     expect(container.querySelector('nav[aria-label="资源树"]')).not.toBeNull();
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="打开全局搜索"]')?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="全局搜索"]')?.click();
     });
     expect(container.querySelector('section[aria-label="全局搜索"]')).not.toBeNull();
     expect(container.querySelector('nav[aria-label="资源树"]')).toBeNull();
@@ -383,7 +386,7 @@ describe('Workspace search 态接线', () => {
     });
     await flushMicrotasks();
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="打开全局搜索"]')?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="全局搜索"]')?.click();
     });
     expect(container.querySelector('section[aria-label="全局搜索"]')).not.toBeNull();
     await act(async () => {
@@ -400,7 +403,7 @@ describe('Workspace search 态接线', () => {
     });
     await flushMicrotasks();
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="打开全局搜索"]')?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="全局搜索"]')?.click();
     });
     submitKeyword('指数');
     await flushMicrotasks();
@@ -416,7 +419,7 @@ describe('Workspace search 态接线', () => {
   // 场景：根 > 笔记(10) > todo.html(11)；resolvePath('/笔记') → 10；listChildren 按父分层返回
 
   /** reveal 链路桥桩：根 children=笔记、笔记 children=todo.html、路径解析按段命中 */
-  function stubRevealApi(): Record<string, ReturnType<typeof vi.fn>> {
+  function stubRevealApi(): Record<string, unknown> {
     const { api } = stubSearchApi({
       searchQuery: vi.fn(() =>
         Promise.resolve({
@@ -450,14 +453,14 @@ describe('Workspace search 态接线', () => {
   }
 
   /** 冒烟前置：进入 search 态 → 搜索 → 渲染出 todo.html 命中行；返回当前生效桥桩供断言 */
-  async function renderSearchWithTodoHit(): Promise<Record<string, ReturnType<typeof vi.fn>>> {
+  async function renderSearchWithTodoHit(): Promise<Record<string, unknown>> {
     const api = stubRevealApi();
     act(() => {
       tree.render(<Workspace />);
     });
     await flushMicrotasks();
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="打开全局搜索"]')?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="全局搜索"]')?.click();
     });
     submitKeyword('指数');
     await flushMicrotasks();
@@ -505,7 +508,7 @@ describe('Workspace search 态接线', () => {
     });
     await flushMicrotasks();
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="打开全局搜索"]')?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="全局搜索"]')?.click();
     });
     submitKeyword('指数');
     await flushMicrotasks();

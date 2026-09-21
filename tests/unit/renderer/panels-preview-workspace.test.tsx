@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// PreviewPanel：src 初值/沙箱属性/订阅 cleanup；Workspace：启动装配（resolve+listChildren+settingsGet）
-// 与广播→树刷新、stale 重取的接线（决策逻辑本体已在 Task 5 单测，此处验证 wiring 成对）
+// PreviewPanel：src 初值/沙箱属性/订阅 cleanup；Workspace：M6 壳层（标题栏/活动栏/侧栏/
+// 画布/状态栏）启动装配（resolve+listChildren+settingsGet+countNodes）、广播→树刷新、
+// stale 重取与侧栏折叠布局记忆的接线（决策逻辑本体已在纯函数单测，此处验证 wiring 成对）
 import { act } from 'react';
 import { EditorView } from '@codemirror/view';
 import { createRoot } from 'react-dom/client';
@@ -47,6 +48,9 @@ function stubApi(overrides: Partial<Record<string, unknown>> = {}): Record<strin
     forceClose: vi.fn(() => Promise.resolve({ ok: true, value: null })),
     // 回收站面板挂载首拉（trash 态内容自持数据；Task 10 move 复位用例切入 trash 态时需要）
     listTrashed: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
+    // 状态栏文档计数（M6 spec §2.6）：启动装配与树广播后各查一次；平台标识供 TitleBar 消费
+    countNodes: vi.fn(() => Promise.resolve({ ok: true, value: 1 })),
+    platform: 'win32',
     onShellCommand: vi.fn((callback: (command: ShellCommand) => void) => {
       // 退订函数为 vi.fn 桩，卸载后可断言 cleanup 确实调用（同 onVfsChanged 强化先例）
       const unsub = vi.fn(() => {
@@ -233,16 +237,22 @@ describe('PreviewPanel', () => {
 });
 
 describe('Workspace 启动装配', () => {
-  it('settingsGet + listChildren 根拉取后渲染树与编辑器占位与预览占位', async () => {
-    const api = stubApi() as unknown as { listChildren: ReturnType<typeof vi.fn> };
+  it('settingsGet + listChildren 根拉取后渲染树与欢迎页空态；countNodes 装配文档计数', async () => {
+    const api = stubApi() as unknown as {
+      listChildren: ReturnType<typeof vi.fn>;
+      countNodes: ReturnType<typeof vi.fn>;
+    };
     const tree = createRoot(container);
     await act(async () => {
       tree.render(<Workspace />);
     });
     expect(api.listChildren).toHaveBeenCalledWith(expect.objectContaining({ parentId: 1 }));
     expect(container.textContent).toContain('笔记');
-    // 未选中文件占位现由 EditorPanel 空态承载（M4 起 activeTab 恒空的过渡桥已被会话中枢取代）
-    expect(container.textContent).toContain('未选中文件');
+    // 无标签空态由欢迎页承载（M6 spec §2.5）：主操作钮可见，编辑器/预览不再挂空占位
+    expect(container.querySelector('.lt-welcome')).not.toBeNull();
+    // 状态栏文档计数装配（M6 spec §2.6）：挂载即查一次并呈现「N 个文档」
+    expect(api.countNodes).toHaveBeenCalled();
+    expect(container.textContent).toContain('1 个文档');
     act(() => {
       tree.unmount();
     });
@@ -528,7 +538,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     expect(tabs()[0]?.getAttribute('aria-current')).toBe('true');
     expect(tabs()[0]?.textContent).toBe('a.html');
     expect(container.querySelector('.cm-content')?.textContent).toBe('甲');
-    // 全关：编辑/预览回空态占位，TabBar 摘除
+    // 全关：编辑画布回欢迎页空态，TabBar 摘除
     const closeA = container.querySelector<HTMLButtonElement>(
       'button[aria-label="关闭标签 a.html"]',
     );
@@ -536,7 +546,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       closeA?.click();
     });
     expect(tabs()).toHaveLength(0);
-    expect(container.textContent).toContain('未选中文件');
+    expect(container.querySelector('.lt-welcome')).not.toBeNull();
     expect(container.querySelector('iframe')).toBeNull();
     // 会话已随标签关闭（而非仅视图摘除）：重开同文件必须重新读库建会话
     await act(async () => {
@@ -570,15 +580,13 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
         ?.click();
     });
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
-    // 树工具栏删除钮以当前激活（=选中）为目标
+    // 树工具栏删除钮（M6 图标钮锚点）以当前激活（=选中）为目标
     await act(async () => {
-      Array.from(container.querySelectorAll('button'))
-        .find((b) => b.textContent === '删除')
-        ?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="删除"]')?.click();
     });
     expect(api.trashNode).toHaveBeenCalledWith({ nodeId: 3 });
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    expect(container.textContent).toContain('未选中文件');
+    expect(container.querySelector('.lt-welcome')).not.toBeNull();
     // 会话同收证据：重开必须重新读库
     await act(async () => {
       Array.from(container.querySelectorAll('button'))
@@ -621,7 +629,7 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
     return editorDom === null ? null : EditorView.findFromDOM(editorDom);
   }
 
-  /** 按文本找按钮并点击（树点选/工具栏共用助手） */
+  /** 按文本找按钮并点击（树点选共用助手） */
   async function clickButton(text: string): Promise<void> {
     await act(async () => {
       Array.from(container.querySelectorAll('button'))
@@ -822,10 +830,10 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
   });
 });
 
-// 三栏折叠与布局记忆（M4 Task 7，FR-SHELL-01）：折叠/展开经 aria-label 锚点驱动，
-// 折叠态经折叠类名与内联样式断言（jsdom 无布局引擎，不碰 getBoundingClientRect 实测值；
-// 拖拽几何换算本体已在 layoutModel 纯函数单测覆盖，此处只验接线）
-describe('Workspace 三栏折叠与布局记忆（M4 Task 7）', () => {
+// 侧栏折叠与布局记忆（M4 Task 7 → M6 spec §2.7 语义迁移：三栏折叠退役为单侧栏形态）：
+// 折叠/展开经 aria-label 锚点驱动，折叠态经折叠类名断言（jsdom 无布局引擎，不碰
+// getBoundingClientRect 实测值；拖拽几何换算本体已在 layoutModel 纯函数单测覆盖，此处只验接线）
+describe('Workspace 侧栏折叠与布局记忆（M6 v4）', () => {
   /** 按 aria-label 找钮点击（折叠/展开钮无文本语义，统一走可访问名锚点） */
   async function clickAriaLabel(label: string): Promise<void> {
     await act(async () => {
@@ -833,114 +841,46 @@ describe('Workspace 三栏折叠与布局记忆（M4 Task 7）', () => {
     });
   }
 
-  it('折叠树栏：容器带折叠类、窄条展开钮反向出现；settingsSet 以 get→merge→set 全量写回 shell.layout', async () => {
+  it('折叠侧栏：容器带折叠类、窄条展开钮反向出现；settingsSet 以 get→merge→set 全量写回 shell.layout', async () => {
     const api = stubApi() as unknown as { settingsSet: ReturnType<typeof vi.fn> };
     const tree = createRoot(container);
     await act(async () => {
       tree.render(<Workspace />);
     });
-    await clickAriaLabel('折叠树栏');
-    const treePane = container.querySelector('.lt-pane-tree');
-    expect(treePane?.classList.contains('lt-pane-collapsed')).toBe(true);
-    expect(container.querySelector('button[aria-label="展开树栏"]')).not.toBeNull();
-    // 全量写回语义：get 到的设置原样保留 preview/editor 域，仅 shell.layout 换为折叠态
+    await clickAriaLabel('折叠侧栏');
+    const sidebar = container.querySelector('.lt-sidebar');
+    expect(sidebar?.classList.contains('lt-sidebar-collapsed')).toBe(true);
+    expect(container.querySelector('button[aria-label="展开侧栏"]')).not.toBeNull();
+    // 全量写回语义：get 到的设置原样保留 preview/editor 等域，仅 shell.layout 换为折叠态
     expect(api.settingsSet).toHaveBeenCalledWith({
       ...DEFAULT_SETTINGS,
-      shell: { layout: { ...DEFAULT_LAYOUT, treeCollapsed: true } },
+      shell: { layout: { ...DEFAULT_LAYOUT, sidebarCollapsed: true } },
     });
     // 反向展开：折叠类摘除、窄条展开钮消失
-    await clickAriaLabel('展开树栏');
-    expect(container.querySelector('.lt-pane-tree')?.classList.contains('lt-pane-collapsed')).toBe(
+    await clickAriaLabel('展开侧栏');
+    expect(container.querySelector('.lt-sidebar')?.classList.contains('lt-sidebar-collapsed')).toBe(
       false,
     );
-    expect(container.querySelector('button[aria-label="展开树栏"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="展开侧栏"]')).toBeNull();
     expect(api.settingsSet).toHaveBeenLastCalledWith({
       ...DEFAULT_SETTINGS,
-      shell: { layout: { ...DEFAULT_LAYOUT, treeCollapsed: false } },
+      shell: { layout: { ...DEFAULT_LAYOUT, sidebarCollapsed: false } },
     });
     act(() => {
       tree.unmount();
     });
   });
 
-  it('折叠编辑器：容器隐藏（display:none + 折叠类）但 EditorPanel 保持挂载，保存态照常呈现', async () => {
-    stubApi({
-      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
-      readFile: vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          value: { content: new TextEncoder().encode('<p>正文</p>'), meta: meta(3, 'a.html') },
-        }),
-      ),
-    });
-    const tree = createRoot(container);
-    await act(async () => {
-      tree.render(<Workspace />);
-    });
-    // 先开标签让 CM 会话就绪：编辑器折叠后视图 DOM 必须仍在（保存管线照常的结构前提）
-    await act(async () => {
-      Array.from(container.querySelectorAll('button'))
-        .find((b) => b.textContent === 'a.html')
-        ?.click();
-    });
-    expect(container.querySelector('.cm-editor')).not.toBeNull();
-    await clickAriaLabel('折叠编辑器');
-    const editorPane = container.querySelector<HTMLElement>('.lt-pane-editor');
-    expect(editorPane?.classList.contains('lt-pane-collapsed')).toBe(true);
-    expect(editorPane?.style.display).toBe('none');
-    // 保持挂载证据：CM 视图与保存态文案仍在 DOM（容器隐藏非卸载，spec §5.1）
-    expect(container.querySelector('.cm-editor')).not.toBeNull();
-    expect(container.querySelector('.lt-editor-bar')?.textContent).toContain('已保存');
-    // 展开回显：隐藏样式摘除、视图无重挂（doc 无损的结构面）
-    await clickAriaLabel('展开编辑器');
-    expect(container.querySelector<HTMLElement>('.lt-pane-editor')?.style.display).toBe('');
-    expect(container.querySelector('.cm-editor')).not.toBeNull();
-    act(() => {
-      tree.unmount();
-    });
-  });
-
-  it('折叠预览栏：iframe 摘除、窄条展开钮出现；展开后预览回归', async () => {
-    stubApi({
-      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
-      readFile: vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          value: { content: new TextEncoder().encode('<p>正文</p>'), meta: meta(3, 'a.html') },
-        }),
-      ),
-    });
-    const tree = createRoot(container);
-    await act(async () => {
-      tree.render(<Workspace />);
-    });
-    await act(async () => {
-      Array.from(container.querySelectorAll('button'))
-        .find((b) => b.textContent === 'a.html')
-        ?.click();
-    });
-    expect(container.querySelector('iframe')).not.toBeNull();
-    await clickAriaLabel('折叠预览栏');
-    expect(
-      container.querySelector('.lt-pane-preview')?.classList.contains('lt-pane-collapsed'),
-    ).toBe(true);
-    expect(container.querySelector('iframe')).toBeNull();
-    expect(container.querySelector('button[aria-label="展开预览栏"]')).not.toBeNull();
-    await clickAriaLabel('展开预览栏');
-    expect(container.querySelector('iframe')).not.toBeNull();
-    act(() => {
-      tree.unmount();
-    });
-  });
-
-  it('启动恢复：settingsGet 返回的 shell.layout 折叠态直接呈现（布局记忆）', async () => {
+  it('启动恢复：settingsGet 返回的 shell.layout 折叠态与活动视图直接呈现（布局记忆跨重启）', async () => {
     stubApi({
       settingsGet: vi.fn(() =>
         Promise.resolve({
           ok: true,
           value: {
             ...DEFAULT_SETTINGS,
-            shell: { layout: { ...DEFAULT_LAYOUT, previewCollapsed: true } },
+            shell: {
+              layout: { ...DEFAULT_LAYOUT, sidebarCollapsed: true, activityView: 'search' },
+            },
           },
         }),
       ),
@@ -949,10 +889,48 @@ describe('Workspace 三栏折叠与布局记忆（M4 Task 7）', () => {
     await act(async () => {
       tree.render(<Workspace />);
     });
+    // 折叠态恢复：窄条呈现（含展开钮），树内容不挂载
+    expect(container.querySelector('.lt-sidebar')?.classList.contains('lt-sidebar-collapsed')).toBe(
+      true,
+    );
+    expect(container.querySelector('button[aria-label="展开侧栏"]')).not.toBeNull();
+    expect(container.querySelector('nav[aria-label="资源树"]')).toBeNull();
+    // 活动视图记忆恢复：展开后侧栏头呈现 search 态标题（而非默认资源树）
+    await clickAriaLabel('展开侧栏');
+    expect(container.querySelector('.lt-sidebar-header')?.textContent).toContain('全局搜索');
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('活动栏切换视图：aria-current 随激活迁移，侧栏头换题并持久化 activityView', async () => {
+    const api = stubApi() as unknown as { settingsSet: ReturnType<typeof vi.fn> };
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
     expect(
-      container.querySelector('.lt-pane-preview')?.classList.contains('lt-pane-collapsed'),
-    ).toBe(true);
-    expect(container.querySelector('button[aria-label="展开预览栏"]')).not.toBeNull();
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="资源树"]')
+        ?.getAttribute('aria-current'),
+    ).toBe('true');
+    await clickAriaLabel('回收站');
+    expect(container.querySelector('section[aria-label="回收站"]')).not.toBeNull();
+    expect(
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="回收站"]')
+        ?.getAttribute('aria-current'),
+    ).toBe('true');
+    expect(
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="资源树"]')
+        ?.getAttribute('aria-current'),
+    ).toBeNull();
+    // 视图切换即持久化（v4 单一写入口）：activityView 记忆为 trash，其余域原样
+    expect(api.settingsSet).toHaveBeenCalledWith({
+      ...DEFAULT_SETTINGS,
+      shell: { layout: { ...DEFAULT_LAYOUT, activityView: 'trash' } },
+    });
     act(() => {
       tree.unmount();
     });
@@ -1007,7 +985,7 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
     return { api, vfsHandlers, tree };
   }
 
-  /** 按文本找钮点击（树/工具栏共用） */
+  /** 按文本找钮点击（树点选共用）；树工具栏图标钮无文本，另备 aria-label 寻址（M6） */
   async function clickButton(text: string): Promise<void> {
     await act(async () => {
       Array.from(container.querySelectorAll('button'))
@@ -1016,11 +994,17 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
     });
   }
 
+  async function clickAriaLabel(label: string): Promise<void> {
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)?.click();
+    });
+  }
+
   it('重命名：模态预填当前名，确认按 trim 新名调 renameNode，成功后模态关闭', async () => {
     const { api, tree } = await setupWithFileTab({
       renameNode: vi.fn(() => Promise.resolve({ ok: true, value: { affectedCount: 1 } })),
     });
-    await clickButton('重命名');
+    await clickAriaLabel('重命名');
     expect(container.querySelector('[role="dialog"]')).not.toBeNull();
     const input = container.querySelector<HTMLInputElement>('input[aria-label="新名称"]');
     expect(input?.value).toBe('a.html'); // 树内当前名预填
@@ -1053,7 +1037,7 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
     await act(async () => {
       toastRoot.render(<ToastHost />);
     });
-    await clickButton('重命名');
+    await clickAriaLabel('重命名');
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="确认重命名"]')?.click();
     });
@@ -1071,7 +1055,7 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
     const { api, tree } = await setupWithFileTab({
       moveNode: vi.fn(() => Promise.resolve({ ok: true, value: { affectedCount: 1 } })),
     });
-    await clickButton('移动到…');
+    await clickAriaLabel('移动到…');
     const bar = (): Element | null => container.querySelector('[aria-label="移动选择模式"]');
     const confirmBtn = (): HTMLButtonElement | null =>
       container.querySelector<HTMLButtonElement>('button[aria-label="确认移动"]');
@@ -1147,11 +1131,11 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
 
   it('move 模式中切往回收站态即复位 moveMode：返回树不再复现选择条（Task 4 deferred 顺手闭环）', async () => {
     await setupWithFileTab();
-    await clickButton('移动到…');
+    await clickAriaLabel('移动到…');
     expect(container.querySelector('[aria-label="移动选择模式"]')).not.toBeNull();
-    // 标题栏进入回收站态再返回：moveMode 已随视图切离复位，选择条不得带残态复现
+    // 活动栏进入回收站态再返回：moveMode 已随视图切离复位，选择条不得带残态复现
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="打开回收站"]')?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="回收站"]')?.click();
     });
     expect(container.querySelector('[aria-label="移动选择模式"]')).toBeNull();
     await act(async () => {
@@ -1164,7 +1148,7 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
     const { api, tree } = await setupWithFileTab({
       moveNode: vi.fn(() => Promise.resolve({ ok: true, value: { affectedCount: 1 } })),
     });
-    await clickButton('移动到…');
+    await clickAriaLabel('移动到…');
     expect(container.querySelector('[aria-label="移动选择模式"]')).not.toBeNull();
     // 取消钮退出
     await act(async () => {
@@ -1172,7 +1156,7 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
     });
     expect(container.querySelector('[aria-label="移动选择模式"]')).toBeNull();
     // 再进模式后 Esc 退出（window 级 keydown 成对挂卸）
-    await clickButton('移动到…');
+    await clickAriaLabel('移动到…');
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     });
@@ -1578,7 +1562,7 @@ describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
     });
   }
 
-  it('image 节点树点选：预览切 <img src=vfsUrl>、不开标签不读库（保存管线零接触）', async () => {
+  it('image 节点树点选：不开标签不读库（保存管线零接触），树弱选中标记预览中行', async () => {
     const api = stubApi({
       listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [mediaMeta('image/png')] })),
     }) as unknown as { readFile: ReturnType<typeof vi.fn> };
@@ -1590,16 +1574,21 @@ describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
     // 不读库：img 经 vfs:// 协议直载，openFile 分流在读库之前返回
     expect(api.readFile).not.toHaveBeenCalled();
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    expect(container.querySelector('img.lt-preview-media')?.getAttribute('src')).toBe(
-      'vfs://local/pic.png',
+    // M6 单画布模型：无并存 doc 标签时媒体呈现面退场（画布由欢迎页承载，批次②画布化回收），
+    // 双源状态机仍以树弱选中为观察锚——行带 data-preview-selected 与「（预览中）」可访问名
+    expect(container.querySelector('img.lt-preview-media')).toBeNull();
+    const picRow = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'pic.png',
     );
-    expect(container.querySelector('iframe')).toBeNull();
+    expect(picRow?.getAttribute('data-preview-selected')).toBe('true');
+    expect(picRow?.getAttribute('aria-label')).toBe('pic.png（预览中）');
+    expect(container.querySelector('.lt-welcome')).not.toBeNull();
     act(() => {
       tree.unmount();
     });
   });
 
-  it('audio 节点树点选：<audio controls src=vfsUrl> 同款不开标签不读库', async () => {
+  it('audio 节点树点选：同款不开标签不读库、树弱选中标记（表单呈现随并存标签承载）', async () => {
     const api = stubApi({
       listChildren: vi.fn(() =>
         Promise.resolve({ ok: true, value: [mediaMeta('audio/mpeg', 'song.mp3')] }),
@@ -1612,9 +1601,11 @@ describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
     await clickTreeRow('song.mp3');
     expect(api.readFile).not.toHaveBeenCalled();
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    const audio = container.querySelector('audio.lt-preview-media');
-    expect(audio?.hasAttribute('controls')).toBe(true);
-    expect(audio?.getAttribute('src')).toBe('vfs://local/song.mp3');
+    const audioRow = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'song.mp3',
+    );
+    expect(audioRow?.getAttribute('data-preview-selected')).toBe('true');
+    expect(audioRow?.getAttribute('aria-label')).toBe('song.mp3（预览中）');
     act(() => {
       tree.unmount();
     });
@@ -1642,7 +1633,7 @@ describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
     expect(api.readFile).not.toHaveBeenCalled();
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
     expect(container.textContent).toContain('二进制文件暂不支持编辑');
-    // 预览面板保持「未选中文件」占位：拒开路径不触碰双源状态机
+    // 画布不落任何媒体元素：拒开路径不触碰双源状态机（空态由欢迎页承载，M6 起）
     expect(container.querySelector('img.lt-preview-media')).toBeNull();
     expect(container.querySelector('audio.lt-preview-media')).toBeNull();
     act(() => {
@@ -1709,7 +1700,7 @@ describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
     });
   });
 
-  it('全关标签不连带清媒体预览（源=image 不被「关空标签」收回）；文本重开即收回', async () => {
+  it('全关标签不连带收回媒体源（源=image 不被「关空标签」清掉）；文本重开即收回', async () => {
     stubApi({
       listChildren: vi.fn(() =>
         Promise.resolve({
@@ -1731,17 +1722,23 @@ describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
     await clickTreeRow('a.html');
     await clickTreeRow('pic.png');
     expect(container.querySelector('img.lt-preview-media')).not.toBeNull();
-    // 关闭最后一个标签（activeId→null，无标签可激活）：媒体预览保持——关闭标签不表达
-    // 「看标签」意图，源=image 原样
+    // 关闭最后一个标签（activeId→null，无标签可激活）：媒体源保持——关闭标签不表达
+    // 「看标签」意图；M6 无并存标签时呈现面退场（画布回欢迎页），弱选中标记仍在
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="关闭标签 a.html"]')?.click();
     });
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    expect(container.querySelector('img.lt-preview-media')).not.toBeNull();
-    // 重开文本文件：打开成功即收回预览源到标签（含 activeId 不变的重开路径，effect 不触发须显式）
+    expect(container.querySelector('.lt-welcome')).not.toBeNull();
+    const picRow = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === 'pic.png',
+    );
+    expect(picRow?.getAttribute('data-preview-selected')).toBe('true');
+    // 重开文本文件：打开成功即收回预览源到标签（含 activeId 不变的重开路径，effect 不触发须显式）；
+    // 弱选中随源退场，预览回 iframe
     await clickTreeRow('a.html');
     expect(container.querySelector('iframe')).not.toBeNull();
     expect(container.querySelector('img.lt-preview-media')).toBeNull();
+    expect(picRow?.getAttribute('data-preview-selected')).toBeNull();
     act(() => {
       tree.unmount();
     });

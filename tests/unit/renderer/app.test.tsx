@@ -7,9 +7,9 @@ import { DEFAULT_SETTINGS } from '../../../src/shared/settings-contract';
 import { App } from '../../../src/renderer/src/App';
 
 describe('App 根组件', () => {
-  it('渲染 LearningText 标题（E2E 断言锚点）', () => {
-    // M3 起 App 挂载 Workspace：挂载期即拉取设置/根列表并订阅广播；M4 起设置契约升 v2，
-    // 桥桩按挂载路径最小注入（getNode/onShellCommand/forceClose 为 M4 契约补员预留）
+  it('渲染 LearningText 标题（E2E 断言锚点，M6 起由 TitleBar 承载）', () => {
+    // M3 起 App 挂载 Workspace：挂载期即拉取设置/根列表并订阅广播；M6 壳层装配另需
+    // countNodes（状态栏文档计数）与 platform（TitleBar 平台差异）桥成员
     Object.defineProperty(window, 'api', {
       configurable: true,
       writable: true,
@@ -19,6 +19,8 @@ describe('App 根组件', () => {
         onVfsChanged: vi.fn(() => () => undefined),
         // 导入进度订阅（M5 批次⑥ Task 12）：Workspace 挂载即订阅
         onIoProgress: vi.fn(() => () => undefined),
+        countNodes: vi.fn(() => Promise.resolve({ ok: true, value: 0 })),
+        platform: 'win32',
         getNode: vi.fn(() =>
           Promise.resolve({
             ok: true,

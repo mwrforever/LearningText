@@ -1,16 +1,18 @@
-// 设置服务（M3 spec §5 / M4 spec §7 / M5 批次③）：启动读缓存（v3 直读 → v2 静默迁移 →
-// v1 两级链式迁移）、损坏/版本不识别 warn 回退默认、set 原子写、get 恒不抛
+// 设置服务（M3 spec §5 / M4 spec §7 / M5 批次③ / M6 v4）：启动读缓存（v4 直读 →
+// v3/v2/v1 三级链式迁移至 4）、损坏/版本不识别 warn 回退默认、set 原子写、get 恒不抛
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSettingsService } from '../../../src/main/settings/settingsService';
 import {
-  DEFAULT_LAYOUT,
+  DEFAULT_LAYOUT_V3,
   DEFAULT_SETTINGS,
   migrateV1ToV2,
   migrateV2ToV3,
+  migrateV3ToV4,
   type SettingsDataV2,
+  type SettingsDataV3,
 } from '../../../src/shared/settings-contract';
 
 let dir: string;
@@ -41,8 +43,8 @@ describe('settingsService', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('schemaVersion 不识别（v4）warn 回退默认', () => {
-    writeFileSync(file, JSON.stringify({ schemaVersion: 4, preview: { debounceMs: 100 } }), 'utf8');
+  it('schemaVersion 不识别（v5，超前版本）warn 回退默认', () => {
+    writeFileSync(file, JSON.stringify({ schemaVersion: 5, preview: { debounceMs: 100 } }), 'utf8');
     const s = createSettingsService({ settingsFile: file });
     expect(s.get()).toEqual(DEFAULT_SETTINGS);
     expect(warnSpy).toHaveBeenCalledTimes(1);
@@ -80,32 +82,70 @@ describe('settingsService', () => {
     }
   });
 
-  it('v2 文件启动静默迁移：get 得 v3 全量（用户值保留 + 四新域默认）+ 原子回写 + info 一次', () => {
+  it('v3 文件启动迁移至 v4：shell.layout 改型侧栏形态 + 六域用户值保留 + 原子回写 + info 一次', () => {
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
-    const v2File: SettingsDataV2 = {
-      schemaVersion: 2,
+    const v3File: SettingsDataV3 = {
+      schemaVersion: 3,
       preview: { debounceMs: 500 },
       editor: { autoSaveMs: 4500 },
-      shell: { layout: DEFAULT_LAYOUT },
+      shell: { layout: { ...DEFAULT_LAYOUT_V3, treeCollapsed: true, treeWidthRatio: 0.3 } },
+      appearance: { theme: 'dark', editorFontSize: 16 },
+      backup: { autoEnabled: false },
+      recent: {
+        opened: [
+          {
+            nodeId: 7,
+            virtualPath: '/a.html',
+            name: 'a.html',
+            openedAt: '2026-09-21T10:00:00+08:00',
+          },
+        ],
+      },
+      workspace: { tabNodeIds: [7], activeTabNodeId: 7, restoreOnStart: false },
     };
-    writeFileSync(file, JSON.stringify(v2File), 'utf8');
+    writeFileSync(file, JSON.stringify(v3File), 'utf8');
     const s = createSettingsService({ settingsFile: file });
-    expect(s.get()).toEqual(migrateV2ToV3(v2File));
+    expect(s.get()).toEqual(migrateV3ToV4(v3File));
+    // 平移语义抽查：树栏折叠/宽度平移为侧栏字段，活动视图回落资源树
+    expect(s.get().shell.layout).toEqual({
+      sidebarCollapsed: true,
+      sidebarWidthRatio: 0.3,
+      activityView: 'tree',
+    });
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(s.get()); // 回写落盘
     expect(infoSpy).toHaveBeenCalledTimes(1); // 迁移 info 一次语义
     expect(warnSpy).not.toHaveBeenCalled(); // 静默迁移不告警
     infoSpy.mockRestore();
   });
 
-  it('v1 文件启动两级链式迁移 v1→v3：get 得 v3 全量 + 原子回写 + info 一次', () => {
+  it('v2 文件启动链式迁移 v2→v4：get 得 v4 全量（用户值保留 + 新域/改型默认）+ 原子回写 + info 一次', () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const v2File: SettingsDataV2 = {
+      schemaVersion: 2,
+      preview: { debounceMs: 500 },
+      editor: { autoSaveMs: 4500 },
+      shell: { layout: DEFAULT_LAYOUT_V3 },
+    };
+    writeFileSync(file, JSON.stringify(v2File), 'utf8');
+    const s = createSettingsService({ settingsFile: file });
+    expect(s.get()).toEqual(migrateV3ToV4(migrateV2ToV3(v2File)));
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(s.get()); // 回写落盘
+    expect(infoSpy).toHaveBeenCalledTimes(1); // 迁移 info 一次语义
+    expect(warnSpy).not.toHaveBeenCalled(); // 静默迁移不告警
+    infoSpy.mockRestore();
+  });
+
+  it('v1 文件启动三级链式迁移 v1→v4：get 得 v4 全量 + 原子回写 + info 一次', () => {
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     writeFileSync(file, JSON.stringify({ schemaVersion: 1, preview: { debounceMs: 500 } }), 'utf8');
     const s = createSettingsService({ settingsFile: file });
     expect(s.get()).toEqual(
-      migrateV2ToV3(migrateV1ToV2({ schemaVersion: 1, preview: { debounceMs: 500 } })),
+      migrateV3ToV4(
+        migrateV2ToV3(migrateV1ToV2({ schemaVersion: 1, preview: { debounceMs: 500 } })),
+      ),
     );
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(s.get()); // 回写落盘
-    expect(infoSpy).toHaveBeenCalledTimes(1); // 两级链式仍只落一次盘、打一条 info
+    expect(infoSpy).toHaveBeenCalledTimes(1); // 三级链式仍只落一次盘、打一条 info
     expect(warnSpy).not.toHaveBeenCalled(); // 静默迁移不告警
     infoSpy.mockRestore();
   });

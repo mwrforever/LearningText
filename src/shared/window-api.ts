@@ -42,6 +42,12 @@ import type {
 export interface WindowApi {
   /** 连通性探针：调用主进程 system:ping */
   ping(): Promise<Result<{ readonly pong: true }>>;
+  /**
+   * 运行平台标识（process.platform 原样透传：'win32' | 'darwin' | 'linux'）：
+   * 应用内菜单/窗口控制钮的平台差异渲染判定用（M6 spec §2.2——mac 走系统菜单栏与红绿灯，
+   * 不渲染应用内菜单）。只读静态值，非通道。
+   */
+  readonly platform: string;
   // —— VFS 域（M1）：每通道一个具名包装（宪法 A.7-4 桥接面最小化）——
   listChildren(request: ListChildrenRequest): Promise<Result<NodeMeta[]>>;
   createNode(request: CreateNodeRequest): Promise<Result<NodeMeta>>;
@@ -99,6 +105,8 @@ export interface WindowApi {
   onIoProgress(callback: (progress: IoProgress) => void): () => void;
   // —— VFS 补充（M4）：nodeId → NodeMeta 反查（未找到 E_VFS_NOT_FOUND）——
   getNode(request: NodeIdRequest): Promise<Result<NodeMeta>>;
+  /** 活节点总数（M6 spec §2.6 状态栏文档计数；无参通道沿 settingsGet 先例） */
+  countNodes(): Promise<Result<number>>;
   /** 订阅树变更广播，返回取消订阅函数 */
   onVfsChanged(callback: (broadcast: VfsChangedBroadcast) => void): () => void;
 }

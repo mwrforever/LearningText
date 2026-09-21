@@ -127,3 +127,6 @@ export interface VfsChangedBroadcast {
   readonly rev: number;
   readonly event: VfsChangedEvent;
 }
+
+/** vfs:count 请求形态：无参通道沿 settingsGet 先例传 null（状态栏文档计数，M6 spec §2.6） */
+export const VfsCountRequestSchema = z.null();

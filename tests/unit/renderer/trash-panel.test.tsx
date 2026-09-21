@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // 回收站面板冒烟（M5 批次②）：列表渲染名称/原路径/删除时间、还原回调、还原撞名 toast、
 // 彻底删除 window.confirm 二次确认、清空强确认、trash 域广播重拉（restored 重拉/created 不拉）、
-// 本地过滤联动；另覆盖 Workspace 三态容器 trash 态接线（打开回收站/Esc 返回/返回钮）。
+// 本地过滤联动；另覆盖 Workspace 活动视图 trash 态接线（活动栏进入/Esc 返回/返回钮）。
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -35,7 +35,7 @@ function trashed(id: number, name: string): TrashedNodeMeta {
 
 /** 桥桩（stubApi 先例）：返回对象供测试取 spy；onVfsChanged 捕获回调供逐事件驱动广播 */
 function stubTrashApi(overrides: Partial<Record<string, unknown>> = {}): {
-  api: Record<string, ReturnType<typeof vi.fn>>;
+  api: Record<string, unknown>;
   vfsHandlers: Array<(b: VfsChangedBroadcast) => void>;
   unsub: ReturnType<typeof vi.fn>;
 } {
@@ -51,12 +51,17 @@ function stubTrashApi(overrides: Partial<Record<string, unknown>> = {}): {
       vfsHandlers.push(callback);
       return unsub;
     }),
-    // Workspace 装配所需通道（trash 态接线用例挂载 Workspace；树态首拉走这些桩）
+    // Workspace 装配所需通道（trash 态接线用例挂载 Workspace；树态首拉走这些桩；
+    // 活动视图切换经 updateLayout 触发 settingsGet→settingsSet 布局写回，桩按契约注入）
     settingsGet: vi.fn(() => Promise.resolve({ ok: true, value: DEFAULT_SETTINGS })),
+    settingsSet: vi.fn(() => Promise.resolve({ ok: true, value: DEFAULT_SETTINGS })),
     listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
     onShellCommand: vi.fn(() => vi.fn()),
     // 导入进度订阅（M5 批次⑥ Task 12）：Workspace 挂载即订阅
     onIoProgress: vi.fn(() => vi.fn()),
+    // M6 壳层装配路径补员：状态栏文档计数与 TitleBar 平台标识
+    countNodes: vi.fn(() => Promise.resolve({ ok: true, value: 0 })),
+    platform: 'win32',
     ...overrides,
   };
   Object.defineProperty(window, 'api', { value: api, configurable: true, writable: true });
@@ -310,10 +315,10 @@ describe('TrashPanel', () => {
   });
 });
 
-// Workspace 三态视图容器（本任务先立 trash 态最小切换，search 态归 Task 7）：
-// 工具栏「回收站」切换钮进入、Esc/返回钮回树态；TrashPanel 数据自持，Workspace 不代理拉取
-describe('Workspace 三态容器 trash 态接线', () => {
-  it('「打开回收站」切换 trash 态（TrashPanel 挂载并首拉）；Esc 返回树态', async () => {
+// Workspace 活动视图 trash 态接线（M5 三态容器 → M6 活动栏语义）：
+// 活动栏「回收站」图标钮进入、Esc/侧栏头返回钮回树态；TrashPanel 数据自持，Workspace 不代理拉取
+describe('Workspace trash 态接线', () => {
+  it('活动栏「回收站」切换 trash 态（TrashPanel 挂载并首拉）；Esc 返回树态', async () => {
     const { api } = stubTrashApi();
     const tree = createRoot(container);
     await act(async () => {
@@ -321,7 +326,7 @@ describe('Workspace 三态容器 trash 态接线', () => {
     });
     expect(container.querySelector('nav[aria-label="资源树"]')).not.toBeNull();
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="打开回收站"]')?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="回收站"]')?.click();
     });
     expect(container.querySelector('section[aria-label="回收站"]')).not.toBeNull();
     expect(api.listTrashed).toHaveBeenCalled();
@@ -344,7 +349,7 @@ describe('Workspace 三态容器 trash 态接线', () => {
       tree.render(<Workspace />);
     });
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="打开回收站"]')?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="回收站"]')?.click();
     });
     expect(container.querySelector('section[aria-label="回收站"]')).not.toBeNull();
     await act(async () => {

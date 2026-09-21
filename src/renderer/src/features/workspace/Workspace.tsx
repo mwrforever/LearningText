@@ -1,64 +1,22 @@
 /**
- * 三栏工作台 + 多标签会话中枢（M4 spec §3）：tabs/activeTab 状态机（tabModel 纯函数不可变
- * 更新）+ TabSessions per-tab 会话容器；openFile 前置拦截（非文本 toast 拒开、readFile 成功
- * 才建会话与标签）。树数据/展开集/settings 去抖值照旧在此提升，TreePanel/TabBar/EditorPanel/
- * PreviewPanel 纯 props 消费（A.7-6 单向）。保存管线（SaveController）在此装配：编辑回路
- * edit、关标签 flush 后关、保存钮 flushActive、卸载 dispose 成对释放。三栏折叠/宽度拖拽
- * （M4 spec §5.1 FR-SHELL-01）：layoutModel 纯函数换算比例，折叠与拖拽终值经 settings
- * shell 域持久化（get→merge→set 全量写回），拖拽中仅本地态防 settings 写风暴。
- * 树 rename/move（M4 spec §6.2 D8）：重命名行内模态与 move 选择模式态在此提升；
- * renamed/moved 广播后 getNode 反查回写标签 meta（§6.1 同步链，selected 即 activeTab）。
- * move 源锚退役（M5 批次④ Task 10）：sourceId 改由入口直传（工具栏传选中 id、树行内
- * 「⋯」菜单传本行 id），不再读 tabsOp.activeId——selectedId 锚退役为树高亮专用；
- * 切往 search/trash 态即复位 move 态（Task 4 deferred Esc 双监听耦合顺手闭环）。
- * 树栏三态视图容器（M5 批次① Task 7 三态齐备）：view 'tree'|'search'|'trash' 切换——
- * 标题栏「搜索」钮/菜单 Ctrl+Shift+F 进入 search 态、「回收站」钮进入 trash 态、返回钮/Esc
- * 退出；search/trash 内容由对应面板数据自持渲染，树数据（roots/expanded）挂在 Workspace
- * 不随态销毁（spec §2.2 切回保持展开态）。呈现面（标题栏 + 三态分发）由 TreePane 插槽承载。
- * 搜索结果树侧定位（spec §2.2 评审 fix）：revealInTree 按 virtualPath 逐段 resolvePath 求
- * 祖先链 → 逐层 listChildren 就地装载 → 展开集合并入 + reveal 选中覆盖（activeId 变化即
- * 回落）；「点击定位打开」= 树侧展开 + openFile，「在树中显示」= 定位 + 关搜索态回树。
- * 最近打开与工作区恢复（M5 批次②）：openFile 成功（聚焦/新建两会话分支）记录 recent 域
- * （去重置顶，时刻由写入方补）；trash/purge 广播后对 recent 逐个验活剔除；启动时按
- * workspace 域恢复标签（planWorkspaceRestore 失效剔除 + active 右邻继承，恢复式打开豁免
- * 5–50MB 征询）；标签操作经 throttleTrailing 尾沿 300ms 写 workspace 域（D8，卸载 flush+dispose）。
- * recent/workspace 域写统一经串行 get→merge→set 队列（restoreWorkspace 同链），防启动期
- * 并发记录点丢更新；recentToItems 数据接口落在 features/quickopen（Task 6 浮层消费）。
- * 快速打开浮层（M5 批次① Task 6）：quickOpen 开关态在此提升，shell:command 'quick-open'
- * （菜单 Ctrl+P，键位单一来源）dispatch 置 true 打开；点选回传 openFile 统一入口，
- * 结果/最近打开双源数据自持在 QuickOpenDialog。
- * 设置页（M5 批次③ Task 8）：settingsOpen 全屏覆盖态（非 view 三态枚举——覆盖于工作台之上，
- * 关闭后工作台状态原样还原），入口 = 状态栏「设置」钮 + 菜单 'open-settings' 命令；主题装配
- * 在此收口（意图 → resolveTheme 解析 → documentElement .dark 切换 + resolvedTheme props 传导
- * EditorPanel 同 state 重配，system 态经 matchMedia 监听，cleanup 成对摘除）；字号/去抖/自动
- * 保存表单即改即存——经既有串行写链（get→merge→set）落盘，失败 toast 回滚显示。备份/维护区
- * （M5 批次③ Task 9）：备份条目列表在设置页打开期间拉取并随 backup:done 广播重拉（订阅成对
- * 摘除）；自动备份开关走 backup 域串行写链；立即备份/还原经专用通道（还原为数据覆盖级操作，
- * 强确认与 fire-and-forget 语义见 restoreBackupNow）。
- * 滚动同步装配（M5 批次⑤ Task 11，FR-RENDER-06）：编辑器↔预览互为命令出口——两侧面板各自
- * 在 effect 内向槽位登记实现（卸载摘除成对），本组件只持两个可空槽位互为中转，不感知协议
- * 细节：编辑器比例（100ms 节流，EditorPanel）→ 预览 postMessage（开关闸门在 PreviewPanel，
- * D14 会话级）；预览锚点 report → 编辑器滚动（150ms 抑制窗在 EditorPanel，D13）。
- * 导入链路（M5 批次⑥ Task 12，FR-IO-01）：菜单 'import' 命令 → 主进程目录选择（pickDirectory
- * 多选，取消静默）→ 确认弹层（目标父目录=树选中上下文默认根的最小推导 + 重名策略三选，
- * alert-dialog + radio 组）→ io:import 发起；onIoProgress 订阅（挂载常驻、退订成对）驱动
- * 进度面板（批次粒度，取消按 importId 寻址），invoke 结果即终态收口：D17 计数 toast +
- * 树刷新双通道（整树标记 stale 供展开目录重取 + 目标父目录子级直调回写——根不在 expanded
- * 集与已折叠目录两个盲区由直调补口，评审 Important fix）。
- * 导出链路（M5 批次⑥ Task 13，FR-IO-02）：菜单 'export' 命令 → 树选中上下文推导导出根
- * （无选中引导提示，根不可导出）→ pickDirectory 单选目标目录（复用 Task 12 通道，取消静默）
- * → io:export 发起；io:progress 为导入/导出可辨识联合（kind 判别字段）按 kind 分流面板；
- * invoke 结果即终态收口：计数 toast 携带「打开目录」动作钮（openPath 回传对话框产出的目录串，
- * 主进程按当次会话登记簿校验——渲染层可伪造串的信任边界在主进程收敛）。
- * 图片/音频只读预览（M5 批次⑦ Task 14，FR-EDIT-04 + spec §8/D20 双源裁决）：openFile 前置
- * 分流——previewableMime 命中 image/audio 直接切预览展示源（不开编辑标签、不读库、保存管线
- * 零接触），其余二进制维持拒开 toast。展示源 = 最近操作源：previewNode（最近点选媒体节点）
- * 与 previewSource（'image'=媒体点选驱动 / 'tab'=标签驱动）双态合成，互不销毁对方——媒体
- * 点选不清激活标签（保留在 TabBar），标签激活/文本打开成功收回源到标签；「关空标签」
- * （activeId→null）无标签可激活，源保持（媒体预览不被连带清掉）。
- * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
+ * VS Code 式工作台中枢（M6 spec §2，FR-SHELL-01/02 修订版；M4 起的会话/保存/树/导入导出
+ * 语义整体保留）：
+ * —— 壳层（M6 批次①）——自绘标题栏（TitleBar，应用内菜单经命令处理器分发）+ 活动栏
+ * （ActivityBar，三视图切换 + 设置入口）+ 侧栏（树/搜索/回收站内容 + 图标操作头）+
+ * 编辑画布区（TabBar + 设置标签页/编辑|预览对/欢迎页）+ 状态栏（StatusBar，保存态/文档数/
+ * 主题循环/设置）。布局记忆 = shell.layout v4（侧栏折叠/宽度/活动视图，settings schema v4）。
+ * —— 标签模型（M6 扩型）——设置作为特殊伪标签（settingsOpen + activeId 哨兵 'settings'，
+ * 不占 MAX_TABS）；媒体弱选中双源（D20）暂保留，随批次②画布化退役。
+ * —— 既有语义（M4/M5）——tabs/activeTab 状态机（tabModel 纯函数）、TabSessions per-tab
+ * 会话、openFile 前置拦截（媒体分流/二进制拒开/大小三分支）、SaveController 保存管线
+ * （edit/flush/flushActive/关签 flush）、树懒加载与广播同步、rename/move 模态与选择模式、
+ * revealInTree 树侧定位、recent/workspace 域串行写链与启动恢复、快速打开浮层、导入导出
+ * 链路与进度面板、主题装配（.dark 切换 + matchMedia）。
+ * 滚动同步装配（M5 批次⑤，FR-RENDER-06）：编辑器↔预览双槽位中转保留至批次②（画布化
+ * 后随 scrollSync 一并退役，M6 spec §3.4/D5）。
  */
 import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { DEFAULT_LAYOUT } from '../../../../shared/settings-constants';
 import type {
   RecentEntry,
@@ -74,6 +32,7 @@ import type {
 } from '../../../../shared/io-contract';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import { toLocalIsoTime } from '../../../../shared/time';
+import type { ShellCommand } from '../../../../shared/shell-contract';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -108,34 +67,39 @@ import {
   type TreeNode,
 } from '../tree/treeModel';
 import { RenameDialog } from '../tree/RenameDialog';
-import { TreePanel, TreePane, type TreePaneView } from '../tree/TreePanel';
+import { TreePanel, type TreePaneView } from '../tree/TreePanel';
 import { TrashPanel } from '../trash/TrashPanel';
 import { SearchPanel } from '../search/SearchPanel';
 import { QuickOpenDialog } from '../quickopen/QuickOpenDialog';
 import { SettingsPage } from '../settings/SettingsPage';
 import { resolveTheme, type ThemeIntent } from '../settings/themeResolver';
+import { ActivityBar } from '../shell/ActivityBar';
+import { StatusBar } from '../shell/StatusBar';
+import { TitleBar } from '../shell/TitleBar';
+import { WelcomePage } from '../shell/WelcomePage';
 import { showToast } from '../ui/Toast';
 import { TabBar } from './TabBar';
 import { ratioFromPointer } from './layoutModel';
-import { MAX_TABS, closeTab, openTab, setTabDirty, updateTabMeta, type TabsOp } from './tabModel';
+import {
+  EMPTY_TABS_OP,
+  MAX_TABS,
+  closeSettingsTab,
+  closeTab,
+  openSettingsTab,
+  openTab,
+  setTabDirty,
+  updateTabMeta,
+  type TabsOp,
+} from './tabModel';
 
-export interface WorkspaceProps {
-  /** 全局操作条插槽（M4 原生菜单的渲染层对应面）；未注入时不渲染占位条 */
-  readonly toolbarSlot?: React.ReactNode;
-  /** 状态栏插槽（M4+ 保存态/进度）；同上 */
-  readonly statusBarSlot?: React.ReactNode;
-}
-
-export function Workspace({
-  toolbarSlot = null,
-  statusBarSlot = null,
-}: WorkspaceProps): React.JSX.Element {
+export function Workspace(): React.JSX.Element {
   const [roots, setRoots] = useState<readonly TreeNode[]>([]);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
-  const [tabsOp, setTabsOp] = useState<TabsOp>({ tabs: [], activeId: null });
+  // 标签操作状态机（M6 扩型）：设置伪标签存在标记与 'settings' 哨兵激活见 tabModel
+  const [tabsOp, setTabsOp] = useState<TabsOp>(EMPTY_TABS_OP);
   const [debounceMs, setDebounceMs] = useState(300);
   const [autoSaveMs, setAutoSaveMs] = useState(3000);
-  // 三栏布局态（FR-SHELL-01）：折叠三态 + 宽度比例；启动时由 settingsGet 恢复（装配 effect）
+  // 壳层布局态（FR-SHELL-01 修订版，v4）：侧栏折叠/宽度/活动视图；启动时由 settingsGet 恢复
   const [layout, setLayout] = useState<ShellLayout>(DEFAULT_LAYOUT);
   // move 选择模式（M4 spec §6.2 D8；M5 批次④ Task 10 源锚退役）：null=未进入；sourceId=
   // 进入模式时直传的移动源（树工具栏传选中 id、行内菜单传本行 id——不再读 tabsOp.activeId，
@@ -150,9 +114,8 @@ export function Workspace({
   const [renameTarget, setRenameTarget] = useState<{ id: number; name: string } | null>(null);
   // rename 请求在途（模态确认钮防重复提交）
   const [renameInFlight, setRenameInFlight] = useState(false);
-  // 树栏视图态（M5 三态容器，Task 7 三态齐备）：'tree'=资源树 / 'search'=全局搜索 /
-  // 'trash'=回收站；search/trash 面板数据自持（各自挂载首拉 + 域广播重拉），Workspace
-  // 只负责态切换与退出通道（返回钮 / Esc / 菜单命令），不代理其数据拉取
+  // 树栏视图态（M6 起由 layout.activityView 承载持久化，本态为渲染派生镜像——v4 装载前
+  // 默认 'tree'；写入口 switchView/updateLayout 同步持久化）
   const [view, setView] = useState<TreePaneView>('tree');
   // 树内定位选中覆盖（M5 Task 7 评审 fix，spec §2.2「在树中显示/定位打开」）：M4 架构
   // selected 即 activeTab，reveal 不开标签但需树内高亮——以覆盖值临时接管 TreePanel 的
@@ -168,9 +131,11 @@ export function Workspace({
   // 快速打开浮层开关（M5 批次① Task 6）：唯一写入口是 shell:command dispatch（菜单
   // Ctrl+P），点选/取消由浮层经 onOpenChange 回传收口
   const [quickOpen, setQuickOpen] = useState(false);
-  // 设置覆盖层开关（M5 批次③ Task 8）：入口 = 状态栏「设置」钮 + 菜单 'open-settings' 命令；
-  // 非 view 三态枚举成员——覆盖于工作台之上、关闭后工作台状态原样还原
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // 欢迎页「最近打开」镜像（M6 spec §2.5）：settingsGet 装载 + 记录/剔除后刷新（刷新函数
+  // refreshRecent 在下方；不改写 QuickOpenDialog 自持数据链）
+  const [recentOpened, setRecentOpened] = useState<readonly RecentEntry[]>([]);
+  // 状态栏文档总数（M6 spec §2.6）：vfs:count 汇总，启动装载 + 树广播后刷新；null = 未装载
+  const [docCount, setDocCount] = useState<number | null>(null);
   // 外观域（M5 批次③ Task 8）：意图（持久化值）与解析结果（驱动 .dark 类与编辑器主题
   // props）。解析初值 light——spec §4.3 D10「首帧默认 light，装配后切换，闪变定档为已知边界」
   const [themeIntent, setThemeIntent] = useState<ThemeIntent>('system');
@@ -227,13 +192,16 @@ export function Workspace({
   // 命令订阅 effect 恒挂载期一份，闭包 tabsOp/roots 必陈旧；镜像值 = 树选中上下文中的
   // 可导出节点（reveal 覆盖 ?? 激活标签，命中且非根且在树内），无则 null（引导提示）
   const exportSelectionRef = useRef<number | null>(null);
+  // 树选中上下文（reveal 覆盖 ?? 激活 doc 标签）：激活态为设置哨兵（'settings'）时无树选中
+  const selectedTreeId =
+    revealSelectionId ?? (typeof tabsOp.activeId === 'number' ? tabsOp.activeId : null);
   useEffect(() => {
-    const selectedId = revealSelectionId ?? tabsOp.activeId;
+    const selectedId = selectedTreeId;
     exportSelectionRef.current =
       selectedId !== null && selectedId !== ROOT_ID && findNode(roots, selectedId) !== null
         ? selectedId
         : null;
-  }, [revealSelectionId, tabsOp.activeId, roots]);
+  }, [selectedTreeId, roots]);
   // reveal 选中覆盖回收：activeId 变化即用户改变焦点（开签/切签/关签补位），覆盖值让位
   //（初始挂载同样触发一次，值为 null 无副作用）
   useEffect(() => {
@@ -292,9 +260,12 @@ export function Workspace({
         setBackupAutoEnabled(result.value.backup.autoEnabled);
         // 启动恢复开关装载（spec §3.2）：开关显示值进 state（恢复执行仍在下方按装载值判定）
         setRestoreOnStart(result.value.workspace.restoreOnStart);
-        // 布局记忆恢复（FR-SHELL-01）：ref 同步记账（后续拖拽持久化以恢复值为基准）
+        // 布局记忆恢复（FR-SHELL-01 修订版）：活动视图随布局一并恢复；ref 同步记账
         layoutRef.current = result.value.shell.layout;
         setLayout(result.value.shell.layout);
+        setView(result.value.shell.layout.activityView);
+        // 欢迎页最近打开镜像装载（M6 spec §2.5）
+        setRecentOpened(result.value.recent.opened);
         // 工作区恢复（M5 批次②）：开关开启才恢复；恢复链异步贯穿存活校验，卸载即中止
         if (result.value.workspace.restoreOnStart) {
           void restoreWorkspace(result.value.workspace, () => alive);
@@ -310,6 +281,9 @@ export function Workspace({
           ),
         ]);
       }
+    });
+    void window.api.countNodes().then((result) => {
+      if (alive && result.ok) setDocCount(result.value);
     });
     return () => {
       alive = false;
@@ -388,6 +362,10 @@ export function Workspace({
       if (event.type === 'trashed' || event.type === 'purged') {
         pruneDeadRecent();
       }
+      // 状态栏文档总数刷新（M6 spec §2.6）：树变更广播后重查（COUNT 查询 <5ms，NFR-03 余量内）
+      void window.api.countNodes().then((result) => {
+        if (result.ok) setDocCount(result.value);
+      });
     });
     return unsubscribe;
   }, []);
@@ -411,10 +389,10 @@ export function Workspace({
     }
   }, [roots, expanded]);
 
-  // 备份列表装载（M5 批次③ Task 9）：设置页打开期间首拉 + backup:done 广播重拉；订阅随
-  // 设置页进出成对摘除（关闭即无列表可刷新，不必常驻监听），alive 防卸载后续体回写
+  // 备份列表装载（M5 批次③ Task 9）：设置标签打开期间首拉 + backup:done 广播重拉；订阅随
+  // 设置标签进出成对摘除（关闭即无列表可刷新，不必常驻监听），alive 防卸载后续体回写
   useEffect(() => {
-    if (!settingsOpen) return undefined;
+    if (!tabsOp.settingsOpen) return undefined;
     let alive = true;
     const refresh = (): void => {
       void window.api.backupList().then((result) => {
@@ -427,7 +405,7 @@ export function Workspace({
       alive = false;
       unsubscribe();
     };
-  }, [settingsOpen]);
+  }, [tabsOp.settingsOpen]);
 
   // io 进度订阅（M5 批次⑥ Task 12/13，挂载期常驻 + cleanup 成对摘除）：io:progress 广播
   // 为导入/导出可辨识联合（kind 判别字段，A.1-4），按 kind 分流入各自进度面板；完成态
@@ -721,7 +699,7 @@ export function Workspace({
    * 也能经 reveal 命中，与 M4 以来的选中语义一致。
    */
   function deriveImportTargetParentId(): number {
-    const selectedId = revealSelectionId ?? tabsOp.activeId;
+    const selectedId = selectedTreeId;
     if (selectedId === null) return ROOT_ID;
     const node = findNode(roots, selectedId);
     return node !== null && node.meta.nodeType === 'dir' ? node.meta.id : ROOT_ID;
@@ -845,6 +823,11 @@ export function Workspace({
    */
   function recordRecentOpen(node: NodeMeta): void {
     const entry: RecentInput = { nodeId: node.id, virtualPath: node.virtualPath, name: node.name };
+    // 欢迎页镜像同步置顶：recordRecent 顶部条目盖 now 戳、输出为 RecentEntry[]（断言理由
+    // 同下方持久化写入方——入参形态来自 settings 持久化值，A.1-5 超集知识收窄）
+    setRecentOpened(
+      (prev) => recordRecent(prev, entry, toLocalIsoTime(new Date())) as RecentEntry[],
+    );
     queueSettingsWrite((settings) => ({
       ...settings,
       recent: {
@@ -859,7 +842,8 @@ export function Workspace({
 
   /**
    * 工作区会话持久化（节流尾沿写体）：读 tabsRef 实时镜像（事件闭包 tabsOp 必陈旧），
-   * 全量 get→merge→set 写 workspace 域；restoreOnStart 用户开关原样保留
+   * 全量 get→merge→set 写 workspace 域；restoreOnStart 用户开关原样保留。
+   * 激活态为设置哨兵（'settings'）时落 null——workspace 域只记 doc 标签，设置标签不恢复
    */
   function persistTabsFromRef(): void {
     const op = tabsRef.current;
@@ -868,7 +852,7 @@ export function Workspace({
       workspace: {
         ...settings.workspace,
         tabNodeIds: op.tabs.map((t) => t.meta.id),
-        activeTabNodeId: op.activeId,
+        activeTabNodeId: typeof op.activeId === 'number' ? op.activeId : null,
       },
     }));
   }
@@ -888,9 +872,12 @@ export function Workspace({
       const aliveIds = new Set(
         opened.filter((_, i) => aliveFlags[i] === true).map((entry) => entry.nodeId),
       );
+      const pruned = pruneRecentByNodes(opened, aliveIds) as RecentEntry[];
+      // 欢迎页镜像同步剔除（与持久化同一过滤结果）
+      setRecentOpened(pruned);
       return {
         ...settings,
-        recent: { opened: pruneRecentByNodes(opened, aliveIds) as RecentEntry[] },
+        recent: { opened: pruned },
       };
     });
   }
@@ -980,18 +967,29 @@ export function Workspace({
    * 视图切离统一入口（Task 4 deferred Esc 双监听耦合的顺手闭环，M5 批次④ Task 10）：
    * search/trash 态内容不含 move 选择条，moveMode 若带离 tree 会在返回后带残态复现
    * （且双 Esc 监听并存时一次按键双态齐动）——切离即复位；返回 tree 不经此口。
+   * M6 起活动视图写统一经 updateLayout（本地态 + shell.layout v4 持久化一次完成）
    */
   function switchViewAway(next: Exclude<TreePaneView, 'tree'>): void {
     setMoveMode(null);
+    updateLayout({ activityView: next });
     setView(next);
   }
 
-  // search/trash 态 Esc 返回资源树（M5）：与 moveMode Esc 同款 window 级成对挂卸；
-  // search 态下 Esc 退出搜索（spec §2.2），输入焦点不阻断（window 级监听）
+  /** 活动视图统一写入口（活动栏点击/Esc 返回共用）：持久化 + 本地态一次完成 */
+  function switchView(next: TreePaneView): void {
+    if (next !== 'tree') {
+      setMoveMode(null);
+    }
+    updateLayout({ activityView: next });
+    setView(next);
+  }
+
+  // search/trash 态 Esc 返回资源树（M5 → M6 活动视图语义）：与 moveMode Esc 同款 window
+  // 级成对挂卸；search/trash 态下 Esc 退出（spec §2.2），输入焦点不阻断（window 级监听）
   useEffect(() => {
     if (view === 'tree') return undefined;
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setView('tree');
+      if (e.key === 'Escape') switchView('tree');
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
@@ -1141,25 +1139,18 @@ export function Workspace({
   }
 
   /**
-   * 分隔条拖拽（树/预览共用，side 定方向）：pointermove 仅本地态（写风暴防护，见 applyLayout），
-   * pointerup 一次性持久化；监听器 window 级成对移除（资源成对纪律）。树栏偏移取容器左缘、
-   * 预览栏取右缘镜像，换算与钳制归 layoutModel 纯函数
+   * 侧栏宽度拖拽：pointermove 仅本地态（写风暴防护，见 applyLayout），pointerup 一次性
+   * 持久化；监听器 window 级成对移除（资源成对纪律）。偏移取容器左缘，换算与钳制归
+   * layoutModel 纯函数
    */
-  function onDividerPointerDown(
-    side: 'tree' | 'preview',
-    e: React.PointerEvent<HTMLDivElement>,
-  ): void {
+  function onDividerPointerDown(e: React.PointerEvent<HTMLDivElement>): void {
     e.currentTarget.setPointerCapture(e.pointerId);
     const host = e.currentTarget.parentElement;
     if (host === null) return;
     const onMove = (move: PointerEvent): void => {
       const rect = host.getBoundingClientRect();
-      const offset = side === 'tree' ? move.clientX - rect.left : rect.right - move.clientX;
-      applyLayout(
-        side === 'tree'
-          ? { treeWidthRatio: ratioFromPointer(rect.width, offset) }
-          : { previewWidthRatio: ratioFromPointer(rect.width, offset) },
-      );
+      const offset = move.clientX - rect.left;
+      applyLayout({ sidebarWidthRatio: ratioFromPointer(rect.width, offset) });
     };
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove);
@@ -1170,61 +1161,77 @@ export function Workspace({
     window.addEventListener('pointerup', onUp);
   }
 
-  // 激活标签同步给控制器（flushActive 语义基准；tabModel 补位/聚焦后随 activeId 联动）
+  // 激活标签同步给控制器（flushActive 语义基准；tabModel 补位/聚焦后随 activeId 联动）。
+  // 激活态为设置哨兵（'settings'）时同步 null——设置页无保存管线语义，flushActive no-op
   useEffect(() => {
-    saveController.setActiveNode(tabsOp.activeId);
+    const activeNodeId = typeof tabsOp.activeId === 'number' ? tabsOp.activeId : null;
+    saveController.setActiveNode(activeNodeId);
   }, [tabsOp.activeId, saveController]);
 
-  // 外壳命令订阅（cleanup 成对）：菜单命令 dispatch + 关窗确认链（spec §2.3/§5.2）；
-  // switch 分支穷举 ShellCommand 联合（宪法 A.1-4，never 兜底由穷举性承担——联合扩型
-  // 未同步追加分支时编译期即报错）
+  // 主题三态循环（状态栏切换钮）：light → dark → system → light，与既有持久化链共用入口
+  function cycleThemeIntent(): void {
+    const next: ThemeIntent =
+      themeIntent === 'light' ? 'dark' : themeIntent === 'dark' ? 'system' : 'light';
+    changeThemeIntent(next);
+  }
+
+  /**
+   * 外壳命令统一处理器（M6 spec §2.2）：原生菜单/加速器（application menu → shell:command
+   * 订阅）与应用内菜单（TitleBar 直调）同一收口——switch 分支穷举 ShellCommand 联合
+   * （宪法 A.1-4，never 兜底由穷举性承担）。
+   */
+  function handleShellCommand(command: ShellCommand): void {
+    switch (command.type) {
+      case 'save':
+        // 菜单「保存」/Ctrl+S：立即写激活标签（管线 flush 语义，无激活为 no-op）
+        saveController.flushActive();
+        break;
+      case 'new-file':
+        createInContext('file');
+        break;
+      case 'new-dir':
+        createInContext('dir');
+        break;
+      case 'quick-open':
+        // 菜单「快速打开」/Ctrl+P：置开关浮层（数据自持，点选经 onPick 回 openFile）
+        setQuickOpen(true);
+        break;
+      case 'global-search':
+        // 菜单「全局搜索」/Ctrl+Shift+F（M5 Task 7）：切入 search 活动视图（切离复位 move 态）
+        switchViewAway('search');
+        break;
+      case 'open-settings':
+        // 菜单「设置…」/CmdOrCtrl+,（M6 spec §2.4）：打开/聚焦设置伪标签
+        setTabsOp((prev) => openSettingsTab(prev));
+        break;
+      case 'import':
+        // 菜单「导入…」（M5 批次⑥ Task 12）：目录选择 → 策略确认弹层 → io:import 链入口
+        beginImport();
+        break;
+      case 'export':
+        // 菜单「导出…」（M5 批次⑥ Task 13）：选中子树 → 目录选择 → io:export 链入口
+        beginExport();
+        break;
+      case 'confirm-close':
+        // 关窗确认链（spec §2.3）：无脏直接放行 forceClose；有脏弹原生 confirm，
+        // 用户确认才放行（取消则留在应用）。放行动作即 shell:force-close，
+        // 主进程 requestClose 置 allowClose 标记后重入 close 直通
+        if (!dirtyRef.current) {
+          void window.api.forceClose();
+          return;
+        }
+        if (window.confirm('有未保存的更改，确定退出？')) {
+          void window.api.forceClose();
+        }
+        break;
+    }
+  }
+
+  // 外壳命令订阅（cleanup 成对）：菜单命令 dispatch + 关窗确认链（spec §2.3/§5.2）。
+  // 命令体经 handleShellCommand（TitleBar 与本订阅共用）；订阅仅装配一次，状态读取走
+  // ref 镜像（M4 以来既定口径），故依赖只列 saveController
   useEffect(() => {
-    return window.api.onShellCommand((command) => {
-      switch (command.type) {
-        case 'save':
-          // 菜单「保存」/Ctrl+S：立即写激活标签（管线 flush 语义，无激活为 no-op）
-          saveController.flushActive();
-          break;
-        case 'new-file':
-          createInContext('file');
-          break;
-        case 'new-dir':
-          createInContext('dir');
-          break;
-        case 'quick-open':
-          // 菜单「快速打开」/Ctrl+P：置开关浮层（数据自持，点选经 onPick 回 openFile）
-          setQuickOpen(true);
-          break;
-        case 'global-search':
-          // 菜单「全局搜索」/Ctrl+Shift+F（M5 Task 7）：切入树栏 search 态（三态容器，切离复位 move 态）
-          switchViewAway('search');
-          break;
-        case 'open-settings':
-          // 菜单「设置…」/CmdOrCtrl+,（M5 Task 8）：全屏覆盖设置页（工作台状态保持，关闭即还原）
-          setSettingsOpen(true);
-          break;
-        case 'import':
-          // 菜单「导入…」（M5 批次⑥ Task 12）：目录选择 → 策略确认弹层 → io:import 链入口
-          beginImport();
-          break;
-        case 'export':
-          // 菜单「导出…」（M5 批次⑥ Task 13）：选中子树 → 目录选择 → io:export 链入口
-          beginExport();
-          break;
-        case 'confirm-close':
-          // 关窗确认链（spec §2.3）：无脏直接放行 forceClose；有脏弹原生 confirm，
-          // 用户确认才放行（取消则留在应用）。放行动作即 shell:force-close，
-          // 主进程 requestClose 置 allowClose 标记后重入 close 直通
-          if (!dirtyRef.current) {
-            void window.api.forceClose();
-            return;
-          }
-          if (window.confirm('有未保存的更改，确定退出？')) {
-            void window.api.forceClose();
-          }
-          break;
-      }
-    });
+    return window.api.onShellCommand(handleShellCommand);
   }, [saveController]);
 
   // 卸载清全部计时器（成对释放，宪法资源纪律）
@@ -1244,7 +1251,7 @@ export function Workspace({
     };
   }, []);
 
-  // —— 渲染段：grid 模板列内联（M4 spec §5.1 D5）——
+  // —— 渲染段（M6 spec §2 壳层）——
   // 预览面板展示源合成（M5 批次⑦，D20 双源）：媒体驱动呈现 previewNode，标签驱动呈现激活
   // 标签；源='image' 而 previewNode 为空的组合构造上不可达，回落激活标签仅为契约收尾
   const previewDisplayNode =
@@ -1254,50 +1261,72 @@ export function Workspace({
   // 树弱选中（D20 附则）：仅媒体驱动期间以 previewOnlyNodeId 呈现；源回标签即退场
   //（previewNode 值保留，仅不再驱动树高亮）
   const previewOnlyNodeId = previewSource === 'image' ? (previewNode?.id ?? null) : null;
-  // 列序：树 | 树分隔条 | 编辑器前分隔条（固定宽）| 编辑器（1fr 自适应占余）| 预览分隔条 | 预览；
-  // 折叠栏收窄条（8px，仅展开钮可视），编辑器折叠收 0px（容器 display:none 保持挂载，保存管线照常）
-  const gridColumns = [
-    layout.treeCollapsed ? '8px' : `${(layout.treeWidthRatio * 100).toFixed(2)}%`,
-    layout.treeCollapsed ? '8px' : '4px', // 分隔条
-    '4px', // 编辑器前分隔条（固定宽）
-    layout.editorCollapsed ? '0px' : '1fr',
-    layout.previewCollapsed ? '8px' : '4px',
-    layout.previewCollapsed ? '8px' : `${(layout.previewWidthRatio * 100).toFixed(2)}%`,
-  ].join(' ');
+  // 设置伪标签激活判定（哨兵值）；状态栏脏态（仅 doc 标签参与）
+  const settingsActive = tabsOp.activeId === 'settings';
+  const hasDirty = tabsOp.tabs.some((t) => t.dirty);
 
   return (
-    // 工作台容器（设计系统文档 §7.2）：纵向 flex 等价替代原「无行模板 grid」——插槽行
-    // 自然堆叠、三栏区 1fr 占余；类名保留为测试锚点，视觉一律工具类承载
+    // 工作台容器：标题栏 + 主体行（活动栏|侧栏|分隔条|画布区）+ 状态栏（M6 spec §2 结构）
     <div className="lt-workspace flex min-h-0 flex-1 flex-col">
-      {toolbarSlot}
-      {/* 三栏网格容器（内联列模板；工具栏/状态栏插槽留在外层，不占三栏轨道） */}
-      <div
-        className="lt-panes grid min-h-0 flex-1 overflow-hidden"
-        style={{ gridTemplateColumns: gridColumns }}
-      >
-        {layout.treeCollapsed ? (
-          <aside className="lt-pane lt-pane-tree lt-pane-collapsed flex w-full flex-col items-center gap-1 overflow-hidden py-1">
+      <TitleBar platform={window.api.platform} onCommand={handleShellCommand} />
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <ActivityBar
+          view={view}
+          settingsActive={settingsActive}
+          onViewChange={switchView}
+          onOpenSettings={() => setTabsOp((prev) => openSettingsTab(prev))}
+        />
+        {layout.sidebarCollapsed ? (
+          <aside className="lt-sidebar lt-sidebar-collapsed flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border bg-background py-2">
             <button
               type="button"
-              aria-label="展开树栏"
-              className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-              onClick={() => updateLayout({ treeCollapsed: false })}
+              aria-label="展开侧栏"
+              title="展开侧栏"
+              className={SIDEBAR_ICON_BUTTON_CLASS}
+              onClick={() => updateLayout({ sidebarCollapsed: false })}
             >
-              »
+              <PanelLeftOpen aria-hidden="true" className="size-4" />
             </button>
           </aside>
         ) : (
-          <TreePane
-            view={view}
-            onOpenSearch={() => switchViewAway('search')}
-            onOpenTrash={() => switchViewAway('trash')}
-            onBackToTree={() => setView('tree')}
-            onCollapse={() => updateLayout({ treeCollapsed: true })}
-            treeContent={
-              <>
+          <aside
+            className="lt-sidebar flex min-h-0 min-w-0 flex-col bg-background"
+            style={{ width: `${(layout.sidebarWidthRatio * 100).toFixed(2)}%` }}
+          >
+            {/* 侧栏头（M6 spec §2.3）：随活动视图换题与操作（返回/折叠图标钮） */}
+            <div className="lt-sidebar-header flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border px-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                {view === 'trash' ? '回收站' : view === 'search' ? '全局搜索' : '资源树'}
+              </span>
+              <div className="flex items-center gap-1">
+                {view !== 'tree' ? (
+                  <button
+                    type="button"
+                    aria-label="返回资源树"
+                    title="返回资源树"
+                    className={SIDEBAR_ICON_BUTTON_CLASS}
+                    onClick={() => switchView('tree')}
+                  >
+                    <ArrowLeft aria-hidden="true" className="size-4" />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label="折叠侧栏"
+                  title="折叠侧栏"
+                  className={SIDEBAR_ICON_BUTTON_CLASS}
+                  onClick={() => updateLayout({ sidebarCollapsed: true })}
+                >
+                  <PanelLeftClose aria-hidden="true" className="size-4" />
+                </button>
+              </div>
+            </div>
+            {/* 活动视图内容：互斥渲染，随态卸载即回收内部订阅（面板各自数据自持） */}
+            {view === 'tree' ? (
+              <div className="flex min-h-0 flex-1 flex-col">
                 <TreePanel
                   roots={roots}
-                  selectedId={revealSelectionId ?? tabsOp.activeId}
+                  selectedId={selectedTreeId}
                   previewOnlyNodeId={previewOnlyNodeId}
                   moveMode={moveMode !== null}
                   moveTargetId={moveTargetId}
@@ -1355,9 +1384,8 @@ export function Workspace({
                     onCancel={() => setRenameTarget(null)}
                   />
                 ) : null}
-              </>
-            }
-            searchContent={
+              </div>
+            ) : view === 'search' ? (
               // search 态：搜索面板数据自持（查询态在面板内部）。点选=定位打开（spec §2.2）：
               // 树侧展开（revealInTree）+ openFile 统一入口（大文件/二进制拦截与 recent 记录
               // 一并生效，开签后 activeId 变化自动收走 reveal 覆盖选中）；「在树中显示」=
@@ -1369,119 +1397,97 @@ export function Workspace({
                 }}
                 onReveal={(node) => {
                   void revealInTree(node);
-                  setView('tree');
+                  switchView('tree');
                 }}
               />
-            }
-            trashContent={
+            ) : (
               // trash 态：回收站面板整体替换树内容（move 选择条/重命名模态同属树态，不渲染）；
               // 面板数据自持（首拉 + trash 域广播重拉），随态卸载即退订
               <TrashPanel />
-            }
-          />
+            )}
+          </aside>
         )}
-        {/* 树分隔条（可拖拽调宽；树栏折叠时收窄条、不响应拖拽，比例维持记忆值） */}
+        {/* 侧栏分隔条（可拖拽调宽；侧栏折叠时收窄轨、不响应拖拽，比例维持记忆值） */}
         <div
-          className="lt-divider lt-divider-tree cursor-col-resize bg-border transition-colors duration-100 hover:bg-ring/50"
+          className="lt-divider lt-divider-sidebar cursor-col-resize bg-border transition-colors duration-100 hover:bg-ring/50"
           role="separator"
           aria-orientation="vertical"
-          onPointerDown={layout.treeCollapsed ? undefined : (e) => onDividerPointerDown('tree', e)}
+          onPointerDown={layout.sidebarCollapsed ? undefined : onDividerPointerDown}
         />
-        {/* 编辑器前分隔条（固定 4px 装饰轨）：编辑器折叠时承载展开钮——折叠容器 display:none
-            的唯一展开回口（轨道 0px 内不放交互元素） */}
-        {layout.editorCollapsed ? (
-          <div className="lt-divider lt-divider-editor lt-divider-editor-toggle flex items-center justify-center bg-border">
-            <button
-              type="button"
-              aria-label="展开编辑器"
-              className="inline-flex h-5 w-4 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-              onClick={() => updateLayout({ editorCollapsed: false })}
-            >
-              »
-            </button>
-          </div>
-        ) : (
-          <div className="lt-divider lt-divider-editor bg-border" aria-hidden="true" />
-        )}
-        <section
-          className={`lt-pane lt-pane-editor flex min-h-0 min-w-0 flex-col bg-background${
-            layout.editorCollapsed ? ' lt-pane-collapsed' : ''
-          }`}
-          style={layout.editorCollapsed ? { display: 'none' } : undefined}
-        >
-          <div className="lt-pane-titlebar flex h-8 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
-            <span className="text-xs font-medium text-muted-foreground">编辑器</span>
-            <button
-              type="button"
-              aria-label="折叠编辑器"
-              className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-              onClick={() => updateLayout({ editorCollapsed: true })}
-            >
-              «
-            </button>
-          </div>
-          {/* TabBar 仅在有标签时占位（全关回空态，M4 spec §3）；激活=仅改 activeId（tabs 不动） */}
-          {tabsOp.tabs.length > 0 ? (
+        {/* 编辑画布区（M6 spec §2.4）：标签栏 + 类型化画布（设置标签页/编辑|预览对/欢迎页）。
+            编辑|预览对为批次①过渡形态（滚动同步接线保留），批次②替换为所见即所得单画布 */}
+        <section className="lt-canvas flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+          {tabsOp.tabs.length > 0 || tabsOp.settingsOpen ? (
             <TabBar
               tabs={tabsOp.tabs}
               activeId={tabsOp.activeId}
+              settingsOpen={tabsOp.settingsOpen}
               onActivate={activateTab}
               onClose={closeTabById}
+              onActivateSettings={() => setTabsOp((prev) => openSettingsTab(prev))}
+              onCloseSettings={() => setTabsOp((prev) => closeSettingsTab(prev))}
             />
           ) : null}
-          <EditorPanel
-            sessions={sessions}
-            activeTab={activeTab}
-            debounceMs={debounceMs}
-            theme={resolvedTheme}
-            editorFontSize={editorFontSize}
-            onSaveRequest={() => saveController.flushActive()}
-            // 滚动同步接线（M5 Task 11）：比例上行中转至预览投递槽；锚点滚动命令槽交面板登记
-            onScrollRatio={(ratio) => previewScrollPostRef.current?.(ratio)}
-            anchorScrollRef={editorAnchorScrollRef}
-          />
-        </section>
-        {/* 预览分隔条（可拖拽调宽；预览栏折叠时同理不响应拖拽） */}
-        <div
-          className="lt-divider lt-divider-preview cursor-col-resize bg-border transition-colors duration-100 hover:bg-ring/50"
-          role="separator"
-          aria-orientation="vertical"
-          onPointerDown={
-            layout.previewCollapsed ? undefined : (e) => onDividerPointerDown('preview', e)
-          }
-        />
-        {layout.previewCollapsed ? (
-          <section className="lt-pane lt-pane-preview lt-pane-collapsed flex w-full flex-col items-center gap-1 overflow-hidden py-1">
-            <button
-              type="button"
-              aria-label="展开预览栏"
-              className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-              onClick={() => updateLayout({ previewCollapsed: false })}
-            >
-              «
-            </button>
-          </section>
-        ) : (
-          <section className="lt-pane lt-pane-preview flex min-h-0 min-w-0 flex-col bg-background">
-            <div className="lt-pane-titlebar flex h-8 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
-              <span className="text-xs font-medium text-muted-foreground">预览</span>
-              <button
-                type="button"
-                aria-label="折叠预览栏"
-                className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-                onClick={() => updateLayout({ previewCollapsed: true })}
-              >
-                »
-              </button>
-            </div>
-            <PreviewPanel
-              node={previewDisplayNode}
-              // 滚动同步接线（M5 Task 11）：投递槽交面板登记；锚点 report 中转至编辑器命令槽
-              scrollPostRef={previewScrollPostRef}
-              onScrollReport={(anchorText) => editorAnchorScrollRef.current?.(anchorText)}
+          {settingsActive ? (
+            <SettingsPage
+              theme={themeIntent}
+              editorFontSize={editorFontSize}
+              debounceMs={debounceMs}
+              autoSaveMs={autoSaveMs}
+              backups={backups}
+              backupAutoEnabled={backupAutoEnabled}
+              onBackupAutoEnabledChange={changeBackupAutoEnabled}
+              restoreOnStart={restoreOnStart}
+              onRestoreOnStartChange={changeRestoreOnStart}
+              onCreateBackup={createBackupNow}
+              onRestoreBackup={restoreBackupNow}
+              onThemeChange={changeThemeIntent}
+              onFontSizeChange={changeEditorFontSize}
+              onDebounceChange={changeDebounceMs}
+              onAutoSaveChange={changeAutoSaveMs}
             />
-          </section>
-        )}
+          ) : activeTab !== null ? (
+            <div className="flex min-h-0 flex-1">
+              <EditorPanel
+                sessions={sessions}
+                activeTab={activeTab}
+                debounceMs={debounceMs}
+                theme={resolvedTheme}
+                editorFontSize={editorFontSize}
+                onSaveRequest={() => saveController.flushActive()}
+                // 滚动同步接线（M5 Task 11）：比例上行中转至预览投递槽；锚点滚动命令槽交面板登记
+                onScrollRatio={(ratio) => previewScrollPostRef.current?.(ratio)}
+                anchorScrollRef={editorAnchorScrollRef}
+              />
+              <div className="lt-divider-editor w-1 shrink-0 bg-border" aria-hidden="true" />
+              <div className="lt-pane-preview flex min-h-0 w-2/5 min-w-0 flex-col bg-background">
+                <PreviewPanel
+                  node={previewDisplayNode}
+                  // 滚动同步接线（M5 Task 11）：投递槽交面板登记；锚点 report 中转至编辑器命令槽
+                  scrollPostRef={previewScrollPostRef}
+                  onScrollReport={(anchorText) => editorAnchorScrollRef.current?.(anchorText)}
+                />
+              </div>
+            </div>
+          ) : (
+            // 欢迎页（M6 spec §2.5）：无激活 doc 标签且未开设置时的「首页」空态
+            <WelcomePage
+              recent={recentOpened.slice(0, 10)}
+              onOpenRecent={(nodeId) => {
+                void window.api.getNode({ nodeId }).then((result) => {
+                  if (result.ok) {
+                    void openFile(result.value);
+                  } else {
+                    showToast('文档不存在或已删除');
+                  }
+                });
+              }}
+              onNewFile={() => createInContext('file')}
+              onImport={beginImport}
+              onQuickOpen={() => setQuickOpen(true)}
+            />
+          )}
+        </section>
       </div>
       {/* 快速打开浮层（M5 批次① Task 6）：radix portal 渲染，关闭即卸载内容；
           点选回传走 openFile 统一入口（大文件/二进制拦截与 recent 记录一并生效） */}
@@ -1601,41 +1607,14 @@ export function Workspace({
           </AlertDialogContent>
         </AlertDialog>
       ) : null}
-      {/* 状态栏（设计系统文档 §7.2 标准类串）：设置入口钮（M5 Task 8）；保存态/进度占位后续消费 */}
-      <footer className="lt-statusbar flex h-7 shrink-0 items-center gap-3 border-t border-border bg-muted/50 px-3 text-xs text-muted-foreground">
-        <button
-          type="button"
-          aria-label="打开设置"
-          className="ml-auto inline-flex h-5 items-center justify-center rounded-sm px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-          onClick={() => setSettingsOpen(true)}
-        >
-          设置
-        </button>
-      </footer>
-      {/* 设置覆盖层（M5 批次③ Task 8，spec §4.2 D9）：fixed 全屏覆盖于工作台之上，z-40
-          低于 toast/浮层的 z-50（保存失败 toast 保持可见）；非路由非模态——工作台状态原样
-          保持，返回即卸载还原；表单即改即存经回调收口（写链与回滚在 Workspace） */}
-      {settingsOpen ? (
-        <SettingsPage
-          theme={themeIntent}
-          editorFontSize={editorFontSize}
-          debounceMs={debounceMs}
-          autoSaveMs={autoSaveMs}
-          backups={backups}
-          backupAutoEnabled={backupAutoEnabled}
-          onBackupAutoEnabledChange={changeBackupAutoEnabled}
-          restoreOnStart={restoreOnStart}
-          onRestoreOnStartChange={changeRestoreOnStart}
-          onCreateBackup={createBackupNow}
-          onRestoreBackup={restoreBackupNow}
-          onThemeChange={changeThemeIntent}
-          onFontSizeChange={changeEditorFontSize}
-          onDebounceChange={changeDebounceMs}
-          onAutoSaveChange={changeAutoSaveMs}
-          onBack={() => setSettingsOpen(false)}
-        />
-      ) : null}
-      {statusBarSlot}
+      {/* 状态栏（M6 spec §2.6）：保存态 + 文档总数 + 主题循环 + 设置入口 */}
+      <StatusBar
+        dirty={hasDirty}
+        docCount={docCount}
+        theme={themeIntent}
+        onCycleTheme={cycleThemeIntent}
+        onOpenSettings={() => setTabsOp((prev) => openSettingsTab(prev))}
+      />
     </div>
   );
 }
@@ -1664,6 +1643,10 @@ const ROOT_NODE: NodeMeta = {
  */
 const LARGE_FILE_SOFT_LIMIT_BYTES = 5 * 1024 * 1024;
 const LARGE_FILE_HARD_LIMIT_BYTES = 50 * 1024 * 1024;
+
+/** 侧栏头图标钮标准类串（折叠/返回钮共用，M6 spec §2.3） */
+const SIDEBAR_ICON_BUTTON_CLASS =
+  'inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground';
 
 /**
  * 文本可编辑 MIME 判定（M3 textarea 版 EditorPanel 同名函数语义迁入——openFile 前置拦截

@@ -1,21 +1,20 @@
 /**
- * 树面板（M3 spec §6）：递归渲染 TreeNode（仅呈现/事件，数据归 Workspace+treeModel）；
- * dir 点击展开折叠、file 点击选中；工具栏最小操作集（新建/删除/重命名/移动到…）。
+ * 树面板（M3 spec §6 → M6 spec §2.3 图标化重制）：递归渲染 TreeNode（仅呈现/事件，数据归
+ * Workspace+treeModel）；dir 点击展开折叠、file 点击选中；工具栏最小操作集全面图标化
+ * （新建目录/新建文件 + 选中时删除/重命名/移动到…，图标钮一律 aria-label + title tooltip）。
  * move 选择模式（M4 spec §6.2 D8）下点选语义临时切换：dir 点选=选定移动目标
  * （data-move-target 高亮），file 点选禁用——合法性判定与确认归 Workspace。
- * 行内「⋯」菜单（M5 批次④ Task 10）：每行 dropdown-menu 提供重命名/移动到…/删除，
- * dir 与 file 均有，操作以节点 id 直传（脱离 selectedId 选中锚——目录不开标签即可操作；
- * 根为唯一例外，不渲染入口）。树栏视图插槽（M5 批次① Task 7）：TreePane 承载树栏标题栏
- * 与 tree/search/trash 三态内容分发（view 态由 Workspace 三态容器持有并注入，本组件无
- * 内部视图态）；tree 内容即既有 TreePanel 实现引用不动，search/trash 内容由 Workspace 装配注入。
+ * 行内「⋯」菜单（M5 批次④ Task 10）：每行 dropdown-menu 提供重命名/移动到…/删除（M6 起带
+ * 图标），dir 与 file 均有，操作以节点 id 直传（脱离 selectedId 选中锚——目录不开标签即可
+ * 操作；根为唯一例外，不渲染入口）。
  * 媒体弱选中（M5 批次⑦ Task 14，spec §8/D20 附则）：previewOnlyNodeId 标记「仅预览选中」
  * 的 image/audio 行——与强选中（selectedId，aria-current='true'）并存两套语义：强选中行
  * 恒 aria-current='true' 且不带弱标记（同一行不双标）；弱选中行以 data-preview-selected
- * 承载样式/断言锚、可访问名追加「（预览中）」说明（名字仍以原名开头，既有 getByRole
- * name 子串定位锚不受影响；aria-current 通道不挪用——'false' 值对读屏器表达「非当前」，
- * 与弱选中的视觉高亮语义相悖）。
+ * 承载样式/断言锚、可访问名追加「（预览中）」说明。
+ * M6：原 TreePane（树栏三态标题栏）退役——视图切换移交活动栏（spec §2.3），本组件回归
+ * 纯树呈现；TreePaneView 类型保留（活动视图枚举消费）。
  */
-import type { ReactNode } from 'react';
+import { FilePlus, FolderInput, FolderPlus, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import {
   DropdownMenu,
@@ -55,12 +54,16 @@ export interface TreePanelProps {
   onStartMove(id: number): void;
 }
 
-/** 行内「⋯」菜单触发钮标准类串（标题栏图标钮同款形态，字号取行内三档中的 xs 档）。
+/** 行内「⋯」菜单触发钮标准类串（图标钮形态，字号取行内三档中的 xs 档）。
  * 显形策略（M5 打磨降噪）：常态弱化为透明、行悬停/行内焦点/菜单展开三态显形——每行
  * 常驻一枚 20px 钮是恒定视觉噪音；透明态仍占位（无布局位移）且可命中（无行为变化），
  * 键盘 Tab 聚焦经 group-focus-within 显形、菜单展开经 radix data-[state=open] 显形 */
 const ROW_MENU_TRIGGER_CLASS =
   'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition duration-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100 hover:bg-accent hover:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground';
+
+/** 工具栏图标钮标准类串（28px 热区，hover/focus/disabled 纪律与既有文字钮同源） */
+const TOOLBAR_ICON_BUTTON_CLASS =
+  'inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40';
 
 /**
  * 树节点行主按钮标准类串（设计系统文档 §7.2 树列表形态）：强选中 aria-current 半透明底 +
@@ -136,18 +139,23 @@ function TreeItem({
               title={node.meta.name}
               className={ROW_MENU_TRIGGER_CLASS}
             >
-              <span aria-hidden="true" className="text-xs leading-none">
-                ⋯
-              </span>
+              <MoreHorizontal aria-hidden="true" className="size-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuItem onSelect={() => onRename(node.meta.id)}>重命名</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onRename(node.meta.id)}>
+                <Pencil aria-hidden="true" />
+                重命名
+              </DropdownMenuItem>
               <DropdownMenuItem disabled={moveMode} onSelect={() => onStartMove(node.meta.id)}>
+                <FolderInput aria-hidden="true" />
                 移动到…
               </DropdownMenuItem>
               {/* 删除 = 移入回收站（Task 4 trashNode 链，非彻底删除），不标 destructive 变体 */}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => onTrash(node.meta.id)}>删除</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onTrash(node.meta.id)}>
+                <Trash2 aria-hidden="true" />
+                删除
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
@@ -184,47 +192,57 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
   const actionTarget = props.selectedId;
   return (
     <nav aria-label="资源树" className="flex min-h-0 flex-1 flex-col">
-      <div className="lt-tree-toolbar flex flex-wrap items-center gap-1 border-b border-border px-2 py-1">
+      <div className="lt-tree-toolbar flex items-center gap-1 border-b border-border px-2 py-1">
         <button
           type="button"
-          className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+          aria-label="新建目录"
+          title="新建目录"
+          className={TOOLBAR_ICON_BUTTON_CLASS}
           onClick={() => props.onCreate(contextParentId, 'dir')}
         >
-          新建目录
+          <FolderPlus aria-hidden="true" className="size-4" />
         </button>
         <button
           type="button"
-          className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+          aria-label="新建文件"
+          title="新建文件"
+          className={TOOLBAR_ICON_BUTTON_CLASS}
           onClick={() => props.onCreate(contextParentId, 'file')}
         >
-          新建文件
+          <FilePlus aria-hidden="true" className="size-4" />
         </button>
         {trashTarget !== null ? (
           <button
             type="button"
-            className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+            aria-label="删除"
+            title="删除"
+            className={TOOLBAR_ICON_BUTTON_CLASS}
             onClick={() => props.onTrash(trashTarget)}
           >
-            删除
+            <Trash2 aria-hidden="true" className="size-4" />
           </button>
         ) : null}
         {actionTarget !== null ? (
           <>
             <button
               type="button"
+              aria-label="重命名"
+              title="重命名"
               disabled={actionTarget === ROOT_ID}
-              className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+              className={TOOLBAR_ICON_BUTTON_CLASS}
               onClick={() => props.onRename(actionTarget)}
             >
-              重命名
+              <Pencil aria-hidden="true" className="size-4" />
             </button>
             <button
               type="button"
+              aria-label="移动到…"
+              title="移动到…"
               disabled={actionTarget === ROOT_ID || props.moveMode}
-              className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+              className={TOOLBAR_ICON_BUTTON_CLASS}
               onClick={() => props.onStartMove(actionTarget)}
             >
-              移动到…
+              <FolderInput aria-hidden="true" className="size-4" />
             </button>
           </>
         ) : null}
@@ -266,97 +284,4 @@ function findContextParent(roots: readonly TreeNode[], selectedId: number | null
   if (selected === null) return ROOT_ID;
   // 契约上 parentId 为 null 的只有根，根恒为 dir 走上分支；此处兜底 ROOT_ID 仅满足 null 类型收窄
   return selected.nodeType === 'dir' ? selected.id : (selected.parentId ?? ROOT_ID);
-}
-
-/** 标题栏文本钮标准类串（设计系统文档 §7.2，与 Workspace 迁出前逐字一致） */
-const TITLE_BUTTON_CLASS =
-  'inline-flex h-5 items-center justify-center rounded-sm px-2 text-xs font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground';
-
-/** 标题栏图标钮标准类串（折叠钮两态常驻） */
-const TITLE_ICON_BUTTON_CLASS =
-  'inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground';
-
-export interface TreePaneProps {
-  /** 当前视图（Workspace 三态容器唯一事实来源，经 props 注入分发） */
-  readonly view: TreePaneView;
-  /** tree 态内容：既有 TreePanel + move 选择条 + 重命名模态（Workspace 装配注入） */
-  readonly treeContent: ReactNode;
-  /** search 态内容：全局搜索面板（Workspace 装配注入） */
-  readonly searchContent: ReactNode;
-  /** trash 态内容：回收站面板（Workspace 装配注入） */
-  readonly trashContent: ReactNode;
-  /** 标题栏入口：进入全局搜索态 */
-  onOpenSearch(): void;
-  /** 标题栏入口：进入回收站态 */
-  onOpenTrash(): void;
-  /** 标题栏入口：返回资源树态（search/trash 两态共用） */
-  onBackToTree(): void;
-  /** 折叠树栏（布局行为与视图态正交） */
-  onCollapse(): void;
-}
-
-/**
- * 树栏视图插槽（三态容器呈现面）：标题栏随视图换题与操作——tree 态提供全局搜索/回收站
- * 入口，search/trash 态提供返回口；折叠钮两态常驻。三态内容由 Workspace 装配注入，
- * 本组件只做呈现与分发，不持有任何业务态（A.7-6 单向数据流）。
- */
-export function TreePane({
-  view,
-  treeContent,
-  searchContent,
-  trashContent,
-  onOpenSearch,
-  onOpenTrash,
-  onBackToTree,
-  onCollapse,
-}: TreePaneProps): React.JSX.Element {
-  const title = view === 'trash' ? '回收站' : view === 'search' ? '全局搜索' : '资源树';
-  return (
-    <aside className="lt-pane lt-pane-tree flex min-h-0 min-w-0 flex-col bg-background">
-      <div className="lt-pane-titlebar flex h-8 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
-        <span className="text-xs font-medium text-muted-foreground">{title}</span>
-        <div className="flex items-center gap-1">
-          {view === 'tree' ? (
-            <>
-              <button
-                type="button"
-                aria-label="打开全局搜索"
-                className={TITLE_BUTTON_CLASS}
-                onClick={onOpenSearch}
-              >
-                搜索
-              </button>
-              <button
-                type="button"
-                aria-label="打开回收站"
-                className={TITLE_BUTTON_CLASS}
-                onClick={onOpenTrash}
-              >
-                回收站
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              aria-label="返回资源树"
-              className={TITLE_BUTTON_CLASS}
-              onClick={onBackToTree}
-            >
-              返回
-            </button>
-          )}
-          <button
-            type="button"
-            aria-label="折叠树栏"
-            className={TITLE_ICON_BUTTON_CLASS}
-            onClick={onCollapse}
-          >
-            «
-          </button>
-        </div>
-      </div>
-      {/* 三态内容分发：互斥渲染，随态卸载即回收内部订阅（面板各自数据自持） */}
-      {view === 'tree' ? treeContent : view === 'search' ? searchContent : trashContent}
-    </aside>
-  );
 }

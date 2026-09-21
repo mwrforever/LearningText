@@ -291,6 +291,9 @@ describe('Workspace 快速打开接线', () => {
       ),
       settingsGet: vi.fn(() => Promise.resolve({ ok: true, value: DEFAULT_SETTINGS })),
       settingsSet: vi.fn(() => Promise.resolve({ ok: true, value: DEFAULT_SETTINGS })),
+      // M6 壳层装配路径补员：状态栏文档计数与 TitleBar 平台标识
+      countNodes: vi.fn(() => Promise.resolve({ ok: true, value: 0 })),
+      platform: 'win32',
       onShellCommand: vi.fn((callback: (command: ShellCommand) => void) => {
         shellHandlers.push(callback);
         return vi.fn();

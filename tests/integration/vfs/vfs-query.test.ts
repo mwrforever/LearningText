@@ -171,3 +171,19 @@ describe('getNode', () => {
     }
   });
 });
+
+// countNodes（M6 vfs:count，spec §2.6 状态栏文档计数基座）：COUNT(*) 聚合仅计未删除节点
+//（迁移种子含根，空库 = 根自身 1 个）；目录同计入展示口径
+describe('countNodes', () => {
+  it('迁移后仅根计 1；种子节点逐个累加；软删节点出清计数', () => {
+    expect(vfs.countNodes()).toBe(1); // 根节点存在时为 1（迁移 v1 种子）
+    seed(1, '笔记', 'dir');
+    const fileId = seed(1, 'a.html', 'file', Buffer.from('<p>1</p>'));
+    expect(vfs.countNodes()).toBe(3);
+    db.prepare('UPDATE node SET deleted_at = ? WHERE id = ?').run(
+      '2026-09-16T11:00:00.000+08:00',
+      fileId,
+    );
+    expect(vfs.countNodes()).toBe(2); // deleted_at IS NULL 过滤：回收站节点不计
+  });
+});

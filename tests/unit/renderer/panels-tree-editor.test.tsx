@@ -39,7 +39,7 @@ afterEach(() => {
 });
 
 describe('TreePanel', () => {
-  it('渲染展开节点名、file 点选触发 onSelect、工具栏新建走选中父', () => {
+  it('渲染展开节点名、file 点选触发 onSelect、工具栏新建走选中父（M6 图标钮锚点）', () => {
     const roots = [
       withChildren(makeTreeRoot(meta(1, '根', 'dir')), [makeTreeRoot(meta(2, 'a.html'))]),
     ];
@@ -69,7 +69,9 @@ describe('TreePanel', () => {
       fileBtn?.click();
     });
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
-    const newBtn = buttons.find((b) => b.textContent === '新建文件');
+    // 工具栏 M6 起为图标钮（无文本），统一以 aria-label 锚点寻址
+    const newBtn = container.querySelector<HTMLButtonElement>('button[aria-label="新建文件"]');
+    expect(newBtn).not.toBeNull();
     act(() => {
       newBtn?.click();
     });

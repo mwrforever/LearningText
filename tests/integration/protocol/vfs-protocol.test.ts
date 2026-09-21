@@ -237,24 +237,30 @@ describe('CSS 热替换接收器注入（M4 spec §5.4 裁决 D10）', () => {
     expect(injectPreviewReceiver('<p>无 body</p>').startsWith('<p>无 body</p><script')).toBe(true);
   });
 
-  it('滚动同步接收器扩展（M5 Task 11）：注入含 scroll-ratio/scroll-report 标记且接收器串无原始闭合标签', async () => {
+  it('接收器注入红线与语法守卫（M6 起滚动同步段随画布化退役，css-swap 接收器保留）', async () => {
     const { injectPreviewReceiver } = await import('../../../src/main/protocol/vfsProtocol.ts');
     // 无 body 文档：响应体恰为接收器脚本本体——对脚本整体做协议标记与红线断言
     const receiver = injectPreviewReceiver('');
-    expect(receiver).toContain('lt:scroll-ratio');
-    expect(receiver).toContain('lt:scroll-report');
+    // M6 spec §3.4/D5：滚动同步接收器段（lt:scroll-ratio / lt:scroll-report）退役删除，
+    // css-swap 热替换通道保留
+    expect(receiver).toContain('lt:css-swap');
+    expect(receiver).not.toContain('lt:scroll-ratio');
+    expect(receiver).not.toContain('lt:scroll-report');
     // 红线（Task 11 brief）：注入串不得在中途出现 </script>——HTML 解析器扫原始文本，
     // 中途出现即提前闭合标签；唯一合法出现位是收尾的真实闭合标签本身（拼接形态落地）
     const closingTag = '</' + 'script>';
     expect(receiver.endsWith(closingTag)).toBe(true);
     expect(receiver.slice(0, receiver.length - closingTag.length).includes(closingTag)).toBe(false);
     // 接收器 JS 语法守卫：拼接串必须可编译（语法破损在 jsdom/单测链路无从暴露，只会在
-    // 真实预览运行时爆发——new Function 仅编译不执行，注入行为归 E2E）
-    const scriptBody = receiver.slice('<script>'.length, receiver.length - closingTag.length);
+    // 真实预览运行时爆发——new Function 仅编译不执行，注入行为归 E2E）。
+    // 脚本体起点按开标签闭合「>」定位（M6 起开标签携带 data-lt-injected 属性，非裸 <script>）
+    const bodyStart = receiver.indexOf('>') + 1;
+    const scriptBody = receiver.slice(bodyStart, receiver.length - closingTag.length);
     expect(() => new Function(scriptBody)).not.toThrow();
-    // 经 handler 全链路佐证：text/html 200 响应体携带滚动同步接收器标记
+    // 经 handler 全链路佐证：text/html 200 响应体携带热替换接收器标记且无滚动同步段
     const htmlText = await (await handler(req(requestUrl('/笔记/index.html')))).text();
-    expect(htmlText).toContain('lt:scroll-ratio');
-    expect(htmlText).toContain('lt:scroll-report');
+    expect(htmlText).toContain('lt:css-swap');
+    expect(htmlText).not.toContain('lt:scroll-ratio');
+    expect(htmlText).not.toContain('lt:scroll-report');
   });
 });

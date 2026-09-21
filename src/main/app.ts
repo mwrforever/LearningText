@@ -7,7 +7,7 @@
  */
 import path from 'node:path';
 import type Database from 'better-sqlite3';
-import { app, BrowserWindow, Menu, dialog, protocol, shell } from 'electron';
+import { app, BrowserWindow, Menu, dialog, nativeTheme, protocol, shell } from 'electron';
 import { handleAppResource } from './protocol/appProtocol';
 import { createVfsProtocolHandler } from './protocol/vfsProtocol';
 import { registerIpcHandlers } from './ipc';
@@ -21,6 +21,7 @@ import { createSettingsService } from './settings/settingsService';
 import { createImportService, nodeFs } from './io/importService';
 import { createExportService, nodeExportFs } from './io/exportService';
 import { IPC } from '../shared/ipc';
+import { titleBarOverlayFor } from '../shared/titlebar';
 import type { VfsChangedBroadcast } from '../shared/vfs-contract';
 import type { ExportProgress, ImportProgress } from '../shared/io-contract';
 import { attachWindowCloseGuard, installApplicationMenu } from './menu/menu';
@@ -39,17 +40,27 @@ const APP_ORIGIN = 'app://bundle';
  *   whenReady 内按运行模式计算的 allowed，B.5-6）。
  * @param allow guard 放行标记（与 requestClose 共享同一对象引用）：false 时首次
  *   close 一律拦截并下发 confirm-close 命令，置 true 后重入 close 直通。
+ * @param initialOverlayTheme 初始解析主题（来源：设置装载值 + system 态经 nativeTheme
+ *   解析，M6 spec §2.2）：自绘标题栏 overlay 初始配色。
  * @returns 窗口实例（供 winRef 持有，requestClose 经其触发 close 重入）。
  */
 function createMainWindow(
   devServerUrl: string | undefined,
   allowedOrigins: readonly string[],
   allow: { value: boolean },
+  initialOverlayTheme: 'light' | 'dark',
 ): BrowserWindowType {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     title: 'LearningText',
+    // 自绘集成标题栏（M6 spec §2.2，平台探针实证见 spec）：hidden 后原生菜单栏不渲染
+    // （应用内菜单承接，application menu 保留承载加速器与 mac 系统菜单栏）；
+    // 窗口控制钮 overlay 仅 Windows/Linux（mac 用系统红绿灯，不设 overlay）
+    titleBarStyle: 'hidden',
+    ...(process.platform !== 'darwin'
+      ? { titleBarOverlay: titleBarOverlayFor(initialOverlayTheme) }
+      : {}),
     webPreferences: {
       // 宪法 B.5-1：默认值显式写出，防回归（审计可查）
       contextIsolation: true,
@@ -285,9 +296,32 @@ export function bootstrapMain(): void {
         export: exportService,
         dialogProducedDirs,
         openDirectoryInShell,
+        // 自绘标题栏主题联动（M6 spec §2.2/D12）：settings:set 检测 appearance.theme
+        // 变更后回调；主进程内聚更新 overlay 配色，不新增 IPC 通道
+        onAppearanceThemeChange: (intent) => {
+          const resolved = resolveThemeIntent(intent);
+          for (const win of BrowserWindow.getAllWindows()) {
+            // overlay 未激活的平台/形态（mac、无 overlay 环境）setTitleBarOverlay 抛错——
+            // 联动是呈现性增量，静默跳过不构成失败
+            try {
+              win.setTitleBarOverlay(titleBarOverlayFor(resolved));
+            } catch {
+              // mac 等无 overlay 平台：无需联动，忽略
+            }
+          }
+        },
       });
-      winRef.current = createMainWindow(devServerUrl, allowed, allowClose);
-      // 应用菜单装配（M4 spec §5.2）：窗口创建后一次（命令经 shell:command 下发渲染层）
+      winRef.current = createMainWindow(
+        devServerUrl,
+        allowed,
+        allowClose,
+        // 初始 overlay 配色（M6 spec §2.2）：设置意图 system 态经 nativeTheme 解析，
+        // 与渲染层 matchMedia 同语义；读取时刻 = 窗口创建前，设置服务已装载完成
+        resolveThemeIntent(settings.get().appearance.theme),
+      );
+      // 应用菜单装配（M4 spec §5.2）：窗口创建后一次（命令经 shell:command 下发渲染层）。
+      // M6 起原生菜单栏在 hidden 标题栏形态下不渲染（spec §2.2 探针实证），本装配保留
+      // 承载加速器与 mac 系统菜单栏；应用内菜单由渲染层 TitleBar 承接（同命令单通道）
       installApplicationMenu();
       // 每日自动备份（M5 批次③）：装配完成后判定一次（窗口先行创建，复制不阻塞首帧）；
       // 到期判定与建份失败容错均在服务内（warn 不阻断启动）
@@ -315,6 +349,16 @@ export function bootstrapMain(): void {
       console.error('[main] 关闭数据库失败', e);
     }
   });
+}
+
+/**
+ * 主题意图 → 解析主题（主进程侧最小实现，M6 spec §2.2）：light/dark 直取；system 态
+ * 经 nativeTheme.shouldUseDarkColors 解析——与渲染层 matchMedia 同语义，两侧各解一次
+ * 属既定口径（overlay 配色无动画，解析差异无感）。
+ */
+function resolveThemeIntent(intent: 'light' | 'dark' | 'system'): 'light' | 'dark' {
+  if (intent === 'system') return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+  return intent;
 }
 
 // 模块加载即装配：Electron 主进程入口仅此一次，scheme 注册必须先于 app ready

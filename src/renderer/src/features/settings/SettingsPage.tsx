@@ -1,15 +1,15 @@
 /**
- * 设置页（M5 批次③ Task 8 骨架 + Task 9 备份/维护区实装，spec §4.2 D9）：全屏覆盖视图
- * （fixed inset-0，z-40 低于 toast/浮层卡片的 z-50——保存失败 toast 保持可见），非模态非
- * 路由——由 Workspace 以 settingsOpen 挂载/卸载，工作台状态原样保持。左侧分组导航
- * （外观/编辑器/备份/维护四区）+ 右侧表单区；表单即改即存：控件受控于 Workspace 提升的
- * 设置态，变更经钳制纯函数后上抛回调（写链 get→merge→set 与失败 toast 回滚由 Workspace
- * 收口，本组件零持久化副作用）。备份区还原经 alert-dialog 强确认（将覆盖当前全部数据并
- * 重启应用）；维护区「启动时恢复工作区」开关（spec §3.2，workspace.restoreOnStart 默认开）
- * + 「重建搜索索引」disabled 占位（接线归后续批次，登记 TASK.md）。
- * 顶部「← 返回」为唯一关闭通道（D9：Esc 不关闭，防误触）。
+ * 设置标签页（M5 批次③ 骨架 → M6 spec §2.7/§4 重制）：不再是全屏覆盖层——作为编辑区
+ * 特殊伪标签的内容面（spec 裁决 D3），关闭 = 关闭标签（TabBar 设置标签关闭钮）。
+ * 左侧锚点导航（图标+文字：外观/编辑与预览/备份/数据与存储/工作区）+ 右侧表单区；
+ * 表单即改即存：控件受控于 Workspace 提升的设置态，变更经钳制纯函数后上抛回调（写链
+ * get→merge→set 与失败 toast 回滚由 Workspace 收口，本组件零持久化副作用）。
+ * 备份区还原经 alert-dialog 强确认（将覆盖当前全部数据并重启应用）。
+ * 「数据与存储」分区由批次③接入（本组件预留分区枚举位）。
+ * M6 移除「重建搜索索引」disabled 占位按钮（用户需求：未实现功能不设计；TASK.md 保留接线项）。
  */
 import { useState } from 'react';
+import { DatabaseBackup, History, Palette, SlidersHorizontal } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -34,13 +34,13 @@ import type { ThemeIntent } from './themeResolver';
 export interface SettingsPageProps {
   /** 主题意图显示值（Workspace 持久化态回灌；保存失败回滚后随 props 还原） */
   readonly theme: ThemeIntent;
-  /** 编辑器字号显示值（12–24 整数，px） */
+  /** 源码编辑器字号显示值（12–24 整数，px；M6 起仅作用 CodeMirror 源码编辑） */
   readonly editorFontSize: number;
-  /** 预览去抖显示值（100–2000 ms 整数） */
+  /** 保存/刷新去抖显示值（100–2000 ms 整数；M6 起改述，键名 preview.debounceMs 不变） */
   readonly debounceMs: number;
   /** 自动保存间隔显示值（1000–60000 ms 整数） */
   readonly autoSaveMs: number;
-  /** 备份条目列表（新→旧；Workspace 在设置页打开期间拉取与广播刷新） */
+  /** 备份条目列表（新→旧；Workspace 在设置标签打开期间拉取与广播刷新） */
   readonly backups: readonly BackupEntry[];
   /** 每日自动备份开关显示值（backup.autoEnabled） */
   readonly backupAutoEnabled: boolean;
@@ -62,16 +62,22 @@ export interface SettingsPageProps {
   readonly onDebounceChange: (debounceMs: number) => void;
   /** 自动保存变更回调（入参已经 clampAutoSave 钳制到 1000–60000 整数） */
   readonly onAutoSaveChange: (autoSaveMs: number) => void;
-  /** 返回工作台（覆盖层唯一关闭通道） */
-  readonly onBack: () => void;
 }
 
-/** 表单分区：外观/编辑器（Task 8）+ 备份/维护（Task 9 实装）四区 */
-type SettingsSection = 'appearance' | 'editor' | 'backup' | 'maintenance';
+/** 表单分区：外观/编辑与预览/备份/数据与存储（批次③接入）/工作区 */
+type SettingsSection = 'appearance' | 'editor' | 'backup' | 'storage' | 'workspace';
 
-/** 导航项标准类串（树节点行同款形态：整行可点 + aria-current 高亮，设计系统文档 §7.2） */
+/** 导航分区元数据（图标 + 中文名；storage 分区批次③前禁用入口不渲染，避免无内容分区） */
+const SECTIONS: readonly { key: SettingsSection; label: string; icon: typeof Palette }[] = [
+  { key: 'appearance', label: '外观', icon: Palette },
+  { key: 'editor', label: '编辑与预览', icon: SlidersHorizontal },
+  { key: 'backup', label: '备份', icon: DatabaseBackup },
+  { key: 'workspace', label: '工作区', icon: History },
+];
+
+/** 导航项标准类串（树行同款形态：整行可点 + aria-current 高亮，图标 + 文字） */
 const NAV_ITEM_CLASS =
-  'block w-full truncate rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40 aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground';
+  'flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground';
 
 /** 滑块行标准类串：原生 range（jsdom/真实浏览器同语义）+ 值回显，accent 走语义主色 */
 const RANGE_CLASS = 'h-1 w-48 accent-primary';
@@ -104,75 +110,30 @@ export function SettingsPage({
   onFontSizeChange,
   onDebounceChange,
   onAutoSaveChange,
-  onBack,
 }: SettingsPageProps): React.JSX.Element {
   const [section, setSection] = useState<SettingsSection>('appearance');
   // 还原强确认目标（备份文件名）：null=浮层收起；确认/取消均收起，确认侧才上抛还原
   const [restoreTarget, setRestoreTarget] = useState<string | null>(null);
   return (
-    // 全屏覆盖层（spec §4.2 D9）：z-40 低于 toast/浮层的 z-50；lt-* 保留为测试锚点。
-    // 入场动效（M5 打磨）：fade-in 240ms（§6.1 normal 档，仅 opacity 合成器路径，
-    // reduced-motion 经 theme.css 全局降级瞬时完成）；出场随卸载瞬时（覆盖层关闭语义）
-    <section
-      aria-label="设置"
-      className="lt-settings fixed inset-0 z-40 flex flex-col bg-background duration-240 animate-in fade-in"
-    >
-      {/* 顶栏：显式返回（D9 裁决 Esc 不关闭）+ 面标题 */}
-      <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-2">
-        <button
-          type="button"
-          aria-label="返回工作台"
-          className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-          onClick={onBack}
-        >
-          ← 返回
-        </button>
-        <span className="text-xs font-medium text-muted-foreground">设置</span>
-      </header>
+    // 画布内嵌面（M6 spec D3）：占满画布区，不再 fixed 覆盖；lt-settings 保留为测试锚点
+    <section aria-label="设置" className="lt-settings flex min-h-0 flex-1 bg-background">
       <div className="flex min-h-0 flex-1">
-        {/* 左侧分组导航：四区（Task 8 两区 + Task 9 备份/维护实装） */}
-        <nav aria-label="设置导航" className="w-28 shrink-0 border-r border-border p-2">
+        {/* 左侧锚点导航（图标 + 文字） */}
+        <nav aria-label="设置导航" className="w-40 shrink-0 border-r border-border p-2">
           <ul className="m-0 flex list-none flex-col gap-1 p-0">
-            <li>
-              <button
-                type="button"
-                className={NAV_ITEM_CLASS}
-                aria-current={section === 'appearance'}
-                onClick={() => setSection('appearance')}
-              >
-                外观
-              </button>
-            </li>
-            <li>
-              <button
-                type="button"
-                className={NAV_ITEM_CLASS}
-                aria-current={section === 'editor'}
-                onClick={() => setSection('editor')}
-              >
-                编辑器
-              </button>
-            </li>
-            <li>
-              <button
-                type="button"
-                className={NAV_ITEM_CLASS}
-                aria-current={section === 'backup'}
-                onClick={() => setSection('backup')}
-              >
-                备份
-              </button>
-            </li>
-            <li>
-              <button
-                type="button"
-                className={NAV_ITEM_CLASS}
-                aria-current={section === 'maintenance'}
-                onClick={() => setSection('maintenance')}
-              >
-                维护
-              </button>
-            </li>
+            {SECTIONS.map(({ key, label, icon: Icon }) => (
+              <li key={key}>
+                <button
+                  type="button"
+                  className={NAV_ITEM_CLASS}
+                  aria-current={section === key ? 'true' : undefined}
+                  onClick={() => setSection(key)}
+                >
+                  <Icon aria-hidden="true" className="size-4 shrink-0" />
+                  {label}
+                </button>
+              </li>
+            ))}
           </ul>
         </nav>
         {/* 右侧表单区：即改即存（受控值 + 钳制后回调上抛） */}
@@ -207,7 +168,10 @@ export function SettingsPage({
                 </Select>
               </div>
               <div>
-                <p className="m-0 mb-1 text-sm font-medium">编辑器字号</p>
+                <p className="m-0 mb-1 text-sm font-medium">源码编辑器字号</p>
+                <p className="m-0 mb-1 text-xs text-muted-foreground">
+                  作用于 CSS/JS 等源码编辑视图
+                </p>
                 <div className="flex items-center gap-2">
                   <input
                     type="range"
@@ -229,7 +193,7 @@ export function SettingsPage({
           ) : section === 'editor' ? (
             <>
               <div className="mb-4">
-                <p className="m-0 mb-1 text-sm font-medium">预览去抖</p>
+                <p className="m-0 mb-1 text-sm font-medium">保存/刷新去抖</p>
                 <div className="flex items-center gap-2">
                   <input
                     type="range"
@@ -334,9 +298,7 @@ export function SettingsPage({
                     if (!open) setRestoreTarget(null);
                   }}
                 >
-                  {/* 打磨（M5 Task 15）：消费侧类覆写对齐设计系统标尺（与导入确认弹层同口径）——
-                      浮层内边距 p-4（覆写模板 p-6）、标题 text-base（覆写模板 text-lg 18px
-                      体外值）；cn/tailwind-merge「外部类覆盖内部类」合法场景（D28） */}
+                  {/* 消费侧类覆写对齐设计系统标尺（M5 打磨口径）：浮层 p-4、标题 text-base */}
                   <AlertDialogContent className="p-4">
                     <AlertDialogHeader>
                       <AlertDialogTitle className="text-base">
@@ -380,15 +342,6 @@ export function SettingsPage({
                   />
                   启动时按上次关闭前的标签集自动恢复工作区
                 </label>
-              </div>
-              <div className="mb-4">
-                <p className="m-0 mb-1 text-sm font-medium">重建搜索索引</p>
-                <p className="m-0 mb-2 text-xs text-muted-foreground">
-                  全文检索结果异常时重建 trigram 索引（接线归后续批次）
-                </p>
-                <button type="button" aria-label="重建搜索索引" className={BUTTON_CLASS} disabled>
-                  重建搜索索引
-                </button>
               </div>
             </>
           )}

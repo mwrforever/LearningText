@@ -61,7 +61,8 @@ function makeDeps(opts?: {
   writeFileSync(path.join(userDataRoot, '占位.txt'), 'x', 'utf8');
   const spies = {
     checkpoint: vi.fn(),
-    closeDatabase: opts?.closeDatabase ?? vi.fn(),
+    // 注入的关闭实现包装为 mock（测试断言对象恒为 spies.closeDatabase 本体，注入方仅提供实现）
+    closeDatabase: vi.fn(opts?.closeDatabase),
     writePointer: vi.fn(),
     relaunch: vi.fn(),
   };
@@ -69,8 +70,8 @@ function makeDeps(opts?: {
     userDataRoot,
     currentLayout: layout,
     checkpoint: spies.checkpoint,
-    closeDatabase: spies.closeDatabase as () => void,
-    writePointer: spies.writePointer as (targetDir: string) => void,
+    closeDatabase: spies.closeDatabase,
+    writePointer: spies.writePointer,
     relaunch: spies.relaunch,
     fs: opts?.fs ?? dataDirMigrationFs,
   };

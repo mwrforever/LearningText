@@ -278,7 +278,7 @@ test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
       )
       .toEqual({ count: 1, width: 1 });
     // —— 全局搜索命中点击定位打开（正文关键词 → 命中行「打开」→ 标签聚焦）——
-    await page.getByLabel('打开全局搜索').click();
+    await page.getByLabel('全局搜索').click();
     await page.getByLabel('搜索关键词').fill('探针正文锚点');
     await page.getByLabel('搜索关键词').press('Enter');
     await page.getByLabel('打开 p.html').click();
@@ -292,7 +292,7 @@ test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
     // —— 回收站 trash → 列表还原（回收站 UI，M5 批次②）——
     await page.locator('.lt-tree-toolbar').getByRole('button', { name: '删除' }).click();
     await expect(page.getByRole('tab')).toHaveCount(0); // trash 激活标签随会话关闭
-    await page.getByLabel('打开回收站').click();
+    await page.getByLabel('回收站').click();
     const trashedRow = page
       .locator('section[aria-label="回收站"] li')
       .filter({ hasText: 'p.html' });
@@ -306,7 +306,7 @@ test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
     await tree.getByRole('button', { name: 'p.html' }).click();
     await expect(page.getByRole('tab', { name: /p\.html/ })).toBeVisible();
     // —— 导出子树（搜索「在树中显示」设定导出根 → 目录选择打桩 → io:export）→ Node 侧断言 ——
-    await page.getByLabel('打开全局搜索').click();
+    await page.getByLabel('全局搜索').click();
     await page.getByLabel('搜索关键词').fill('探针目录');
     await page.getByLabel('搜索关键词').press('Enter');
     await page.getByLabel('在树中显示 探针目录').click(); // reveal 选中 = 导出根（目录）
@@ -350,7 +350,7 @@ test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
         }),
       )
       .toBe('dark'); // 意图持久化落盘
-    await page.getByLabel('返回工作台').click();
+    await page.getByLabel('关闭设置').click();
     // —— 重启（同 userData，closeAppGracefully 纪律 + 旧实例退出确认）→ 工作区恢复 ——
     await restartApp();
     await launchApp(userDataDir);
@@ -398,7 +398,7 @@ test.describe('M5 回收站（独立 userData）', () => {
     await treeNodes().getByRole('button', { name }).click();
     await page.locator('.lt-tree-toolbar').getByRole('button', { name: '删除' }).click();
     // 回收站列表：名称 + 原路径 + 删除时间三面呈现
-    await page.getByLabel('打开回收站').click();
+    await page.getByLabel('回收站').click();
     const row = page.locator('section[aria-label="回收站"] li').filter({ hasText: name });
     await expect(row).toBeVisible();
     await expect(row).toContainText(`/${name}`);
@@ -499,7 +499,7 @@ test.describe('M5 设置页（独立 userData）', () => {
     await expect
       .poll(() => page.locator('.cm-content').evaluate((el) => getComputedStyle(el).fontSize))
       .toBe('20px');
-    await page.getByLabel('返回工作台').click();
+    await page.getByLabel('关闭设置').click();
   });
 });
 
@@ -693,7 +693,7 @@ test.describe('M5 图片预览与恢复开关（独立 userData）', () => {
     // 弃原「桥直写 settings」绕 UI 形态；写链经产品通道 get→merge→set 异步串行落盘，
     // 以只读 settingsGet 轮询确认持久化完成，防重启早于落盘的竞态）
     await page.getByLabel('打开设置').click();
-    await page.getByRole('button', { name: '维护' }).click();
+    await page.getByRole('button', { name: '工作区' }).click();
     const restoreSwitch = page.getByLabel('启动时恢复工作区');
     await expect(restoreSwitch).toBeChecked(); // 出厂默认开（spec §3.2）
     await restoreSwitch.click();
@@ -706,11 +706,11 @@ test.describe('M5 图片预览与恢复开关（独立 userData）', () => {
         }),
       )
       .toBe(true);
-    // 重启（同 userData）：恢复链被开关短路 → 无标签恢复
+    // 重启（同 userData）：恢复链被开关短路 → 无标签恢复（空态由欢迎页承载，M6 壳层）
     await restartApp();
     await launchApp(userDataDir);
     await expect(page.getByRole('tab')).toHaveCount(0);
-    await expect(page.locator('.lt-editor-empty')).toContainText('未选中文件');
+    await expect(page.locator('.lt-welcome')).toBeVisible();
   });
 });
 

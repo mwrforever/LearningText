@@ -6,8 +6,8 @@
 // 的目录重命名 UI；⑨检查元素原生 popup 不可被 Playwright 驱动——验收降级为单测断言
 // （Task 9 已覆盖 handler），E2E 不强行驱动。
 // 「文档不可用」占位说明：该占位属 written→vfs:get 反查失败的竞态防御分支（写已删节点必
-// 失败、广播不可达），无法从 UI 确定性驱动；UI 删除唯一标签的占位为「未选中文件」（url=null
-// 分支），分支语义由单元测试 panels-preview-workspace 锁定（偏差说明见 task-10-report）。
+// 失败、广播不可达），无法从 UI 确定性驱动；M6 单画布模型下无标签空态由欢迎页承载
+//（.lt-welcome），分支语义由单元测试 panels-preview-workspace 锁定。
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -27,8 +27,8 @@ let appClosedByGuard = false;
 const vfsResponses: Response[] = [];
 
 /**
- * 启动应用并等待装配完成业务信号。折叠记忆重启的会话树栏处于折叠态、根按钮不可见，
- * 以「展开树栏」钮出现为 settings 装载完成信号；首启会话沿用 M3 先例——根按钮出现 =
+ * 启动应用并等待装配完成业务信号。折叠记忆重启的会话侧栏处于折叠态、根按钮不可见，
+ * 以「展开侧栏」钮出现为 settings 装载完成信号；首启会话沿用 M3 先例——根按钮出现 =
  * mount 首拉 listChildren 已应用到树，此后经桥建数据只与广播链竞争
  */
 async function launchApp(awaitTreeSignal: boolean): Promise<void> {
@@ -41,7 +41,7 @@ async function launchApp(awaitTreeSignal: boolean): Promise<void> {
   if (awaitTreeSignal) {
     await page.getByRole('button', { name: '根' }).waitFor();
   } else {
-    await page.getByLabel('展开树栏').waitFor();
+    await page.getByLabel('展开侧栏').waitFor();
   }
 }
 
@@ -49,7 +49,7 @@ async function launchApp(awaitTreeSignal: boolean): Promise<void> {
  * 预写设置文件（文件形态由集成测试 settingsService 用例锁定）：尾沿去抖调至上限 2000ms、
  * 挂起上限调至下界 1000ms。尾沿调大的目的是让「脏」窗口不被自动保存清除——多标签 dirty
  * 断言与 guard 关窗确认都以此为前提；挂起调小使强制写用例免等默认 3s；菜单保存「立即」
- * 断言窗（1.5s）与尾沿写（≥2s）由此可判别
+ * 断言窗（1.5s）与尾沿写（≥2s）由此可判别。M6 起设置契约 v4（shell.layout 侧栏形态）直读
  */
 function seedTunedSettings(): void {
   const settingsDir = path.join(userDataDir, 'LearningText', 'settings');
@@ -57,7 +57,7 @@ function seedTunedSettings(): void {
   writeFileSync(
     path.join(settingsDir, 'settings.json'),
     `${JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 4,
       preview: { debounceMs: 2000 },
       editor: { autoSaveMs: 1000 },
       shell: { layout: DEFAULT_LAYOUT },
@@ -198,10 +198,10 @@ test.describe('M4 主链路（出厂默认设置）', () => {
     await treeNodes().getByRole('button', { name: '新建目录' }).click(); // 常规模式 dir 点选=展开
     await expect(treeNodes().getByRole('button', { name: '链路二.html' })).toBeVisible();
     expect(await bridgeNodeId('/新建目录/链路二.html')).toBe(nodeId);
-    // 删除：标签关闭 + 预览占位「未选中文件」（唯一标签关闭后激活态清空，见文件头注偏差说明）
+    // 删除：唯一标签关闭后画布回欢迎页空态（M6 单画布模型：编辑|预览对随激活标签卸载）
     await toolbar().getByRole('button', { name: '删除' }).click();
     await expect(page.getByRole('tab')).toHaveCount(0);
-    await expect(page.locator('.lt-preview-empty')).toHaveText('未选中文件');
+    await expect(page.locator('.lt-welcome')).toBeVisible();
     // 还原（回收站 UI 归 M5，spec §9.1-1 还原步骤经桥）+ 搜索定位（搜索步骤经 searchQuery 桥）
     const restored = await page.evaluate((id) => window.api.restoreNode({ nodeId: id }), nodeId);
     if (!restored.ok) throw new Error('回收站还原失败');
@@ -395,11 +395,11 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
     rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  test('折叠与宽度记忆：拖拽调宽 + 折叠树栏 → 重启（同 userData）布局恢复', async () => {
-    // 宽度拖拽：树分隔条右移 200px（pointerdown→move→up 全链，up 一次性持久化）
-    const divider = page.locator('.lt-divider-tree');
+  test('折叠与宽度记忆：拖拽调宽 + 折叠侧栏 → 重启（同 userData）布局恢复', async () => {
+    // 宽度拖拽：侧栏分隔条右移 200px（pointerdown→move→up 全链，up 一次性持久化）
+    const divider = page.locator('.lt-divider-sidebar');
     const box = await divider.boundingBox();
-    if (box === null) throw new Error('未找到树分隔条');
+    if (box === null) throw new Error('未找到侧栏分隔条');
     const x = box.x + box.width / 2;
     const y = box.y + box.height / 2;
     await page.mouse.move(x, y);
@@ -410,25 +410,25 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
     await expect
       .poll(async () => {
         const settings = await page.evaluate(() => window.api.settingsGet());
-        return settings.ok ? settings.value.shell.layout.treeWidthRatio : -1;
+        return settings.ok ? settings.value.shell.layout.sidebarWidthRatio : -1;
       })
       .toBeGreaterThan(0.25);
-    // 折叠树栏（折叠态本地应用与持久化一次完成）
-    await page.getByLabel('折叠树栏').click();
-    await expect(page.getByLabel('展开树栏')).toBeVisible();
+    // 折叠侧栏（折叠态本地应用与持久化一次完成）
+    await page.getByLabel('折叠侧栏').click();
+    await expect(page.getByLabel('展开侧栏')).toBeVisible();
     // 无脏关窗：guard 直通（不弹确认链）→ 同 userData 重启（折叠态下装配信号走展开钮）。
     // 关停经 closeAppGracefully 显式放行（macOS quit 流程修复，见 close-app.ts 头注）
     await closeAppGracefully(app, page);
     await launchApp(false);
-    // 布局恢复（FR-SHELL-01）双面断言：折叠态回 UI aria + 宽度比例回 settings 读数
-    await expect(page.getByLabel('展开树栏')).toBeVisible();
+    // 布局恢复（FR-SHELL-01 修订版）双面断言：折叠态回 UI aria + 宽度比例回 settings 读数
+    await expect(page.getByLabel('展开侧栏')).toBeVisible();
     const layout = await page.evaluate(async () => {
       const settings = await window.api.settingsGet();
       return settings.ok ? settings.value.shell.layout : null;
     });
     if (layout === null) throw new Error('重启后设置读取失败');
-    expect(layout.treeCollapsed).toBe(true);
-    expect(layout.treeWidthRatio).toBeGreaterThan(0.25);
+    expect(layout.sidebarCollapsed).toBe(true);
+    expect(layout.sidebarWidthRatio).toBeGreaterThan(0.25);
   });
 
   test('unsaved-guard：脏标签关窗弹原生确认，确认后进程退出', async () => {

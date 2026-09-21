@@ -72,8 +72,13 @@ const mocks = vi.hoisted(() => {
       vi.fn<(options: unknown) => Promise<{ canceled: boolean; filePaths: string[] }>>(),
     // shell.openPath 桩（M5 批次⑥ Task 13）：成功返回空串，失败返回错误描述串（Electron 契约）
     shellOpenPath: vi.fn<(dir: string) => Promise<string>>(),
-    getAllWindows:
-      vi.fn<() => Array<{ webContents: { send: (channel: string, payload: unknown) => void } }>>(),
+    getAllWindows: vi.fn<
+      () => Array<{
+        webContents: { send: (channel: string, payload: unknown) => void };
+        // 主题联动用例注入：真实窗口恒有该方法，桩按需提供（无 overlay 形态以缺省表达）
+        setTitleBarOverlay?: (overlay: unknown) => void;
+      }>
+    >(),
     BrowserWindow: vi.fn<(options: unknown) => { loadURL: (url: string) => Promise<void> }>(),
     loadURL: vi.fn<(url: string) => Promise<void>>(),
     wcOn: vi.fn<(event: string, listener: (...args: unknown[]) => void) => void>(),
@@ -86,6 +91,11 @@ const mocks = vi.hoisted(() => {
     menuSetApplicationMenu: vi.fn<(menu: unknown) => void>(),
     // context-menu 弹出桩（Task 9）：原生 popup 不可被 Playwright 驱动的单测降级断言面
     menuPopup: vi.fn<(options: unknown) => void>(),
+    // nativeTheme 桩（M6 自绘标题栏）：system 意图经 shouldUseDarkColors 解析，
+    // 用例内可翻转驱动初始 overlay 配色与主题联动断言
+    nativeTheme: { shouldUseDarkColors: false },
+    // 窗口 setTitleBarOverlay 桩（M6 主题联动）：记录 overlay 更新载荷
+    setTitleBarOverlay: vi.fn<(overlay: unknown) => void>(),
     setWindowOpenHandler: vi.fn<(handler: () => { action: string }) => void>(),
     setPermissionRequestHandler:
       vi.fn<
@@ -110,6 +120,7 @@ const mocks = vi.hoisted(() => {
           readonly dialogProducedDirs: ReadonlySet<string>;
           readonly openDirectoryInShell: (dir: string) => Promise<void>;
           readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
+          readonly onAppearanceThemeChange: (intent: 'light' | 'dark' | 'system') => void;
         }) => void
       >(),
   };
@@ -187,6 +198,8 @@ vi.mock('electron', () => ({
   BrowserWindow: Object.assign(mocks.BrowserWindow, { getAllWindows: mocks.getAllWindows }),
   // 目录选择弹窗（M5 批次⑥ io:pick-directory 供给闭包消费）
   dialog: { showOpenDialog: mocks.showOpenDialog },
+  // nativeTheme（M6 自绘标题栏 overlay 配色解析：system 意图 → shouldUseDarkColors）
+  nativeTheme: mocks.nativeTheme,
   // shell.openPath（M5 批次⑥ Task 13：导出完成后「打开目录」供给闭包消费）
   shell: { openPath: mocks.shellOpenPath },
   // 应用菜单装配面（M4 spec §5.2）：bootstrapMain 建窗后 installApplicationMenu 一次
@@ -261,6 +274,7 @@ describe('主进程装配 bootstrapMain', () => {
     delete process.env.VITE_DEV_SERVER_URL;
     mocks.whenReady.mockResolvedValue(undefined);
     mocks.backupStubs.length = 0;
+    mocks.nativeTheme.shouldUseDarkColors = false; // 主题桩逐用例复位，防跨用例泄漏
     // BrowserWindow 以 new 调用，桩实现必须用 function 声明（箭头函数不可构造）
     mocks.BrowserWindow.mockImplementation(function () {
       return {
@@ -357,6 +371,12 @@ describe('主进程装配 bootstrapMain', () => {
         sandbox: true,
         nodeIntegration: false,
       },
+    });
+    // 自绘标题栏（M6 spec §2.2）：hidden 形态恒启用；非 darwin 平台（测试进程 win32）
+    // 附加 overlay，初始配色由设置意图经 nativeTheme 解析（system + 亮色 → light 套色）
+    expect(options).toMatchObject({
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { color: '#f1f5f9', symbolColor: '#0f172a', height: 40 },
     });
     expect(mocks.loadURL).toHaveBeenCalledWith('app://bundle/index.html');
     // 应用菜单装配一次（M4 spec §5.2：模板构建与菜单设置各一次，命令经 shell:command 下发）
@@ -477,6 +497,60 @@ describe('主进程装配 bootstrapMain', () => {
     // 外部 https 站点一律拦截
     listener(blockedEv, 'https://evil.example.com/phish');
     expect(blockedEv.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  // —— 自绘标题栏（M6 spec §2.2）——
+  it('自绘标题栏：system 意图经 nativeTheme 解析初始 overlay 配色（暗色偏好 → dark 套色）', async () => {
+    mocks.nativeTheme.shouldUseDarkColors = true;
+    bootstrapMain();
+    await flushReadyChain();
+    const options = mocks.BrowserWindow.mock.calls[0]?.[0];
+    expect(options).toMatchObject({
+      titleBarStyle: 'hidden',
+      titleBarOverlay: { color: '#1e293b', symbolColor: '#f8fafc', height: 40 },
+    });
+  });
+
+  it('自绘标题栏：darwin 平台不设 titleBarOverlay（窗口控制钮归系统红绿灯）', async () => {
+    const original = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    try {
+      bootstrapMain();
+      await flushReadyChain();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true });
+    }
+    const options = mocks.BrowserWindow.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(options.titleBarStyle).toBe('hidden');
+    expect(options).not.toHaveProperty('titleBarOverlay');
+  });
+
+  it('onAppearanceThemeChange 注入实现：主题变更遍历窗口更新 overlay 配色，无 overlay 能力窗口静默跳过', async () => {
+    bootstrapMain();
+    await flushReadyChain();
+    const deps = mocks.registerIpcHandlers.mock.calls[0]?.[0];
+    if (deps === undefined) {
+      throw new Error('registerIpcHandlers 未被调用');
+    }
+    const setOverlayA = vi.fn<(overlay: unknown) => void>();
+    mocks.getAllWindows.mockReturnValue([
+      { webContents: { send: vi.fn() }, setTitleBarOverlay: setOverlayA },
+      // 无 setTitleBarOverlay 的窗口（mac / overlay 未激活形态）：调用抛错须被静默吞掉
+      { webContents: { send: vi.fn() } },
+    ]);
+    expect(() => deps.onAppearanceThemeChange('dark')).not.toThrow();
+    expect(setOverlayA).toHaveBeenCalledWith({
+      color: '#1e293b',
+      symbolColor: '#f8fafc',
+      height: 40,
+    });
+    // system 意图经 nativeTheme 解析（亮色桩 → light 套色）
+    deps.onAppearanceThemeChange('system');
+    expect(setOverlayA).toHaveBeenLastCalledWith({
+      color: '#f1f5f9',
+      symbolColor: '#0f172a',
+      height: 40,
+    });
   });
 
   it('broadcast 注入实现：遍历全部窗口经 vfs:changed 发送树变更事件（宪法 B.3-4）', async () => {

@@ -53,6 +53,7 @@ import {
   ReadFileRequestSchema,
   RenameNodeRequestSchema,
   ResolvePathRequestSchema,
+  VfsCountRequestSchema,
   WriteFileRequestSchema,
 } from '../shared/vfs-contract';
 import type {
@@ -115,6 +116,11 @@ export interface IpcHandlerDeps {
    * 非空返回值为错误描述串，转异常上抛经 handleWithAsync 收敛 E_STORE_INTERNAL。
    */
   readonly openDirectoryInShell: (dir: string) => Promise<void>;
+  /**
+   * 外观主题变更回调（M6 spec §2.2/D12，app.ts 提供）：settings:set 检测 appearance.theme
+   * 变更后调用，主进程内聚更新自绘标题栏 overlay 配色（不新增 IPC 通道）。
+   */
+  readonly onAppearanceThemeChange: (intent: 'light' | 'dark' | 'system') => void;
 }
 
 /** origin 白名单判定（B.5-6）：senderFrame 可能为 null，null/空串/非白名单一律拒绝 */
@@ -300,6 +306,11 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       result: deps.vfs.getNode(data),
     })),
   );
+  // 活节点总数（M6 spec §2.6 状态栏文档计数）：纯读无写事务 → 不广播
+  ipcMain.handle(
+    IPC.vfsCount,
+    handleWith(deps, VfsCountRequestSchema, () => ({ result: deps.vfs.countNodes() })),
+  );
   // 搜索通道纯读、无写事务：返回对象无 event 键 → handleWith 守卫不广播（spec §1）
   ipcMain.handle(
     IPC.searchQuery,
@@ -313,9 +324,15 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   );
   ipcMain.handle(
     IPC.settingsSet,
-    handleWith(deps, SettingsSchema, (data: SettingsData) => ({
-      result: deps.settings.set(data) satisfies SettingsData,
-    })),
+    handleWith(deps, SettingsSchema, (data: SettingsData) => {
+      // 主题联动（M6 spec §2.2/D12）：set 前取旧意图比对，变更即回调主进程更新 overlay 配色
+      const previousTheme = deps.settings.get().appearance.theme;
+      const result = deps.settings.set(data) satisfies SettingsData;
+      if (data.appearance.theme !== previousTheme) {
+        deps.onAppearanceThemeChange(data.appearance.theme);
+      }
+      return { result };
+    }),
   );
   // —— 外壳域（M4）：guard 放行唯一通道（spec §2.3）——
   ipcMain.handle(

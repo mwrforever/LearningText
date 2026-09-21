@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-// 设置页（M5 批次③ Task 8/9 + Task 16 补「启动时恢复工作区」开关）冒烟：SettingsPage 表单
-// 交互（四区导航/主题三选/字号与去抖、自动保存滑块钳制/备份区自动开关与立即备份/还原强确认/
-// 维护区恢复开关与占位/返回钮）+ Workspace 设置态接线（状态栏与菜单 open-settings 双入口、
-// 写链 get→merge→set 全量、.dark 类切换与 matchMedia system 态监听、字号 props 透传、
-// 保存失败 toast 回滚、备份列表拉取与广播重拉、还原失败 toast）。
+// 设置标签页（M5 批次③ Task 8/9 + Task 16 补「启动时恢复工作区」开关 → M6 spec §2.7 重制）
+// 冒烟：SettingsPage 表单交互（四区导航/主题三选/字号与去抖、自动保存滑块钳制/备份区自动开关
+// 与立即备份/还原强确认/工作区恢复开关）+ Workspace 设置标签接线（状态栏齿轮与菜单
+// open-settings 双入口、标签关闭钮收口、写链 get→merge→set 全量、.dark 类切换与 matchMedia
+// system 态监听、字号 props 透传、保存失败 toast 回滚、备份列表拉取与广播重拉、还原失败 toast）。
 // 断言以 role/aria 语义为主；radix Select 沿 search-panel 键盘驱动先例（Enter 开启 →
 // ArrowDown 高亮 → 目标项 Enter 选中）；jsdom 无 matchMedia（setup.ts 空桩兜底既有用例），
 // system 态监听断言以可编程桩替换并翻转 matches 派发 change。
@@ -29,8 +29,39 @@ vi.mock('../../../src/renderer/src/features/editor/EditorPanel', () => ({
 }));
 
 // —— Workspace 桥桩（quick-open 先例）：设置域可编程（get 失败/set 失败两异常面）——
-function stubWorkspaceApi(overrides: { settingsSetOk?: boolean; backupRestoreOk?: boolean } = {}): {
-  api: Record<string, ReturnType<typeof vi.fn>>;
+
+/** 文件节点 meta（withTab 桩专用：根下可开标签文件） */
+function stubFileMeta(
+  id: number,
+  name: string,
+): {
+  id: number;
+  parentId: number;
+  nodeType: 'file';
+  name: string;
+  virtualPath: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+  updatedAt: string;
+} {
+  return {
+    id,
+    parentId: 1,
+    nodeType: 'file',
+    name,
+    virtualPath: `/${name}`,
+    mimeType: 'text/html',
+    size: 4,
+    createdAt: '2026-09-18T10:00:00.000+08:00',
+    updatedAt: '2026-09-18T10:00:00.000+08:00',
+  };
+}
+
+function stubWorkspaceApi(
+  overrides: { settingsSetOk?: boolean; backupRestoreOk?: boolean; withTab?: boolean } = {},
+): {
+  api: Record<string, unknown>;
   settingsGet: ReturnType<typeof vi.fn>;
   settingsSet: ReturnType<typeof vi.fn>;
   shellHandlers: Array<(command: ShellCommand) => void>;
@@ -72,10 +103,22 @@ function stubWorkspaceApi(overrides: { settingsSetOk?: boolean; backupRestoreOk?
     }
     return Promise.resolve({ ok: true as const, value: { relaunch: true } });
   });
+  // withTab 桩（M6 起 EditorPanel 仅随激活 doc 标签挂载）：根下预置一个可开标签文件
+  const tabFile = stubFileMeta(3, 'a.html');
   const api = {
-    listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
+    listChildren: vi.fn(() =>
+      Promise.resolve({
+        ok: true as const,
+        value: overrides.withTab === true ? [tabFile] : [],
+      }),
+    ),
     createNode: vi.fn(() => Promise.resolve({ ok: true, value: null })),
-    readFile: vi.fn(() => Promise.resolve({ ok: true, value: null })),
+    readFile: vi.fn(() =>
+      Promise.resolve({
+        ok: true as const,
+        value: { content: new TextEncoder().encode('<p>正文</p>'), meta: tabFile },
+      }),
+    ),
     writeFile: vi.fn(() => Promise.resolve({ ok: true, value: null })),
     trashNode: vi.fn(() => Promise.resolve({ ok: true, value: null })),
     getNode: vi.fn(() => Promise.resolve({ ok: true, value: null })),
@@ -99,6 +142,9 @@ function stubWorkspaceApi(overrides: { settingsSetOk?: boolean; backupRestoreOk?
     }),
     // 导入进度订阅（M5 批次⑥ Task 12）：Workspace 挂载即订阅，桩按契约形态注入
     onIoProgress: vi.fn(() => vi.fn()),
+    // 状态栏文档计数与平台标识（M6 壳层装配路径）：挂载即查 countNodes，TitleBar 消费 platform
+    countNodes: vi.fn(() => Promise.resolve({ ok: true as const, value: 0 })),
+    platform: 'win32',
   };
   Object.defineProperty(window, 'api', { value: api, configurable: true, writable: true });
   return { api, settingsGet, settingsSet, shellHandlers, backupDoneHandlers };
@@ -169,7 +215,6 @@ beforeEach(() => {
   onFontSizeChange = vi.fn();
   onDebounceChange = vi.fn();
   onAutoSaveChange = vi.fn();
-  onBack = vi.fn();
   // 备份域（M5 Task 9）：受控值与回调桩（开关桩同步受控值并重渲染，checkbox 同 Select 先例）
   currentBackups = [
     {
@@ -212,7 +257,6 @@ let onThemeChange: Mock<(theme: ThemeValue) => void>;
 let onFontSizeChange: Mock<(fontSize: number) => void>;
 let onDebounceChange: Mock<(debounceMs: number) => void>;
 let onAutoSaveChange: Mock<(autoSaveMs: number) => void>;
-let onBack: Mock<() => void>;
 // 备份域受控值与回调桩（M5 Task 9）
 let currentBackups: BackupEntry[];
 let backupAutoEnabled: boolean;
@@ -243,13 +287,13 @@ function renderPage(): void {
         onFontSizeChange={onFontSizeChange}
         onDebounceChange={onDebounceChange}
         onAutoSaveChange={onAutoSaveChange}
-        onBack={onBack}
       />,
     );
   });
 }
 
-const settingsRoot = (): Element | null => document.querySelector('[aria-label="设置"]');
+// 设置页画布内嵌面（M6）：以 section 标签限定锚点——「设置」可访问名已被活动栏齿轮钮占用
+const settingsRoot = (): Element | null => document.querySelector('section[aria-label="设置"]');
 /** 最新一条 toast（toast 模块级队列跨用例存活——3s 定时器为真实时钟，断言取队尾新条） */
 const latestToastText = (): string =>
   [...document.querySelectorAll('.lt-toast')].at(-1)?.textContent ?? '';
@@ -306,14 +350,14 @@ async function pickThemeOption(label: string): Promise<void> {
 }
 
 describe('SettingsPage 设置页表单', () => {
-  it('默认呈现外观区（主题三选 + 字号滑块）；导航切换到编辑器区渲染去抖/自动保存滑块后可切回', () => {
+  it('默认呈现外观区（主题三选 + 字号滑块）；导航切换到编辑与预览区渲染去抖/自动保存滑块后可切回', () => {
     renderPage();
     expect(settingsRoot()).not.toBeNull();
     expect(themeTrigger()).not.toBeNull();
     expect(range('编辑器字号')).not.toBeNull();
-    expect(range('预览去抖')).toBeNull(); // 编辑器区尚未进入
+    expect(range('预览去抖')).toBeNull(); // 编辑与预览区尚未进入
     act(() => {
-      navButton('编辑器')?.click();
+      navButton('编辑与预览')?.click();
     });
     expect(range('预览去抖')).not.toBeNull();
     expect(range('自动保存间隔')).not.toBeNull();
@@ -323,7 +367,7 @@ describe('SettingsPage 设置页表单', () => {
     expect(themeTrigger()).not.toBeNull();
   });
 
-  it('备份/维护导航项启用：备份区渲染自动开关与立即备份钮，维护区渲染恢复开关与禁用占位钮', () => {
+  it('备份/工作区导航项启用：备份区渲染自动开关与立即备份钮，工作区渲染启动恢复开关（M6 起无占位钮）', () => {
     renderPage();
     act(() => {
       navButton('备份')?.click();
@@ -331,14 +375,12 @@ describe('SettingsPage 设置页表单', () => {
     expect(checkbox('每日自动备份')).not.toBeNull();
     expect(container.querySelector('button[aria-label="立即备份"]')).not.toBeNull();
     act(() => {
-      navButton('维护')?.click();
+      navButton('工作区')?.click();
     });
     // 启动恢复工作区开关（Task 16，spec §3.2）：默认开启（出厂值 restoreOnStart=true）
     expect(checkbox('启动时恢复工作区')?.checked).toBe(true);
-    // 重建搜索索引归后续批次（M2 §7.1 例程接线降级，登记 TASK.md）：disabled 占位
-    const rebuild = container.querySelector<HTMLButtonElement>('button[aria-label="重建搜索索引"]');
-    expect(rebuild).not.toBeNull();
-    expect(rebuild?.disabled).toBe(true);
+    // 「重建搜索索引」占位按钮已随 M6 移除（未实现功能不设计），工作区仅承载恢复开关
+    expect(container.querySelector('button[aria-label="重建搜索索引"]')).toBeNull();
     act(() => {
       navButton('外观')?.click();
     });
@@ -397,7 +439,7 @@ describe('SettingsPage 设置页表单', () => {
   it('启动恢复工作区开关切换回调 onRestoreOnStartChange（true→false→true）', () => {
     renderPage();
     act(() => {
-      navButton('维护')?.click();
+      navButton('工作区')?.click();
     });
     const toggle = checkbox('启动时恢复工作区');
     if (!toggle) throw new Error('无启动恢复开关');
@@ -466,22 +508,12 @@ describe('SettingsPage 设置页表单', () => {
   it('去抖/自动保存滑块越界值钳制后回调（5000→2000、120000→60000）', () => {
     renderPage();
     act(() => {
-      navButton('编辑器')?.click();
+      navButton('编辑与预览')?.click();
     });
     setRangeValue('预览去抖', 5000);
     expect(onDebounceChange).toHaveBeenLastCalledWith(2000);
     setRangeValue('自动保存间隔', 120000);
     expect(onAutoSaveChange).toHaveBeenLastCalledWith(60000);
-  });
-
-  it('返回钮回调 onBack（工作台据此关闭覆盖层）', () => {
-    renderPage();
-    const back = container.querySelector<HTMLButtonElement>('button[aria-label="返回工作台"]');
-    expect(back).not.toBeNull();
-    act(() => {
-      back?.click();
-    });
-    expect(onBack).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -492,9 +524,14 @@ const statusSettingsButton = (): HTMLButtonElement | null =>
 
 /** 以 Workspace 渲染设置态（默认已挂 matchMedia 桩 + 桥桩），返回桩引用 */
 function renderWorkspace(
-  overrides: { settingsSetOk?: boolean; backupRestoreOk?: boolean; withToastHost?: boolean } = {},
+  overrides: {
+    settingsSetOk?: boolean;
+    backupRestoreOk?: boolean;
+    withTab?: boolean;
+    withToastHost?: boolean;
+  } = {},
 ): {
-  api: Record<string, ReturnType<typeof vi.fn>>;
+  api: Record<string, unknown>;
   settingsGet: ReturnType<typeof vi.fn>;
   settingsSet: ReturnType<typeof vi.fn>;
   shellHandlers: Array<(command: ShellCommand) => void>;
@@ -518,7 +555,7 @@ function renderWorkspace(
 }
 
 describe('Workspace 设置态接线', () => {
-  it('状态栏「设置」钮打开设置覆盖层；返回钮关闭回工作台', async () => {
+  it('状态栏「设置」钮打开设置伪标签（画布内嵌）；标签关闭钮「关闭设置」收口回工作台', async () => {
     renderWorkspace();
     await flushMicrotasks();
     expect(settingsRoot()).toBeNull();
@@ -526,15 +563,17 @@ describe('Workspace 设置态接线', () => {
     act(() => {
       statusSettingsButton()?.click();
     });
+    // 设置以伪标签形态呈现在画布区（M6 spec D3），TabBar 同步出现设置页签
     expect(settingsRoot()).not.toBeNull();
-    const back = container.querySelector<HTMLButtonElement>('button[aria-label="返回工作台"]');
+    expect(container.querySelector('button[aria-label="关闭设置"]')).not.toBeNull();
     act(() => {
-      back?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="关闭设置"]')?.click();
     });
     expect(settingsRoot()).toBeNull();
+    expect(container.querySelector('button[aria-label="关闭设置"]')).toBeNull();
   });
 
-  it('shell:command { type: "open-settings" } 打开设置覆盖层（switch 分支追加）', async () => {
+  it('shell:command { type: "open-settings" } 打开设置伪标签（菜单命令同一收口）', async () => {
     const { shellHandlers } = renderWorkspace();
     await flushMicrotasks();
     expect(settingsRoot()).toBeNull();
@@ -588,8 +627,14 @@ describe('Workspace 设置态接线', () => {
   });
 
   it('字号滑块越界值钳制后写入，且 EditorPanel 收到钳制后字号（props 透传）', async () => {
-    const { settingsSet } = renderWorkspace();
+    // M6 起 EditorPanel 仅随激活 doc 标签挂载：withTab 预置文件并先开标签（props 断言的挂载前提）
+    const { settingsSet } = renderWorkspace({ withTab: true });
     await flushMicrotasks();
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === 'a.html')
+        ?.click();
+    });
     act(() => {
       statusSettingsButton()?.click();
     });
@@ -598,21 +643,32 @@ describe('Workspace 设置态接线', () => {
     expect(settingsSet).toHaveBeenCalledWith(
       expect.objectContaining({ appearance: { theme: 'system', editorFontSize: 24 } }),
     );
+    // 设置标签激活期间编辑器面板卸载：关闭设置标签回落 doc 标签后重挂，钳制后字号到达面板
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="关闭设置"]')?.click();
+    });
     expect(editorPanelCapture.last?.['editorFontSize']).toBe(24);
   });
 
   it('设置保存失败 → toast 提示且显示值回滚（EditorPanel 字号回原值）', async () => {
-    renderWorkspace({ settingsSetOk: false, withToastHost: true });
+    renderWorkspace({ settingsSetOk: false, withTab: true, withToastHost: true });
     await flushMicrotasks();
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === 'a.html')
+        ?.click();
+    });
     act(() => {
       statusSettingsButton()?.click();
     });
     setRangeValue('编辑器字号', 18);
-    // 乐观更新先行：act 内同步提交，早于任何持久化续体
-    expect(editorPanelCapture.last?.['editorFontSize']).toBe(18);
     await flushMicrotasks(); // 冲刷写链：get→set 失败→回滚续体
     const toast = document.querySelector('.lt-toast');
     expect(toast?.textContent).toContain('设置保存失败');
+    // 关闭设置标签回落 doc 标签：重挂面板收到的显示值已随失败回滚至原值
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="关闭设置"]')?.click();
+    });
     expect(editorPanelCapture.last?.['editorFontSize']).toBe(14); // 失败回滚显示
   });
 
@@ -643,10 +699,9 @@ describe('Workspace 设置态接线', () => {
     });
     await flushMicrotasks();
     expect(api.backupList).toHaveBeenCalledTimes(2);
-    // 关闭设置：列表随覆盖层卸载，订阅退订成对
-    const back = container.querySelector<HTMLButtonElement>('button[aria-label="返回工作台"]');
+    // 关闭设置：列表随标签页卸载，订阅退订成对
     act(() => {
-      back?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="关闭设置"]')?.click();
     });
     expect(api.onBackupDone).toHaveBeenCalledTimes(1);
     const unsubscribe = (api.onBackupDone as ReturnType<typeof vi.fn>).mock.results[0]?.value;
@@ -678,7 +733,7 @@ describe('Workspace 设置态接线', () => {
     });
     await flushMicrotasks();
     act(() => {
-      navButton('维护')?.click();
+      navButton('工作区')?.click();
     });
     const toggle = checkbox('启动时恢复工作区');
     if (!toggle) throw new Error('无启动恢复开关');
