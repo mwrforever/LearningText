@@ -11,7 +11,19 @@
  * 纯树呈现；TreePaneView 类型保留（活动视图枚举消费）。媒体弱选中（D20）已随画布化退役
  * （媒体文件一律开标签，spec D4/D6）。
  */
-import { FilePlus, FolderInput, FolderPlus, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import {
+  FileCode,
+  FilePlus,
+  FileText,
+  Folder,
+  FolderInput,
+  FolderPlus,
+  Image as ImageIcon,
+  MoreHorizontal,
+  Music,
+  Pencil,
+  Trash2,
+} from 'lucide-react';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import {
   DropdownMenu,
@@ -27,6 +39,20 @@ export type TreePaneView = 'tree' | 'search' | 'trash';
 
 /** 根节点约定 id=1（M1 v1 种子）：根不可重命名/移动（UI 禁用入口） */
 const ROOT_ID = 1;
+
+/**
+ * 树节点类型图标（蓝图 §2.3「类型图标 + 名称」的图标先行落地；映射与标签条 §2.4 同族）：
+ * dir → Folder；text/html → FileText；image/* → ImageIcon；audio/* → Music；其余文本
+ * （css/js/txt 等）→ FileCode。展开态 FolderOpen 需要展开集状态（归 Workspace 持有、
+ * 不经 props 下传），打磨红线禁改 props 接口，故目录恒用 Folder（不引入半态图标）。
+ */
+function treeIconFor(meta: NodeMeta): typeof Folder {
+  if (meta.nodeType === 'dir') return Folder;
+  if (meta.mimeType === 'text/html') return FileText;
+  if (meta.mimeType !== null && meta.mimeType.startsWith('image/')) return ImageIcon;
+  if (meta.mimeType !== null && meta.mimeType.startsWith('audio/')) return Music;
+  return FileCode;
+}
 
 export interface TreePanelProps {
   readonly roots: readonly TreeNode[];
@@ -58,11 +84,12 @@ const TOOLBAR_ICON_BUTTON_CLASS =
   'inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40';
 
 /**
- * 树节点行主按钮标准类串（设计系统文档 §7.2 树列表形态）：强选中 aria-current 半透明底 +
- * 加粗；move 目标 ring 提示
+ * 树节点行主按钮标准类串（设计系统文档 §7.2 树列表形态 · M6 琢段增补 flex 行版）：
+ * 图标 + 名称横向排布（gap-1.5 与标签条图标行同节奏），名称 span 持有 truncate；
+ * 强选中 aria-current 半透明底 + 加粗；move 目标 ring 提示
  */
 const TREE_ROW_BUTTON_CLASS =
-  'min-w-0 flex-1 truncate rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40 aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground data-[move-target=true]:bg-primary/10 data-[move-target=true]:ring-1 data-[move-target=true]:ring-ring';
+  'min-w-0 flex-1 flex items-center gap-1.5 rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40 aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground data-[move-target=true]:bg-primary/10 data-[move-target=true]:ring-1 data-[move-target=true]:ring-ring';
 
 /** 树节点行（行内菜单承载容器 + 主按钮）：主按钮占余宽，行尾「⋯」触发钮 20px 独立成钮 */
 function TreeItem({
@@ -87,6 +114,8 @@ function TreeItem({
   onTrash(nodeId: number): void;
 }): React.JSX.Element {
   const isDir = node.meta.nodeType === 'dir';
+  // 类型图标恒单色 muted 色阶（图标先行但不与内容争色，选中行文字提亮、图标保持安静）
+  const Icon = treeIconFor(node.meta);
   return (
     // 行容器为 group：「⋯」触发钮的悬停/焦点显形作用域（见 ROW_MENU_TRIGGER_CLASS 注）
     <li className="list-none">
@@ -107,7 +136,10 @@ function TreeItem({
             else onSelect(node.meta);
           }}
         >
-          {node.meta.name}
+          {/* aria-hidden 图标不进可访问名/文本内容——既有测试以名称 textContent/角色名
+              精确寻址，逐字保留 */}
+          <Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate">{node.meta.name}</span>
         </button>
         {/* 行内「⋯」菜单（Task 10）：根不渲染（根不可 rename/move/trash）；移动项与工具栏
             同款在 move 模式期间禁用（防模式内再进模式）。键盘管理（方向键/Enter/Esc/焦点
@@ -125,7 +157,9 @@ function TreeItem({
             >
               <MoreHorizontal aria-hidden="true" className="size-4" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
+            {/* 面板动效对齐蓝图基线 100ms（模板默认 150ms；消费侧覆写，reduced-motion
+                全局降级覆盖） */}
+            <DropdownMenuContent align="start" className="duration-100">
               <DropdownMenuItem onSelect={() => onRename(node.meta.id)}>
                 <Pencil aria-hidden="true" />
                 重命名

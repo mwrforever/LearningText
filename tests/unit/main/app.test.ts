@@ -3,7 +3,7 @@
 // 窗口安全默认值、fail-fast 退出路径与 will-quit 优雅关库（spec §2.2）。
 // 数据目录/开库/迁移/vfs/search 工厂接线：electron getPath 返回真实临时目录（dataDir 布局走真实现），
 // db/migrate/vfsService/searchService 以桩替换（单元测试不触原生 SQLite，真实行为由集成测试与 E2E 覆盖）。
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -233,6 +233,7 @@ vi.mock('../../../src/main/backup/backupService', () => ({
 
 import { bootstrapMain } from '../../../src/main/app';
 import { handleAppResource } from '../../../src/main/protocol/appProtocol';
+import { DATA_DIR_POINTER_FILE, resolveDataDir } from '../../../src/main/store/dataDir';
 import { IPC } from '../../../src/shared/ipc';
 import { AppError } from '../../../src/shared/result';
 
@@ -844,6 +845,110 @@ describe('主进程装配 bootstrapMain', () => {
       await expect(deps.openDirectoryInShell('D:/picked')).resolves.toBeUndefined();
       mocks.shellOpenPath.mockResolvedValue('目录不存在');
       await expect(deps.openDirectoryInShell('D:/picked')).rejects.toThrow('目录不存在');
+    });
+  });
+
+  // —— 数据目录迁移编排（M6 批次③ storage:change-data-dir 供给闭包，琢段补测）——
+  describe('数据目录迁移编排（storage:change-data-dir 供给闭包）', () => {
+    interface MigrationDeps {
+      readonly restoreBackup: (fileName: string) => void;
+      readonly changeDataDir: (targetDir: string) => { readonly relaunch: true };
+      readonly getStorageInfo: () => {
+        readonly root: string;
+        readonly dbFile: string;
+        readonly backupsDir: string;
+        readonly settingsFile: string;
+        readonly custom: boolean;
+      };
+    }
+
+    async function bootstrapWithMigration(): Promise<{
+      deps: MigrationDeps;
+      userDataDir: string;
+    }> {
+      bootstrapMain();
+      await flushReadyChain();
+      const deps = mocks.registerIpcHandlers.mock.calls[0]?.[0] as unknown as MigrationDeps;
+      const userDataDir = mocks.getPath.mock.results[0]?.value ?? '';
+      return { deps, userDataDir };
+    }
+
+    it('成功编排：TRUNCATE 冲刷 → 干净关库 → 全量复制（db/settings/marker）→ 指针落盘 → relaunch+exit(0)', async () => {
+      const { deps, userDataDir } = await bootstrapWithMigration();
+      const layout = resolveDataDir(userDataDir);
+      // 源数据预置：openDatabase 为桩不落盘，复制语义由真实 fs 断言（settingsDir 由
+      // 装配期 ensureDataDir 建立所需父层，recursive 兜底）
+      mkdirSync(layout.settingsDir, { recursive: true });
+      writeFileSync(layout.dbFile, 'db-bytes', 'utf8');
+      writeFileSync(path.join(layout.settingsDir, 'settings.json'), '{}', 'utf8');
+      writeFileSync(layout.markerFile, '{}', 'utf8');
+      const targetDir = path.join(userDataDir, 'target');
+      mkdirSync(targetDir, { recursive: true });
+      const result = deps.changeDataDir(targetDir);
+      expect(result).toEqual({ relaunch: true });
+      // 关库链：TRUNCATE 冲刷（A.4-9 复制前 checkpoint）+ 干净关闭，不重开（重启即收场）
+      expect(mocks.dbPragma).toHaveBeenCalledWith('wal_checkpoint(TRUNCATE)');
+      expect(mocks.dbClose).toHaveBeenCalledTimes(1);
+      expect(mocks.openDatabase).toHaveBeenCalledTimes(1);
+      // 复制完整性与指针指向（下次启动从新位置打开，spec §5.2）
+      const newRoot = path.join(targetDir, 'LearningText');
+      expect(readFileSync(path.join(newRoot, 'learningtext.db'), 'utf8')).toBe('db-bytes');
+      expect(readFileSync(path.join(newRoot, 'settings', 'settings.json'), 'utf8')).toBe('{}');
+      expect(readFileSync(path.join(newRoot, 'last-backup.json'), 'utf8')).toBe('{}');
+      expect(readFileSync(path.join(userDataDir, DATA_DIR_POINTER_FILE), 'utf8')).toContain(
+        'target',
+      );
+      // 结果即重启（D11 同款：relaunch + 退出码 0）
+      expect(mocks.appRelaunch).toHaveBeenCalledTimes(1);
+      expect(mocks.appExit).toHaveBeenCalledWith(0);
+    });
+
+    it('迁移前置还原挂起标记互斥消费（构造性不可达防御分支）：按常规 TRUNCATE 处理不中断', async () => {
+      const { deps, userDataDir } = await bootstrapWithMigration();
+      const stub = mocks.backupStubs[0];
+      if (stub === undefined) {
+        throw new Error('备份服务未被装配');
+      }
+      const layout = resolveDataDir(userDataDir);
+      mkdirSync(layout.settingsDir, { recursive: true });
+      writeFileSync(layout.dbFile, 'db-bytes', 'utf8');
+      const targetDir = path.join(userDataDir, 'target');
+      mkdirSync(targetDir, { recursive: true });
+      // 还原编排把替换点标记挂起（stub.restore 不触 checkpoint——模拟标记残留的防御路径）
+      deps.restoreBackup('lt-20260921-080000.db');
+      deps.changeDataDir(targetDir);
+      // 迁移 checkpoint 消费挂起标记后仍走常规 TRUNCATE（单标记语义），迁移照常完成重启
+      expect(mocks.dbPragma).toHaveBeenCalledTimes(1);
+      expect(mocks.dbPragma).toHaveBeenCalledWith('wal_checkpoint(TRUNCATE)');
+      expect(mocks.dbClose).toHaveBeenCalledTimes(1);
+      expect(mocks.appRelaunch).toHaveBeenCalledTimes(1);
+    });
+
+    it('getStorageInfo 供给闭包：返回当前数据目录布局与自定义标记（设置页「数据与存储」展示面）', async () => {
+      const { deps, userDataDir } = await bootstrapWithMigration();
+      const layout = resolveDataDir(userDataDir);
+      expect(deps.getStorageInfo()).toEqual({
+        root: layout.root,
+        dbFile: layout.dbFile,
+        backupsDir: layout.backupDir,
+        settingsFile: layout.settingsFile,
+        // 全新装配无指针文件：出厂数据根（custom=false）
+        custom: false,
+      });
+    });
+
+    it('关库后复制失败（源 db 缺失）→ 清理新目录残留、不写指针、照常重启（spec D9 失败语义）', async () => {
+      const { deps, userDataDir } = await bootstrapWithMigration();
+      // openDatabase 桩不落盘：dbFile 物理缺失 → 关库完成后首个 copy 抛 ENOENT 入失败路径
+      const targetDir = path.join(userDataDir, 'target');
+      mkdirSync(targetDir, { recursive: true });
+      deps.changeDataDir(targetDir);
+      // 新目录残留已清理、指针未落盘（旧指针完好），重启语义照常（失败代价是重启非数据损坏）
+      expect(existsSync(path.join(targetDir, 'LearningText'))).toBe(false);
+      expect(existsSync(path.join(userDataDir, DATA_DIR_POINTER_FILE))).toBe(false);
+      expect(mocks.dbClose).toHaveBeenCalledTimes(1);
+      expect(mocks.appRelaunch).toHaveBeenCalledTimes(1);
+      expect(mocks.appExit).toHaveBeenCalledWith(0);
     });
   });
 });

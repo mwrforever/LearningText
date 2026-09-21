@@ -26,6 +26,10 @@ function themeMeta(intent: ThemeIntent): { icon: typeof Sun; label: string } {
   return { icon: Monitor, label: '跟随系统' };
 }
 
+/** 状态栏右侧图标钮标准类串（主题循环/设置两钮共用，h-5 紧凑热区配 size-3.5 图标） */
+const STATUSBAR_ICON_BUTTON_CLASS =
+  'inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground';
+
 export function StatusBar({
   dirty,
   docCount,
@@ -39,7 +43,8 @@ export function StatusBar({
     <footer className="lt-statusbar flex h-6 shrink-0 items-center gap-2 border-t border-border bg-muted px-3 text-xs text-muted-foreground">
       {dirty ? (
         <span className="flex items-center gap-1.5" role="status">
-          <span aria-hidden="true" className="size-1.5 rounded-full bg-destructive" />
+          {/* shrink-0：左段文案长时脏点不被压缩——状态信号优先于文字完整呈现 */}
+          <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-destructive" />
           有未保存更改
         </span>
       ) : (
@@ -51,7 +56,7 @@ export function StatusBar({
           type="button"
           aria-label={`切换主题（当前：${meta.label}）`}
           title={`主题：${meta.label}（点击切换）`}
-          className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+          className={STATUSBAR_ICON_BUTTON_CLASS}
           onClick={onCycleTheme}
         >
           <ThemeIcon className="size-3.5" />
@@ -60,7 +65,7 @@ export function StatusBar({
           type="button"
           aria-label="打开设置"
           title="设置"
-          className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+          className={STATUSBAR_ICON_BUTTON_CLASS}
           onClick={onOpenSettings}
         >
           <Settings className="size-3.5" />

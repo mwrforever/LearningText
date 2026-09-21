@@ -30,10 +30,12 @@ export function TitleBar({ platform, onCommand }: TitleBarProps): React.JSX.Elem
   return (
     // 标题栏整条 drag；交互子元素经 lt-no-drag 豁免（menubar 容器与右侧留白区）
     <header className="lt-titlebar lt-drag flex h-10 shrink-0 items-center gap-1 border-b border-border bg-muted pl-3 select-none">
-      {/* 应用标识：h1 保留（E2E app.spec 锚点语义不变，视觉收敛为 13px 标题档） */}
+      {/* 应用标识：h1 保留（E2E app.spec 锚点语义不变，视觉收敛为 13px 标题档；
+          字重 medium 对齐蓝图 §2.1「13px medium」——标题栏是恒驻 chrome，semibold 过重
+          会与菜单标签争层级） */}
       <div className="flex items-center gap-2">
         <BookOpenText aria-hidden="true" className="size-4 text-primary" />
-        <h1 className="m-0 text-[13px] leading-none font-semibold tracking-wide text-foreground">
+        <h1 className="m-0 text-[13px] leading-none font-medium tracking-wide text-foreground">
           LearningText
         </h1>
       </div>
@@ -42,8 +44,15 @@ export function TitleBar({ platform, onCommand }: TitleBarProps): React.JSX.Elem
         <nav aria-label="应用菜单" className="lt-no-drag ml-2">
           <Menubar className="h-8">
             <MenubarMenu>
-              <MenubarTrigger className="text-xs">文件</MenubarTrigger>
-              <MenubarContent>
+              {/* 触发钮消费侧覆写：font-normal 卸掉模板 font-medium（12px medium 恒驻
+                  chrome 偏重，VS Code 菜单栏同为常规字重）；transition-colors 对齐全站
+                  hover/focus 100ms 过渡纪律（模板无过渡，显隐状态瞬跳） */}
+              <MenubarTrigger className="text-xs font-normal transition-colors duration-100">
+                文件
+              </MenubarTrigger>
+              {/* 面板动效对齐蓝图基线 100ms（模板默认 150ms；duration-* 经
+                  --tw-duration 传入 tw-animate-css，reduced-motion 全局降级覆盖） */}
+              <MenubarContent className="duration-100">
                 <MenubarItem onClick={() => onCommand({ type: 'new-file' })}>
                   新建文件
                   <MenubarShortcut>Ctrl+N</MenubarShortcut>
@@ -70,8 +79,10 @@ export function TitleBar({ platform, onCommand }: TitleBarProps): React.JSX.Elem
               </MenubarContent>
             </MenubarMenu>
             <MenubarMenu>
-              <MenubarTrigger className="text-xs">搜索</MenubarTrigger>
-              <MenubarContent>
+              <MenubarTrigger className="text-xs font-normal transition-colors duration-100">
+                搜索
+              </MenubarTrigger>
+              <MenubarContent className="duration-100">
                 <MenubarItem onClick={() => onCommand({ type: 'quick-open' })}>
                   快速打开
                   <MenubarShortcut>Ctrl+P</MenubarShortcut>
@@ -83,8 +94,10 @@ export function TitleBar({ platform, onCommand }: TitleBarProps): React.JSX.Elem
               </MenubarContent>
             </MenubarMenu>
             <MenubarMenu>
-              <MenubarTrigger className="text-xs">导入导出</MenubarTrigger>
-              <MenubarContent>
+              <MenubarTrigger className="text-xs font-normal transition-colors duration-100">
+                导入导出
+              </MenubarTrigger>
+              <MenubarContent className="duration-100">
                 <MenubarItem onClick={() => onCommand({ type: 'import' })}>导入…</MenubarItem>
                 <MenubarItem onClick={() => onCommand({ type: 'export' })}>导出…</MenubarItem>
               </MenubarContent>

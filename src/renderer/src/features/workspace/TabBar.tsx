@@ -24,9 +24,11 @@ function tabIconFor(mimeType: string | null): typeof FileText {
   return FileCode;
 }
 
-/** doc 标签激活钮标准类串（aria-current 驱动激活态） */
+/** doc 标签激活钮标准类串（aria-current 驱动激活态）：仅上圆角（rounded-t-sm）——激活签
+ * bg-background 与画布同面融合（VS Code 页签语义），下缘直角与画布边界无缝，四角圆
+ * 会在签底与画布交界处留出微缺口 */
 const TAB_TRIGGER_CLASS =
-  'flex items-center gap-1.5 whitespace-nowrap rounded-sm px-2 py-1 text-xs text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground aria-current:bg-background aria-current:font-medium aria-current:text-foreground';
+  'flex items-center gap-1.5 whitespace-nowrap rounded-t-sm px-2 py-1 text-xs text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground aria-current:bg-background aria-current:font-medium aria-current:text-foreground';
 
 /** 标签关闭钮标准类串：命中面 ::after 外扩 4px（M5 打磨既有口径），hover 显形 */
 const TAB_CLOSE_CLASS =
@@ -43,7 +45,7 @@ export function TabBar({
 }: TabBarProps): React.JSX.Element {
   return (
     <div
-      className="lt-tabbar flex items-end gap-1 overflow-x-auto border-b border-border bg-muted/40 px-1 pt-1"
+      className="lt-tabbar flex items-end gap-1 overflow-x-auto border-b border-border bg-muted/50 px-1 pt-1"
       role="tablist"
       aria-label="打开的文件"
     >

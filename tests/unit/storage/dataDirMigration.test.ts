@@ -222,4 +222,42 @@ describe('数据目录迁移（M6 spec §5.2）', () => {
     expect(spies.writePointer).not.toHaveBeenCalled();
     expect(spies.relaunch).toHaveBeenCalledTimes(1);
   });
+
+  it('源 settings/backups 目录缺失（新库尚无设置/备份）→ copyDirFlat 按空跳过，db/marker 照常迁移', () => {
+    const { deps, targetDir, spies } = makeDeps();
+    // 摘除两个源目录：copyDirFlat 对缺失源目录的早退分支（新库首迁的真实形态）
+    rmSync(path.join(dir, 'source', 'LearningText', 'settings'), { recursive: true, force: true });
+    rmSync(path.join(dir, 'source', 'LearningText', 'backups'), { recursive: true, force: true });
+    changeDataDir(deps, targetDir);
+    const newRoot = path.join(targetDir, 'LearningText');
+    expect(readFileSync(path.join(newRoot, 'learningtext.db'), 'utf8')).toBe('db-bytes');
+    expect(readFileSync(path.join(newRoot, 'last-backup.json'), 'utf8')).toBe('{}');
+    // 预建空目录在位、内部无复制物
+    expect(existsSync(path.join(newRoot, 'settings', 'settings.json'))).toBe(false);
+    expect(existsSync(path.join(newRoot, 'backups', 'b1.db'))).toBe(false);
+    expect(spies.writePointer).toHaveBeenCalledWith(targetDir);
+    expect(spies.relaunch).toHaveBeenCalledTimes(1);
+  });
+
+  it('清理自身失败不掩盖主错误：仅 warn 留痕，重启语义不变（防御分支，残留不参与一致性）', () => {
+    const { deps, targetDir, spies } = makeDeps();
+    const newRoot = path.join(targetDir, 'LearningText');
+    const failingFs: DataDirMigrationFs = {
+      ...dataDirMigrationFs,
+      // 首个 copy 即失败进入失败清理路径；仅对 newRoot 残留清理注入失败（可写探针的
+      // rmSync 照常成功，否则会在预建阶段提前拒绝、到不了清理分支）
+      copyFileSync: () => {
+        throw new Error('EIO');
+      },
+      rmSync: (p, opts) => {
+        if (p === newRoot) throw new Error('rm-fail');
+        dataDirMigrationFs.rmSync(p, opts);
+      },
+    };
+    const mutated = { ...deps, fs: failingFs };
+    changeDataDir(mutated, targetDir);
+    expect(warnSpy).toHaveBeenCalledWith('[storage] 清理迁移残留目录失败', expect.any(Error));
+    expect(spies.writePointer).not.toHaveBeenCalled();
+    expect(spies.relaunch).toHaveBeenCalledTimes(1);
+  });
 });

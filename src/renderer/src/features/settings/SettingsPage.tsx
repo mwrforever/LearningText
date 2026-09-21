@@ -137,8 +137,8 @@ export function SettingsPage({
     // 画布内嵌面（M6 spec D3）：占满画布区，不再 fixed 覆盖；lt-settings 保留为测试锚点
     <section aria-label="设置" className="lt-settings flex min-h-0 flex-1 bg-background">
       <div className="flex min-h-0 flex-1">
-        {/* 左侧锚点导航（图标 + 文字） */}
-        <nav aria-label="设置导航" className="w-40 shrink-0 border-r border-border p-2">
+        {/* 左侧锚点导航（图标 + 文字）：w-50 = 200px（蓝图 §2.7 定值，4px 标尺整数步进） */}
+        <nav aria-label="设置导航" className="w-50 shrink-0 border-r border-border p-2">
           <ul className="m-0 flex list-none flex-col gap-1 p-0">
             {SECTIONS.map(({ key, label, icon: Icon }) => (
               <li key={key}>

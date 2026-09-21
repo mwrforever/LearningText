@@ -1357,8 +1357,11 @@ export function Workspace(): React.JSX.Element {
             className="lt-sidebar flex min-h-0 min-w-0 flex-col bg-background"
             style={{ width: `${(layout.sidebarWidthRatio * 100).toFixed(2)}%` }}
           >
-            {/* 侧栏头（M6 spec §2.3）：随活动视图换题与操作（返回/折叠图标钮） */}
-            <div className="lt-sidebar-header flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border px-2">
+            {/* 侧栏头（M6 spec §2.3）：随活动视图换题与操作（返回/折叠图标钮）。
+                bg-muted/50 与标签条同为 h-9 chrome 面（跨分隔条相邻、必须同值才成连续
+                横带——取设计系统文档 §7.2 面板标题栏标尺值；树工具栏不再着色，
+                二级头靠面差拉开层级） */}
+            <div className="lt-sidebar-header flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
               <span className="text-xs font-medium text-muted-foreground">
                 {view === 'trash' ? '回收站' : view === 'search' ? '全局搜索' : '资源树'}
               </span>

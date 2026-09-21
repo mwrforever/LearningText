@@ -17,6 +17,15 @@ import { filterTrashed } from './trashModel';
 const TOOL_BUTTON_CLASS =
   'inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40';
 
+/**
+ * 破坏性工具钮类串（清空专用，独立整串避免模板字面量拼接下 text-* 双类级联歧义）：
+ * 不可逆批量操作的色彩分级（蓝图 §2.3 回收站「清空」destructive 色语义）；
+ * 悬停面文字对比度已自证（设计系统文档 §3.1 #18/#19：destructive/accent = 5.25/5.29），
+ * 禁用态经 opacity-40 降噪；还原/删除为逐条可逆或强确认操作，维持中性 TOOL_BUTTON_CLASS
+ */
+const DESTRUCTIVE_BUTTON_CLASS =
+  'inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-destructive transition-colors duration-100 hover:bg-accent hover:text-destructive disabled:pointer-events-none disabled:opacity-40';
+
 export function TrashPanel(): React.JSX.Element {
   const [items, setItems] = useState<readonly TrashedNodeMeta[]>([]);
   const [keyword, setKeyword] = useState('');
@@ -96,7 +105,7 @@ export function TrashPanel(): React.JSX.Element {
           type="button"
           aria-label="清空回收站"
           disabled={items.length === 0}
-          className={TOOL_BUTTON_CLASS}
+          className={DESTRUCTIVE_BUTTON_CLASS}
           onClick={onEmpty}
         >
           清空

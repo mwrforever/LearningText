@@ -197,7 +197,8 @@ export function SearchPanel({ onOpen, onReveal }: SearchPanelProps): React.JSX.E
                     {item.node.virtualPath}
                   </span>
                   {item.bodySnippet !== null ? (
-                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                    // mt-1 对齐 4px 间距标尺（原 0.5 步 = 2px 离尺值，设计系统文档 §二）
+                    <span className="mt-1 block truncate text-xs text-muted-foreground">
                       <HighlightedSnippet snippet={item.bodySnippet} />
                     </span>
                   ) : null}

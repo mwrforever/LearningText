@@ -40,7 +40,9 @@ export function WelcomePage({
       aria-label="欢迎"
       className="lt-welcome flex min-h-0 flex-1 items-center justify-center overflow-auto"
     >
-      <div className="flex w-full max-w-md flex-col gap-6 px-6 py-10">
+      {/* 内容列 100ms fade 入场（蓝图动效基线「面板切换 fade 100ms」）：无标签空态的
+          出现属状态切换反馈，opacity 单属性合成器路径，reduced-motion 全局降级覆盖 */}
+      <div className="flex w-full max-w-md flex-col gap-6 px-6 py-10 duration-100 animate-in fade-in">
         <div>
           <h2 className="m-0 text-2xl font-semibold text-foreground">LearningText</h2>
           <p className="m-0 mt-1 text-sm text-muted-foreground">

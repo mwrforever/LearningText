@@ -119,6 +119,34 @@
   button:focus-visible {
     outline: 2px solid var(--ring);
   }
+  /* 细滚动条基线（M6 琢段增量）：树列表/标签条/设置页/欢迎页等滚动面原生粗滚动条
+     与「冷静专业工具风」的密集克制语言冲突，是壳层最大的廉价感来源。取色全走语义
+     变量（静止 thumb = --border 弱存在、hover 加深到 --ring 给到「可抓取」反馈，
+     轨道透明由 1px 边框与面差承担分隔）——不引入新 token，双主题即时跟随。
+     Electron 渲染层恒为 Chromium，::-webkit-scrollbar 伪元素即原生路径而非 hack；
+     选它而非标准 scrollbar-color 是为了保留 thumb:hover 加深反馈（标准属性无此能力）。
+     透明边框 + content-box 裁剪收窄视觉 thumb 至 6px（10px 命中轨不变），pill 圆角
+     对齐 Windows 11 Fluent 细滚动条惯例（滚动条属系统 chrome，不占 UI 圆角标尺）。 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-button {
+    display: none;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border: 2px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--ring);
+  }
   /* 页面基线（承接原 global.css body 职责：零外距 + 系统字体栈），底色/字色铺语义 token */
   body {
     margin: 0;
