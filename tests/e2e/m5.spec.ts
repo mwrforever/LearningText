@@ -689,22 +689,22 @@ test.describe('M5 图片预览与恢复开关（独立 userData）', () => {
     await seedFile(1, '开关样例.html', '<p>开关样例</p>');
     await treeNodes().getByRole('button', { name: '开关样例.html' }).click();
     await expect(page.getByRole('tab', { name: /开关样例\.html/ })).toBeVisible();
-    // 关闭启动恢复开关（经桥直写 settings workspace 域——设置页无此控件 UI，域语义同源；
-    // 轮询确认落盘，防串行写链竞态）
+    // 关闭启动恢复开关（设置页 → 维护区 → 开关，UI 真实驱动——spec §3.2 控件交付后
+    // 弃原「桥直写 settings」绕 UI 形态；写链经产品通道 get→merge→set 异步串行落盘，
+    // 以只读 settingsGet 轮询确认持久化完成，防重启早于落盘的竞态）
+    await page.getByLabel('打开设置').click();
+    await page.getByRole('button', { name: '维护' }).click();
+    const restoreSwitch = page.getByLabel('启动时恢复工作区');
+    await expect(restoreSwitch).toBeChecked(); // 出厂默认开（spec §3.2）
+    await restoreSwitch.click();
+    await expect(restoreSwitch).not.toBeChecked();
     await expect
-      .poll(async () => {
-        return page.evaluate(async () => {
-          const current = await window.api.settingsGet();
-          if (!current.ok) return false;
-          const written = await window.api.settingsSet({
-            ...current.value,
-            workspace: { ...current.value.workspace, restoreOnStart: false },
-          });
-          if (!written.ok) return false;
+      .poll(() =>
+        page.evaluate(async () => {
           const verify = await window.api.settingsGet();
           return verify.ok && verify.value.workspace.restoreOnStart === false;
-        });
-      })
+        }),
+      )
       .toBe(true);
     // 重启（同 userData）：恢复链被开关短路 → 无标签恢复
     await restartApp();
