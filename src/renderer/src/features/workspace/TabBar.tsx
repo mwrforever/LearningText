@@ -39,7 +39,10 @@ export function TabBar({ tabs, activeId, onActivate, onClose }: TabBarProps): Re
           <button
             type="button"
             aria-label={`关闭标签 ${tab.meta.name}`}
-            className="inline-flex h-4 w-4 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-foreground"
+            /* 命中面扩展（M5 打磨）：视觉 16px 不变，经 ::after 向四周外扩 4px 至 24px
+               有效点击区（16px 原始命中面低于桌面最小目标惯例；after 伪元素参与命中测试
+               且无视觉呈现）；外扩恰好吃满标签条 4px 缝隙，不侵入相邻标签命中区 */
+            className="relative inline-flex h-4 w-4 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 after:absolute after:-inset-1 after:content-[''] hover:bg-accent hover:text-foreground"
             onClick={() => onClose(tab.meta.id)}
           >
             ×

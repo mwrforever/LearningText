@@ -85,3 +85,7 @@
 ## 2026-09-20
 
 - **宪法修订（用户亲自修订，本条为事后补记）**：撤销 2026-09-19 新增的 A.8「前端 UI 设计约束」条目式节；前端 UI 设计思想改以新增 **C.7「UI 设计思想 · 谋建琢三段律」**承载——谋（ui-ux-pro-max 定全局蓝图，未定蓝图不得动工）→ 建（依图营造，忠实实现不擅自降级，粗成品严禁交付）→ 琢（taste-skill 深度打磨，四维验收：高级视觉/高级交互/流畅动画/高性能渲染）；协作纪律：凡派遣 subagent 必须在指令中明确要求加载 `@ui-ux-pro-max` 与 `@taste-skill` 方可开工。技术红线细节（按需导入/800KB 警戒/合成器路径/E2E 锚点）由 M5 spec 裁决 D24/D26–D28 与实施计划 Global Constraints 承载。联动：M5 实施计划与交接文档中的 A.8 引用同步更新为 C.7。
+
+## 2026-09-21
+
+- **设计系统基线增量（M5 批次⑧ Task 15 taste 打磨，先记后改）**：`docs/design/设计系统.md` 新增「§九 打磨增量」承载审计增量，核心为 `--destructive` 双主题各调一档——审计实证破坏色文本真正最坏表面是悬停 accent 面（light `#DC2626`/`#E2E8F0` = 3.92:1、dark `#EF4444`/`#1E293B` = 3.89:1，均不达正文门槛 4.5:1，原 §3.1 只验 background 面属基线验算缺口），修正为 light `#B91C1C`（accent 面 5.25:1）/ dark `#F87171`（accent 面 5.29:1），§3.1 对比度表全组合重算并增列 #18/#19 悬停面行。随批交付：`theme.css` base 层 `button:focus-visible` 2px 焦点环基线、shadcn 浮层消费侧覆写惯例（`AlertDialogContent` p-4 / `AlertDialogTitle` text-base 对齐标尺）、数据数字 `tabular-nums`、面板级组合空态与树行「⋯」hover/focus/open 三态显形等呈现层打磨（全站行为与 aria 锚点零变更，既有测试全绿零改动）；geometry 过渡等 D24 红线不做项留证见 §九-8。打磨对照表：`.superpowers/sdd/2026-09-19-M5-导入导出与辅助功能/polish-checklist.md`。

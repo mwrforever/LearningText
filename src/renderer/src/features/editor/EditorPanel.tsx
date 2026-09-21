@@ -16,6 +16,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { EditorView } from '@codemirror/view';
+import { FileText } from 'lucide-react';
 import { ratioFromScroll, shouldSuppressReport } from '../preview/scrollSync';
 import type { TabState } from '../workspace/tabModel';
 import { appearanceReconfigureEffect } from './codemirror';
@@ -222,12 +223,15 @@ export function EditorPanel({
 
   if (activeTab === null) {
     return (
-      // 空态占位（content 档 14px 次要文字，居中；aria-label 锚点零变更）
+      // 空态占位（content 档 14px 次要文字，居中；aria-label 锚点零变更）。
+      // 打磨（M5 Task 15）：裸文字空态升级为「图标 + 文案」组合空态——装饰性图标
+      // aria-hidden 不进可访问性树，文本节点内容不变（E2E/单测 textContent 锚点零变更）
       <div
-        className="lt-editor-empty flex min-h-0 flex-1 items-center justify-center p-4 text-sm text-muted-foreground"
+        className="lt-editor-empty flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-sm text-muted-foreground"
         aria-label="编辑区占位"
       >
-        未选中文件
+        <FileText aria-hidden="true" strokeWidth={1.5} className="h-6 w-6 opacity-60" />
+        <p className="m-0">未选中文件</p>
       </div>
     );
   }

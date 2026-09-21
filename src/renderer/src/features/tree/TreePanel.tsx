@@ -55,9 +55,12 @@ export interface TreePanelProps {
   onStartMove(id: number): void;
 }
 
-/** 行内「⋯」菜单触发钮标准类串（标题栏图标钮同款形态，字号取行内三档中的 xs 档） */
+/** 行内「⋯」菜单触发钮标准类串（标题栏图标钮同款形态，字号取行内三档中的 xs 档）。
+ * 显形策略（M5 打磨降噪）：常态弱化为透明、行悬停/行内焦点/菜单展开三态显形——每行
+ * 常驻一枚 20px 钮是恒定视觉噪音；透明态仍占位（无布局位移）且可命中（无行为变化），
+ * 键盘 Tab 聚焦经 group-focus-within 显形、菜单展开经 radix data-[state=open] 显形 */
 const ROW_MENU_TRIGGER_CLASS =
-  'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground';
+  'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition duration-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100 hover:bg-accent hover:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground';
 
 /**
  * 树节点行主按钮标准类串（设计系统文档 §7.2 树列表形态）：强选中 aria-current 半透明底 +
@@ -96,8 +99,9 @@ function TreeItem({
   // 同一行强选中恒优先（aria-current='true' 独占，不双标）
   const isPreviewOnly = node.meta.id === previewOnlyNodeId && node.meta.id !== selectedId;
   return (
+    // 行容器为 group：「⋯」触发钮的悬停/焦点显形作用域（见 ROW_MENU_TRIGGER_CLASS 注）
     <li className="list-none">
-      <div className="flex items-center">
+      <div className="group flex items-center">
         <button
           type="button"
           aria-current={node.meta.id === selectedId ? 'true' : undefined}

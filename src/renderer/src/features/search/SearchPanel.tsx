@@ -215,9 +215,10 @@ export function SearchPanel({ onOpen, onReveal }: SearchPanelProps): React.JSX.E
           ))}
         </ul>
       )}
-      {/* 状态条：total 精确计数（spec §5 含未翻页部分）+ truncated 余量加载入口 */}
+      {/* 状态条：total 精确计数（spec §5 含未翻页部分）+ truncated 余量加载入口；
+          计数数字 tabular-nums——翻页/加载时数字宽度不抖动（M5 打磨） */}
       {total > 0 ? (
-        <div className="lt-search-status flex items-center justify-between gap-2 border-t border-border px-2 py-1 text-xs text-muted-foreground">
+        <div className="lt-search-status flex items-center justify-between gap-2 border-t border-border px-2 py-1 text-xs text-muted-foreground tabular-nums">
           <span>共 {total} 条命中</span>
           {truncated ? (
             <button

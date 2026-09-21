@@ -79,6 +79,9 @@ export function TrashPanel(): React.JSX.Element {
   }
 
   const filtered = filterTrashed(items, keyword);
+  // 回收站全量条目 id 集：后代行判定基准（必须取未过滤全量——祖先行被关键词滤掉时
+  // 后代行的「随上级还原」事实不变，若取过滤集会误判）
+  const trashedIds = new Set(items.map((item) => item.meta.id));
   return (
     <section aria-label="回收站" className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* 过滤 + 清空操作条：清空仅在有条目时可用（空态删除 0 个节点无意义） */}
@@ -110,6 +113,12 @@ export function TrashPanel(): React.JSX.Element {
             <li key={item.meta.id} className="mb-1 rounded-sm border border-border px-2 py-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="min-w-0 truncate text-sm text-foreground">{item.meta.name}</span>
+                {/* 后代行「随上级还原」标注（M5 Task 15 打磨，TASK.md 登记项的纯呈现处置）：
+                    平铺列表中最近父 id 命中另一回收站条目即后代行——其还原会被父链校验拒，
+                    父级还原时整树出列；仅加指向性标注，还原钮可点性不变（行为零变更） */}
+                {item.meta.parentId !== null && trashedIds.has(item.meta.parentId) ? (
+                  <span className="shrink-0 text-xs text-muted-foreground">随上级还原</span>
+                ) : null}
                 <span className="flex shrink-0 items-center gap-1">
                   <button
                     type="button"
@@ -129,9 +138,12 @@ export function TrashPanel(): React.JSX.Element {
                   </button>
                 </span>
               </div>
-              {/* 原路径与删除时间：次级信息按 12px 档弱化（设计系统文档 §四 字体阶梯） */}
+              {/* 原路径与删除时间：次级信息按 12px 档弱化（设计系统文档 §四 字体阶梯）；
+                  时间数字 tabular-nums（M5 打磨：列表纵向排布时数字列宽稳定） */}
               <p className="m-0 truncate text-xs text-muted-foreground">{item.meta.virtualPath}</p>
-              <p className="m-0 text-xs text-muted-foreground">删除于 {item.deletedAt}</p>
+              <p className="m-0 text-xs text-muted-foreground tabular-nums">
+                删除于 {item.deletedAt}
+              </p>
             </li>
           ))}
         </ul>

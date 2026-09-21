@@ -24,7 +24,10 @@
   --muted-foreground: #5f7085;
   --accent: #e2e8f0;
   --accent-foreground: #0f172a;
-  --destructive: #dc2626;
+  /* red-700：破坏色文本最坏表面 = 悬停 accent 面（#E2E8F0，标签/下拉项 hover）——
+     red-600 在该面仅 3.92:1 不达正文门槛 4.5:1，加深一档后 5.25:1（实算，
+     全组合见设计系统文档 §3.1 打磨增量行；对比度缺口为 M5 Task 15 审计发现） */
+  --destructive: #b91c1c;
   --destructive-foreground: #ffffff;
   --border: #e2e8f0;
   --input: #e2e8f0;
@@ -48,8 +51,11 @@
   --muted-foreground: #94a3b8;
   --accent: #1e293b;
   --accent-foreground: #f8fafc;
-  --destructive: #ef4444;
-  /* dark 破坏面配深色字：白字对 #EF4444 仅 3.76:1 不达正文门槛，深字 4.74:1 通过 */
+  /* red-400：破坏色文本最坏表面 = 悬停 accent 面（#1E293B）——red-500 系在该面不达 4.5:1
+     （3.89:1），提亮一档后 5.29:1（实算）；破坏面配深色字照旧：白字对 #F87171 仅 2.77:1，
+     深字 6.45:1 通过（M5 Task 15 审计发现的暗色侧同型缺口一并修复） */
+  --destructive: #f87171;
+  /* dark 破坏面配深色字：白字对比不足不达正文门槛，深字通过（实算见设计系统文档 §3.1） */
   --destructive-foreground: #0f172a;
   --border: #2b3a52;
   --input: #2b3a52;
@@ -96,6 +102,14 @@
   /* shadcn 基线：默认边框/焦点环走语义色，防裸色值散落 */
   * {
     @apply border-border outline-ring/50;
+  }
+  /* 键盘焦点环基线（M5 打磨增量）：未自带焦点样式的自研控件（工具钮/树行/标签/「⋯」
+     触发钮/关闭钮）统一 2px 实线 ring——原先仅 UA auto 轮廓叠加 50% 透明 ring 色，
+     弱且与输入框的 2px ring 形态不一致；shadcn 组件自带 focus-visible 样式（utilities
+     层级联优先于本 base 层元素选择器）不受影响。ring 色非文本对比度：light 4.55 /
+     dark 6.96（≥3:1 门槛，见设计系统文档 §3.1） */
+  button:focus-visible {
+    outline: 2px solid var(--ring);
   }
   /* 页面基线（承接原 global.css body 职责：零外距 + 系统字体栈），底色/字色铺语义 token */
   body {

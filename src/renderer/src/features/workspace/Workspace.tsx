@@ -1474,7 +1474,7 @@ export function Workspace({
           （批次粒度更新，不逐节点）；bottom-14 让位 toast 队列（完成 toast 同屏不重叠） */}
       {importProgress !== null ? (
         <div
-          className="lt-import-progress pointer-events-auto fixed bottom-14 right-4 z-50 flex w-80 flex-col gap-1 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2"
+          className="lt-import-progress pointer-events-auto fixed bottom-14 right-4 z-50 flex w-80 flex-col gap-1 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2 tabular-nums"
           role="status"
           aria-live="polite"
         >
@@ -1502,7 +1502,7 @@ export function Workspace({
           无取消语义（FR-IO-02 未要求），invoke 结果到达即收口 */}
       {exportProgress !== null ? (
         <div
-          className="lt-export-progress pointer-events-auto fixed bottom-14 right-4 z-50 flex w-80 flex-col gap-1 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2"
+          className="lt-export-progress pointer-events-auto fixed bottom-14 right-4 z-50 flex w-80 flex-col gap-1 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2 tabular-nums"
           role="status"
           aria-live="polite"
         >
@@ -1526,9 +1526,12 @@ export function Workspace({
             if (!open) setImportDraft(null);
           }}
         >
-          <AlertDialogContent>
+          <AlertDialogContent className="p-4">
+            {/* 打磨（M5 Task 15）：消费侧类覆写对齐设计系统标尺——浮层内边距 16px（p-4，
+                覆写模板 p-6）与标题字号 display 档 16px（text-base，覆写模板 text-lg 18px
+                体外值）；经 cn/tailwind-merge 合并为「外部类覆盖内部类」合法场景（D28） */}
             <AlertDialogHeader>
-              <AlertDialogTitle>导入</AlertDialogTitle>
+              <AlertDialogTitle className="text-base">导入</AlertDialogTitle>
               <AlertDialogDescription>
                 将所选磁盘文件夹导入到「
                 {findNode(roots, importDraft.targetParentId)?.meta.name ?? '根'}

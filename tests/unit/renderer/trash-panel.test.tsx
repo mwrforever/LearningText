@@ -97,6 +97,46 @@ describe('TrashPanel', () => {
     });
   });
 
+  it('后代行「随上级还原」标注：父链命中另一回收站条目的行呈现标注，顶层行不呈现', async () => {
+    // 平铺回收站清单：目录 7（顶层，parentId=根）+ 其子文件 8（parentId=7）——
+    // 子行还原会被父链校验拒（父级还原时整树出列），呈现层标注指向性事实
+    const dirMeta: NodeMeta = {
+      ...meta(7, '笔记'),
+      nodeType: 'dir',
+      mimeType: null,
+      virtualPath: '/笔记',
+    };
+    const childMeta: NodeMeta = { ...meta(8, 'c.html'), parentId: 7, virtualPath: '/笔记/c.html' };
+    stubTrashApi({
+      listTrashed: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: [
+            { meta: dirMeta, deletedAt: '2026-09-21T09:30:00.000+08:00' },
+            { meta: childMeta, deletedAt: '2026-09-21T09:30:00.000+08:00' },
+          ],
+        }),
+      ),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<TrashPanel />);
+    });
+    // 标注恰好一次（仅子行）；还原钮仍可点（标注不改变可点性——行为零变更）
+    expect(container.textContent).toContain('随上级还原');
+    expect(
+      Array.from(container.querySelectorAll('li')).filter((li) =>
+        li.textContent?.includes('随上级还原'),
+      ),
+    ).toHaveLength(1);
+    expect(
+      container.querySelector<HTMLButtonElement>('button[aria-label="还原 c.html"]'),
+    ).not.toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
   it('空回收站：占位文案呈现且清空钮禁用', async () => {
     stubTrashApi({ listTrashed: vi.fn(() => Promise.resolve({ ok: true, value: [] })) });
     const tree = createRoot(container);

@@ -71,6 +71,9 @@ const NAV_ITEM_CLASS =
 /** 滑块行标准类串：原生 range（jsdom/真实浏览器同语义）+ 值回显，accent 走语义主色 */
 const RANGE_CLASS = 'h-1 w-48 accent-primary';
 
+/** 滑块值回显类串：12px 弱化档 + tabular-nums（拖动时数字宽度不抖动，M5 打磨） */
+const RANGE_VALUE_CLASS = 'text-xs text-muted-foreground tabular-nums';
+
 /** 次级按钮标准类串（导航同源的 hover/disabled 纪律） */
 const BUTTON_CLASS =
   'inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40';
@@ -100,10 +103,12 @@ export function SettingsPage({
   // 还原强确认目标（备份文件名）：null=浮层收起；确认/取消均收起，确认侧才上抛还原
   const [restoreTarget, setRestoreTarget] = useState<string | null>(null);
   return (
-    // 全屏覆盖层（spec §4.2 D9）：z-40 低于 toast/浮层的 z-50；lt-* 保留为测试锚点
+    // 全屏覆盖层（spec §4.2 D9）：z-40 低于 toast/浮层的 z-50；lt-* 保留为测试锚点。
+    // 入场动效（M5 打磨）：fade-in 240ms（§6.1 normal 档，仅 opacity 合成器路径，
+    // reduced-motion 经 theme.css 全局降级瞬时完成）；出场随卸载瞬时（覆盖层关闭语义）
     <section
       aria-label="设置"
-      className="lt-settings fixed inset-0 z-40 flex flex-col bg-background"
+      className="lt-settings fixed inset-0 z-40 flex flex-col bg-background duration-240 animate-in fade-in"
     >
       {/* 顶栏：显式返回（D9 裁决 Esc 不关闭）+ 面标题 */}
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-2">
@@ -210,7 +215,7 @@ export function SettingsPage({
                       onFontSizeChange(clampFontSize(Number(event.currentTarget.value)));
                     }}
                   />
-                  <span className="text-xs text-muted-foreground">{editorFontSize}px</span>
+                  <span className={RANGE_VALUE_CLASS}>{editorFontSize}px</span>
                 </div>
               </div>
             </>
@@ -231,7 +236,7 @@ export function SettingsPage({
                       onDebounceChange(clampDebounce(Number(event.currentTarget.value)));
                     }}
                   />
-                  <span className="text-xs text-muted-foreground">{debounceMs}ms</span>
+                  <span className={RANGE_VALUE_CLASS}>{debounceMs}ms</span>
                 </div>
               </div>
               <div>
@@ -249,7 +254,7 @@ export function SettingsPage({
                       onAutoSaveChange(clampAutoSave(Number(event.currentTarget.value)));
                     }}
                   />
-                  <span className="text-xs text-muted-foreground">{autoSaveMs}ms</span>
+                  <span className={RANGE_VALUE_CLASS}>{autoSaveMs}ms</span>
                 </div>
               </div>
             </>
@@ -295,7 +300,7 @@ export function SettingsPage({
                         className="lt-backup-item flex items-center justify-between gap-2 py-1"
                       >
                         <span className="truncate text-xs text-foreground">{backup.fileName}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
+                        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                           {formatBackupSize(backup.sizeBytes)} · {backup.modifiedAt}
                         </span>
                         <button
@@ -322,9 +327,14 @@ export function SettingsPage({
                     if (!open) setRestoreTarget(null);
                   }}
                 >
-                  <AlertDialogContent>
+                  {/* 打磨（M5 Task 15）：消费侧类覆写对齐设计系统标尺（与导入确认弹层同口径）——
+                      浮层内边距 p-4（覆写模板 p-6）、标题 text-base（覆写模板 text-lg 18px
+                      体外值）；cn/tailwind-merge「外部类覆盖内部类」合法场景（D28） */}
+                  <AlertDialogContent className="p-4">
                     <AlertDialogHeader>
-                      <AlertDialogTitle>还原备份：{restoreTarget}</AlertDialogTitle>
+                      <AlertDialogTitle className="text-base">
+                        还原备份：{restoreTarget}
+                      </AlertDialogTitle>
                       <AlertDialogDescription>将覆盖当前全部数据并重启应用</AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

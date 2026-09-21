@@ -52,7 +52,7 @@ export function ToastHost(): React.JSX.Element {
       {items.map((item) => (
         <div
           key={item.id}
-          className="lt-toast pointer-events-auto rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2"
+          className="lt-toast pointer-events-auto rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2 tabular-nums"
         >
           {item.text}
           {item.action !== undefined ? (

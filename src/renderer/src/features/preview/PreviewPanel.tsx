@@ -17,6 +17,7 @@
  * html 分支原样），投递/接收 effect 不感知（iframeRef 空引用经可选链天然 no-op）。
  */
 import { useEffect, useRef, useState } from 'react';
+import { FileText, FileX } from 'lucide-react';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import { previewableMime } from './previewableMime';
 import {
@@ -174,17 +175,20 @@ export function PreviewPanel({
 
   // 反查失败占位优先于 iframe（旧路径已不可达，保留 iframe 只会呈现失效内容）
   if (url !== null && unavailable) {
-    // 占位态（content 档 14px 次要文字，居中；文案为 E2E/单测断言锚点零变更）
+    // 占位态（content 档 14px 次要文字，居中；文案为 E2E/单测断言锚点零变更）。
+    // 打磨（M5 Task 15）：组合空态图标——装饰性 aria-hidden，文本锚点不变
     return (
-      <div className="lt-preview-empty flex min-h-0 flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
-        文档不可用
+      <div className="lt-preview-empty flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-sm text-muted-foreground">
+        <FileX aria-hidden="true" strokeWidth={1.5} className="h-6 w-6 opacity-60" />
+        <p className="m-0">文档不可用</p>
       </div>
     );
   }
   if (url === null) {
     return (
-      <div className="lt-preview-empty flex min-h-0 flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
-        未选中文件
+      <div className="lt-preview-empty flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4 text-sm text-muted-foreground">
+        <FileText aria-hidden="true" strokeWidth={1.5} className="h-6 w-6 opacity-60" />
+        <p className="m-0">未选中文件</p>
       </div>
     );
   }
