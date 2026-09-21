@@ -69,4 +69,9 @@ export const IPC = {
   vfsGet: 'vfs:get',
   /** 活节点总数（状态栏文档计数，M6 spec §2.6；无参 payload null 先例） */
   vfsCount: 'vfs:count',
+  // —— 数据目录域（M6 批次③）：命名 <域>:<动作>（宪法 B.2-5）——
+  /** 当前数据目录布局与自定义标记（设置页「数据与存储」分区；无参 payload null 先例） */
+  storageGetInfo: 'storage:get-info',
+  /** 更改数据目录并迁移（targetDir 须来自目录选择对话框登记簿；成功即重启生效） */
+  storageChangeDataDir: 'storage:change-data-dir',
 } as const;

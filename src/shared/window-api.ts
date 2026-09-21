@@ -15,6 +15,7 @@ import type {
   IoProgress,
 } from './io-contract';
 import type { OpenPathRequest } from './shell-contract';
+import type { ChangeDataDirRequest, ChangeDataDirResponse, DataDirInfo } from './storage-contract';
 import type { SearchQueryRequest, SearchQueryResponse } from './search-contract';
 import type { ShellCommand } from './shell-contract';
 import type { SettingsData } from './settings-contract';
@@ -101,6 +102,15 @@ export interface WindowApi {
    * 主进程按当次会话登记簿校验（渲染层不透传用户可控串直达 shell——B.5-4 同源纪律）。
    */
   openPath(request: OpenPathRequest): Promise<Result<null>>;
+  // —— 数据目录域（M6 批次③）：布局查询 + 更改迁移 ——
+  /** 当前数据目录布局与自定义标记（设置页「数据与存储」分区展示） */
+  getDataDirInfo(): Promise<Result<DataDirInfo>>;
+  /**
+   * 更改数据目录并迁移（M6 spec §5.2）：targetDir 须为本会话 pickDirectory 产出（登记簿
+   * 校验）。成功响应 { relaunch: true } 后主进程随即重启——本调用续体可能因进程退出不落地，
+   * 调用方不得依赖其结果做 UI 收尾。
+   */
+  changeDataDir(request: ChangeDataDirRequest): Promise<Result<ChangeDataDirResponse>>;
   /** 订阅 io 进度广播（导入/导出可辨识联合，kind 判别字段），返回取消订阅函数 */
   onIoProgress(callback: (progress: IoProgress) => void): () => void;
   // —— VFS 补充（M4）：nodeId → NodeMeta 反查（未找到 E_VFS_NOT_FOUND）——

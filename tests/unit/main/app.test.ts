@@ -120,6 +120,8 @@ const mocks = vi.hoisted(() => {
           readonly dialogProducedDirs: ReadonlySet<string>;
           readonly openDirectoryInShell: (dir: string) => Promise<void>;
           readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
+          readonly getStorageInfo: () => unknown;
+          readonly changeDataDir: (targetDir: string) => { readonly relaunch: true };
           readonly onAppearanceThemeChange: (intent: 'light' | 'dark' | 'system') => void;
         }) => void
       >(),
@@ -329,6 +331,9 @@ describe('主进程装配 bootstrapMain', () => {
     // 导入服务与目录选择供给一并注入（M5 批次⑥ Task 12）
     expect(ipcDeps?.io).toBe(mocks.ioStub);
     expect(ipcDeps?.pickDirectories).toEqual(expect.any(Function));
+    // 数据目录域两供给注入（M6 批次③）：布局查询与迁移编排闭包
+    expect(ipcDeps?.getStorageInfo).toEqual(expect.any(Function));
+    expect(ipcDeps?.changeDataDir).toEqual(expect.any(Function));
     // close 拦截 guard 接线（M4 spec §2.3）：未放行的首次 close 一律拦截
     // 并经窗口自身 webContents 下发 confirm-close 命令（渲染层确认链入口）
     const closeCall = mocks.winOn.mock.calls.find(([event]) => event === 'close');
@@ -817,16 +822,20 @@ describe('主进程装配 bootstrapMain', () => {
       expect(sendA).toHaveBeenCalledWith(IPC.ioProgress, progress);
     });
 
-    it('pickDirectories 将对话框产出登记入白名单登记簿（Task 13 导出/openPath 校验事实来源）', async () => {
+    it('pickDirectories 将对话框产出登记入白名单登记簿（Task 13 导出/openPath 校验事实来源）；数据根启动期已登记（M6 批次③）', async () => {
       const { deps } = await bootstrapWithTask13();
-      expect(deps.dialogProducedDirs.size).toBe(0);
+      // 启动期登记（M6 spec §4）：当前数据根（<userData>/LearningText）先行入册——
+      // 设置页「打开数据目录」的 openPath 登记簿校验由此直达
+      const dataRoot = path.join(mocks.getPath.mock.results[0]?.value ?? '', 'LearningText');
+      expect(deps.dialogProducedDirs.size).toBe(1);
+      expect(deps.dialogProducedDirs.has(dataRoot)).toBe(true);
       mocks.showOpenDialog.mockResolvedValue({ canceled: false, filePaths: ['D:/picked'] });
       await deps.pickDirectories(false);
       expect(deps.dialogProducedDirs.has('D:/picked')).toBe(true);
       // 取消（空清单）不登记任何串
       mocks.showOpenDialog.mockResolvedValue({ canceled: true, filePaths: [] });
       await deps.pickDirectories(false);
-      expect(deps.dialogProducedDirs.size).toBe(1);
+      expect(deps.dialogProducedDirs.size).toBe(2);
     });
 
     it('openDirectoryInShell 注入实现：shell.openPath 空串语义成功；错误描述串转异常上抛', async () => {

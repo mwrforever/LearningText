@@ -14,7 +14,7 @@ import { registerIpcHandlers } from './ipc';
 import { isOriginAllowed } from './security';
 import { openDatabase } from './store/db';
 import { runMigrations } from './store/migrate';
-import { ensureDataDir, resolveDataDir } from './store/dataDir';
+import { ensureDataDir } from './store/dataDir';
 import { createVfsService } from './vfs/vfsService';
 import { createSearchService } from './search/searchService';
 import { createSettingsService } from './settings/settingsService';
@@ -26,7 +26,10 @@ import type { VfsChangedBroadcast } from '../shared/vfs-contract';
 import type { ExportProgress, ImportProgress } from '../shared/io-contract';
 import { attachWindowCloseGuard, installApplicationMenu } from './menu/menu';
 import { BackupService } from './backup/backupService';
+import { changeDataDir, dataDirMigrationFs } from './storage/dataDirMigration';
+import { readDataDirPointer, resolveDataDir, writeDataDirPointer } from './store/dataDir';
 import { toLocalIsoDate } from '../shared/time';
+import type { DataDirInfo } from '../shared/storage-contract';
 import type { BrowserWindow as BrowserWindowType, OpenDialogOptions } from 'electron';
 
 const APP_ORIGIN = 'app://bundle';
@@ -140,9 +143,12 @@ export function bootstrapMain(): void {
   app
     .whenReady()
     .then(() => {
-      // 数据目录解析与开库迁移（spec §2.1/§3）：本 then 块即 try 域，任一步抛错
-      // 都落入下方 catch 分支 app.exit(1)（fail-fast，B.3-1 禁带伤运行）
-      const layout = resolveDataDir(app.getPath('userData'));
+      // 数据目录解析与开库迁移（spec §2.1/§3；M6 §5.1 指针装载）：指针缺失/损坏回退默认
+      // 不阻断启动；effectiveRoot 为「数据根父目录」，布局恒 <父>/LearningText（spec D8）。
+      // 本 then 块即 try 域，任一步抛错都落入下方 catch 分支 app.exit(1)（fail-fast，B.3-1）
+      const userDataRoot = app.getPath('userData');
+      const pointer = readDataDirPointer(userDataRoot);
+      const layout = resolveDataDir(pointer.root ?? userDataRoot);
       ensureDataDir(layout);
       db = openDatabase({ file: layout.dbFile });
       // 迁移失败抛错 → catch 分支 app.exit(1)（fail-fast，B.3-1）
@@ -229,6 +235,8 @@ export function bootstrapMain(): void {
       // 生命周期：会话级、不清理——增长以用户目录选择操作次数为界；残留授权语义 =
       // 本会话选过的目录持续可写/可打开，属用户当次会话的显式意愿，可接受。
       const dialogProducedDirs = new Set<string>();
+      // 当前数据根启动期登记（M6 spec §4）：设置页「打开目录」直达（openPath 登记簿校验口径）
+      dialogProducedDirs.add(layout.root);
       // 目录选择供给（io:pick-directory，Task 13 复用）：dialog.showOpenDialog 异步弹出
       // （不阻塞主进程事件循环），目录模式；multiple 区分导入多选与导出单选；取消返回空数组。
       // 不绑定主窗 owner：单窗应用下系统对话框恒前台，省去「窗未建/已关」分支（渲染端发起
@@ -250,6 +258,47 @@ export function bootstrapMain(): void {
       const openDirectoryInShell = async (dir: string): Promise<void> => {
         const message = await shell.openPath(dir);
         if (message !== '') throw new Error(`打开目录失败：${message}`);
+      };
+      // 当前数据目录布局查询（M6 spec §5）：设置页「数据与存储」分区展示面
+      const getStorageInfo = (): DataDirInfo => ({
+        root: layout.root,
+        dbFile: layout.dbFile,
+        backupsDir: layout.backupDir,
+        settingsFile: layout.settingsFile,
+        custom: pointer.root !== null,
+      });
+      // 数据目录迁移编排（M6 spec §5.2）：checkpoint → 干净关库（will-quit 关库守卫对
+      // db=undefined 短路）→ 复制 → 写指针 → 重启；失败语义由服务收口（D9）
+      const changeDataDirNow = (targetDir: string): { relaunch: true } => {
+        changeDataDir(
+          {
+            userDataRoot,
+            currentLayout: layout,
+            checkpoint: () => {
+              if (restoreSwapPending.value) {
+                // 与备份还原的替换点标记互斥：迁移前若恰有还原在途属构造性不可达
+                //（二者均为独占的全库覆盖级操作，UI 层互斥），此处按常规 checkpoint 处理
+                restoreSwapPending.value = false;
+              }
+              db?.pragma('wal_checkpoint(TRUNCATE)');
+            },
+            closeDatabase: () => {
+              const closing = db;
+              db = undefined;
+              closing?.close();
+            },
+            writePointer: (dir) => {
+              writeDataDirPointer(userDataRoot, dir);
+            },
+            relaunch: () => {
+              app.relaunch();
+              app.exit(0);
+            },
+            fs: dataDirMigrationFs,
+          },
+          targetDir,
+        );
+        return { relaunch: true };
       };
       /**
        * 还原编排（照 requestClose 先例的依赖注入，D11：服务不摸连接不摸生命周期）：
@@ -296,6 +345,9 @@ export function bootstrapMain(): void {
         export: exportService,
         dialogProducedDirs,
         openDirectoryInShell,
+        // 数据目录域（M6 批次③）：布局查询与迁移编排供给
+        getStorageInfo,
+        changeDataDir: changeDataDirNow,
         // 自绘标题栏主题联动（M6 spec §2.2/D12）：settings:set 检测 appearance.theme
         // 变更后回调；主进程内聚更新 overlay 配色，不新增 IPC 通道
         onAppearanceThemeChange: (intent) => {

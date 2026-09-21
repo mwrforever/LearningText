@@ -6,14 +6,17 @@
  * 编辑画布区（TabBar + 设置标签页/编辑|预览对/欢迎页）+ 状态栏（StatusBar，保存态/文档数/
  * 主题循环/设置）。布局记忆 = shell.layout v4（侧栏折叠/宽度/活动视图，settings schema v4）。
  * —— 标签模型（M6 扩型）——设置作为特殊伪标签（settingsOpen + activeId 哨兵 'settings'，
- * 不占 MAX_TABS）；媒体弱选中双源（D20）暂保留，随批次②画布化退役。
+ * 不占 MAX_TABS）；媒体/HTML 文件一律开标签（D4/D6），D20 媒体弱选中双源已退役。
+ * —— 画布（M6 spec §3，批次②）——HTML 标签 = 保活沙箱 iframe（HtmlCanvas，所见即所得：
+ * 编辑上报 lt:doc-edit → 画布缓存 + SaveController.edit；刷新抑制为结构性保证——无写后
+ * 重载机制，外部变更经画布浮动钮显式拉取）；媒体标签 = MediaCanvas 原生组件直载；文本
+ * 标签 = EditorPanel（CM 源码，仅非 HTML）。滚动同步（scrollSync/双槽桥/D13/D14）随
+ * 「编辑面=渲染面」整体退役（spec D5）。
  * —— 既有语义（M4/M5）——tabs/activeTab 状态机（tabModel 纯函数）、TabSessions per-tab
- * 会话、openFile 前置拦截（媒体分流/二进制拒开/大小三分支）、SaveController 保存管线
- * （edit/flush/flushActive/关签 flush）、树懒加载与广播同步、rename/move 模态与选择模式、
- * revealInTree 树侧定位、recent/workspace 域串行写链与启动恢复、快速打开浮层、导入导出
- * 链路与进度面板、主题装配（.dark 切换 + matchMedia）。
- * 滚动同步装配（M5 批次⑤，FR-RENDER-06）：编辑器↔预览双槽位中转保留至批次②（画布化
- * 后随 scrollSync 一并退役，M6 spec §3.4/D5）。
+ * 会话、openFile 前置拦截（媒体/HTML 开签分流、二进制拒开、CM 文本大小三分支）、
+ * SaveController 保存管线（edit/flush/flushActive/关签 flush）、树懒加载与广播同步、
+ * rename/move 模态与选择模式、revealInTree 树侧定位、recent/workspace 域串行写链与启动
+ * 恢复、快速打开浮层、导入导出链路与进度面板、主题装配（.dark 切换 + matchMedia）。
  */
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
@@ -33,6 +36,7 @@ import type {
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import { toLocalIsoTime } from '../../../../shared/time';
 import type { ShellCommand } from '../../../../shared/shell-contract';
+import type { DataDirInfo } from '../../../../shared/storage-contract';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,7 +59,8 @@ import { createEditorState } from '../editor/codemirror';
 import { EditorPanel } from '../editor/EditorPanel';
 import { SaveController } from '../editor/saveController';
 import { TabSessions } from '../editor/tabSessions';
-import { PreviewPanel } from '../preview/PreviewPanel';
+import { HtmlCanvas } from '../canvas/HtmlCanvas';
+import { MediaCanvas } from '../canvas/MediaCanvas';
 import { previewableMime } from '../preview/previewableMime';
 import {
   applyBroadcast,
@@ -121,13 +126,6 @@ export function Workspace(): React.JSX.Element {
   // selected 即 activeTab，reveal 不开标签但需树内高亮——以覆盖值临时接管 TreePanel 的
   // selectedId；activeId 一变（开标签/切签/关签补位）即回落，用户焦点变化优先于 reveal 残留
   const [revealSelectionId, setRevealSelectionId] = useState<number | null>(null);
-  // 媒体只读预览双源态（M5 批次⑦ Task 14，FR-EDIT-04 + spec §8/D20）：previewNode =
-  // 最近点选的媒体节点（唯一写入口 openFile 的 previewableMime 分流）；previewSource =
-  // 最近操作源——'image'=媒体点选驱动、'tab'=标签驱动。预览面板展示源由二者合成：源='image'
-  // 呈现 previewNode（激活标签原样保留在 TabBar 不关闭），源='tab' 呈现激活标签 meta——
-  // 点图片看图、切回标签看标签，互不销毁对方状态（切回标签后 previewNode 保留，再次点图即回）
-  const [previewNode, setPreviewNode] = useState<NodeMeta | null>(null);
-  const [previewSource, setPreviewSource] = useState<'image' | 'tab'>('tab');
   // 快速打开浮层开关（M5 批次① Task 6）：唯一写入口是 shell:command dispatch（菜单
   // Ctrl+P），点选/取消由浮层经 onOpenChange 回传收口
   const [quickOpen, setQuickOpen] = useState(false);
@@ -158,11 +156,12 @@ export function Workspace(): React.JSX.Element {
   // 导出域（M5 批次⑥ Task 13）：进行中导出进度（io:progress kind:export 广播驱动；
   // invoke 返回即收口置 null），无取消语义（FR-IO-02 未要求）
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
-  // 滚动同步桥槽位（M5 批次⑤ Task 11）：两侧面板各自在 effect 内登记实现（卸载摘除成对），
-  // 本组件持可空槽位互为中转——previewScrollPostRef = 「比例→预览 postMessage」（开关闸门
-  // 在预览侧）；editorAnchorScrollRef = 「锚点→编辑器滚动」（150ms 抑制窗在编辑器侧）
-  const previewScrollPostRef = useRef<((ratio: number) => void) | null>(null);
-  const editorAnchorScrollRef = useRef<((anchorText: string) => void) | null>(null);
+  // 数据目录域（M6 批次③）：布局展示值（设置标签打开期间装载）与迁移确认弹层目标
+  const [storageInfo, setStorageInfo] = useState<DataDirInfo | null>(null);
+  const [storageChangeTarget, setStorageChangeTarget] = useState<string | null>(null);
+  // HTML 画布编辑缓存（M6 spec §3.3）：nodeId → 最新 lt:doc-edit 序列化 HTML——画布标签
+  // 保存管线的事实源（SaveController.getDoc 消费）；无条目 = 加载后未编辑（flush no-op）
+  const canvasDocsRef = useRef(new Map<number, string>());
   // 布局实时镜像（settingsRef/tabsRef 同款同步模式）：拖拽 pointerup 持久化必须读「此刻」
   // 布局——pointermove 高频更新下事件闭包 layout 必陈旧；事件处理器内同步记账，渲染期不写
   const layoutRef = useRef<ShellLayout>(layout);
@@ -207,13 +206,6 @@ export function Workspace(): React.JSX.Element {
   useEffect(() => {
     setRevealSelectionId(null);
   }, [tabsOp.activeId]);
-  // 预览源收回（M5 批次⑦，D20）：activeId 变化到非 null 即「有标签被激活」——覆盖关激活
-  // 标签后的补位激活（唯一不经显式动作的标签激活路径）。全关（activeId→null）无标签可呈现，
-  // 源保持：媒体预览不被「关空标签」连带清掉（标签重点/文本重开的同 id 路径 activeId 不变，
-  // effect 不触发，由 activateTab/openFile 成功分支显式收回）
-  useEffect(() => {
-    if (tabsOp.activeId !== null) setPreviewSource('tab');
-  }, [tabsOp.activeId]);
   // —— 最近打开 / 工作区会话持久化（M5 批次②，settings recent/workspace 域）——
   // 设置写串行链：recent/workspace 域全部写经「get→merge→set」promise 链逐笔串行——启动
   // 恢复期多个记录点近同时完成，裸并发各自 get 读到同一旧值、后写覆盖先写丢条目；串行化
@@ -235,7 +227,9 @@ export function Workspace(): React.JSX.Element {
     saveControllerRef.current = new SaveController({
       debounceMs: () => settingsRef.current.debounceMs,
       autoSaveMs: () => settingsRef.current.autoSaveMs,
-      getDoc: (id) => sessions.get(id)?.state.doc.toString() ?? null,
+      // 事实源优先级：画布缓存（HTML 标签，lt:doc-edit 上报）→ CM 会话（文本标签）
+      getDoc: (id) =>
+        canvasDocsRef.current.get(id) ?? sessions.get(id)?.state.doc.toString() ?? null,
       write: (id, text) =>
         window.api
           .writeFile({ nodeId: id, content: new TextEncoder().encode(text) })
@@ -407,6 +401,18 @@ export function Workspace(): React.JSX.Element {
     };
   }, [tabsOp.settingsOpen]);
 
+  // 数据目录布局装载（M6 批次③）：设置标签打开期间拉取（低频显式查询，随标签进出即可）
+  useEffect(() => {
+    if (!tabsOp.settingsOpen) return undefined;
+    let alive = true;
+    void window.api.getDataDirInfo().then((result) => {
+      if (alive && result.ok) setStorageInfo(result.value);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [tabsOp.settingsOpen]);
+
   // io 进度订阅（M5 批次⑥ Task 12/13，挂载期常驻 + cleanup 成对摘除）：io:progress 广播
   // 为导入/导出可辨识联合（kind 判别字段，A.1-4），按 kind 分流入各自进度面板；完成态
   // 清理由 importNodes/exportNodes invoke 续体收口（toast + 收尾），广播不负责终态
@@ -461,9 +467,12 @@ export function Workspace(): React.JSX.Element {
 
   function onTrash(nodeId: number): void {
     void window.api.trashNode({ nodeId }).then((result) => {
-      // 标签存在则连同会话经 closeTabById 收场（flush 落库 → 管线/会话/标签同步清理，资源成对）；
-      // 激活态补位由 closeTab 状态机承担（右邻优先），编辑区/预览随 activeTab 联动回落
-      if (result.ok && sessions.has(nodeId)) {
+      // 标签存在（CM 会话或画布/媒体标签）则经 closeTabById 收场（flush 落库 → 管线/会话/
+      // 画布缓存/标签同步清理，资源成对）；激活态补位由 closeTab 状态机承担（右邻优先）
+      if (
+        result.ok &&
+        (sessions.has(nodeId) || tabsRef.current.tabs.some((t) => t.meta.id === nodeId))
+      ) {
         closeTabById(nodeId);
       }
     });
@@ -686,6 +695,49 @@ export function Workspace(): React.JSX.Element {
     void window.api.backupRestore({ fileName }).then((result) => {
       if (!result.ok) {
         showToast(`还原失败：${result.error.message}`);
+      }
+    });
+  }
+
+  // —— 数据目录域（M6 批次③，FR-AUX-03 修订版）：打开 / 更改迁移 ——
+
+  /** 打开当前数据目录（root 已在主进程启动期登记入册，openPath 登记簿校验直达） */
+  function openStorageDir(): void {
+    if (storageInfo === null) return;
+    void window.api.openPath({ dir: storageInfo.root }).then((result) => {
+      if (!result.ok) {
+        showToast(`打开目录失败：${result.error.message}`);
+      }
+    });
+  }
+
+  /**
+   * 更改数据位置入口：主进程弹目录选择框（单选，产出即入登记簿），取消静默；选定即打开
+   * 强确认弹层（迁移为全库覆盖级动作，列明迁移内容与重启语义）
+   */
+  function beginChangeStorageDir(): void {
+    void window.api.pickDirectory({ multiple: false }).then((picked) => {
+      if (!picked.ok) {
+        showToast(`选择数据目录失败：${picked.error.message}`);
+        return;
+      }
+      const dir = picked.value[0];
+      if (dir === undefined) return; // 用户取消选择：不弹确认层
+      setStorageChangeTarget(dir);
+    });
+  }
+
+  /**
+   * 确认迁移（数据覆盖级操作，已经 alert-dialog 强确认到达）：发起 storage:change-data-dir
+   * ——成功响应 { relaunch: true } 后主进程随即重启，续体可能不落地故成功侧不做 UI 收尾；
+   * 失败（未达 relaunch）toast 呈现原因并清确认态
+   */
+  function confirmChangeStorageDir(): void {
+    if (storageChangeTarget === null) return;
+    void window.api.changeDataDir({ targetDir: storageChangeTarget }).then((result) => {
+      if (!result.ok) {
+        showToast(`数据迁移失败：${result.error.message}`);
+        setStorageChangeTarget(null);
       }
     });
   }
@@ -998,30 +1050,37 @@ export function Workspace(): React.JSX.Element {
   }, [view]);
 
   /**
-   * 打开文件为标签（树点选/新建文件/启动恢复统一入口）：媒体节点分流（M5 批次⑦ Task 14，
-   * image/audio 切预览展示源即返，见上）→ 非文本前置拦截（不读库不开标签）→ 大小三分支
-   * 前置判定（spec §2.4 裁决 D7：渲染层以 meta.size 前置判定，不发起 readFile）→ readFile
-   * 成功才建会话与标签（失败 toast；续体内 MAX_TABS 判满防孤儿会话）→ 同文件唯一实例仅聚焦。
-   * 两成功分支（聚焦/新建）都记录 recent 域、尾沿写 workspace 域、预览源收回标签（同 id
-   * 重开时 activeId 不变、收回 effect 不触发，必须显式置 'tab'——点已激活标签/树行重开即
-   * 「切回标签看标签」的用户意图，D20）。opts.restore（M5 批次② D7 恢复豁免）：启动恢复
-   * 路径跳过 5–50MB 征询（会话重建不得卡在启动模态），>50MB 拒开与 MAX_TABS 护栏照常生效。
-   * await 化使启动恢复可顺序驱动（标签序 = 会话序）。
+   * 打开文件为标签（树点选/新建文件/启动恢复统一入口），三分流（M6 spec §3.3/D4/D6）：
+   * ① HTML → 画布标签（不读库不建 CM 会话，iframe 经 vfs:// 直载，所见即所得编辑）；
+   * ② 媒体（image/audio）→ 媒体标签（MediaCanvas 原生组件直载，无会话）；
+   * ③ 其余文本 → 大小三分支前置判定（spec §2.4 裁决 D7）→ readFile → CM 会话（二进制
+   *    非媒体的二进制维持拒开 toast）。
+   * 三分流共同尾段：同文件唯一实例仅聚焦（聚焦/新建都记录 recent 域、尾沿写 workspace 域）。
+   * CM 分支的 opts.restore（M5 批次② D7 恢复豁免）：启动恢复路径跳过 5–50MB 征询（会话
+   * 重建不得卡在启动模态），>50MB 拒开与 MAX_TABS 护栏照常生效；HTML/媒体分支浏览器直载
+   * 无建档卡顿，无征询语义。await 化使启动恢复可顺序驱动（标签序 = 会话序）。
    * @param node 目标文件节点 meta（树数据/恢复验活反查所得）
    * @param opts.restore 是否为启动恢复式打开（true 时豁免软阈值 confirm；缺省 false）
    * @returns 打开流程完成信号（拒绝/失败亦正常返回；恢复链据此串行推进）
    */
   async function openFile(node: NodeMeta, opts?: { readonly restore?: boolean }): Promise<void> {
-    // 媒体节点分流（M5 批次⑦，FR-EDIT-04 + spec §8/D20）：image/audio 不开编辑标签、不进
-    // TabBar 与保存管线，直接把预览展示源切到该节点（最近操作源='image'）；激活标签原样
-    // 保留在 TabBar。不读库：img/audio 经 vfs:// 协议直载（同树懒加载，无会话可建）
-    if (node.mimeType !== null && previewableMime(node.mimeType) !== null) {
-      setPreviewNode(node);
-      setPreviewSource('image');
+    const mediaKind = node.mimeType !== null ? previewableMime(node.mimeType) : null;
+    // HTML 与媒体：画布直载（无 CM 会话、无大文件征询）；MAX_TABS 护栏仍生效
+    if (node.mimeType === 'text/html' || mediaKind !== null) {
+      // 同开上限护栏：必须先判满再进标签状态机（openTab 触顶静默拒开，防标签集与预期脱节）；
+      // 判定读 tabsRef 实时态（闭包 tabsOp 在并发续体下必陈旧）
+      const alreadyOpen = tabsRef.current.tabs.some((t) => t.meta.id === node.id);
+      if (!alreadyOpen && tabsRef.current.tabs.length >= MAX_TABS) {
+        showToast(`最多同时打开 ${MAX_TABS} 个标签，请先关闭部分标签`);
+        return;
+      }
+      recordRecentOpen(node);
+      setTabsOp((prev) => openTab(prev, node));
+      tabWriteThrottleRef.current?.call();
       return;
     }
     if (node.mimeType === null || !isTextLike(node.mimeType)) {
-      showToast('二进制文件暂不支持编辑（FR-EDIT-04 归后续批次）');
+      showToast('该文件类型暂不支持打开（仅 HTML/媒体/文本）');
       return;
     }
     // 大小三分支前置判定（spec §2.4 裁决 D7，阈值 5MB/50MB；size 为字节——NodeMeta 契约）：
@@ -1047,11 +1106,10 @@ export function Workspace(): React.JSX.Element {
       return;
     }
     // 同文件唯一实例（tabModel openTab 幂等语义）：会话已在，聚焦既有标签即可；聚焦同样是
-    // 「最近使用」，与新建分支一样记录 recent + 尾沿写 workspace 激活态 + 预览源收回标签
+    // 「最近使用」，与新建分支一样记录 recent + 尾沿写 workspace 激活态
     if (sessions.has(node.id)) {
       recordRecentOpen(node);
       setTabsOp((prev) => openTab(prev, node));
-      setPreviewSource('tab');
       tabWriteThrottleRef.current?.call();
       return;
     }
@@ -1082,10 +1140,16 @@ export function Workspace(): React.JSX.Element {
     );
     recordRecentOpen(node);
     setTabsOp((prev) => openTab(prev, node));
-    // 新建标签分支同款收回预览源（activeId 必变，收回 effect 亦会到达——显式置为意图直达，
-    // 不依赖 effect 时序；同 id 已激活路径仅此处能收回）
-    setPreviewSource('tab');
     tabWriteThrottleRef.current?.call();
+  }
+
+  /**
+   * HTML 画布编辑上报（M6 spec §3.3）：lt:doc-edit 序列化结果进画布缓存（getDoc 事实源）
+   * 并驱动保存管线（双计时器调度落库）——替代 CM updateListener 在 HTML 路径的位置
+   */
+  function handleDocEdit(nodeId: number, html: string): void {
+    canvasDocsRef.current.set(nodeId, html);
+    saveController.edit(nodeId, html);
   }
 
   /**
@@ -1097,18 +1161,16 @@ export function Workspace(): React.JSX.Element {
     saveController.flush(id);
     saveController.tabClosed(id);
     sessions.close(id);
+    canvasDocsRef.current.delete(id); // HTML 画布缓存随签清理（资源成对）
     setTabsOp((prev) => closeTab(prev, id));
     tabWriteThrottleRef.current?.call(); // 标签集/激活态变更 → workspace 域尾沿写（D8）
   }
 
   /**
-   * 激活标签（TabBar 点选统一入口）：仅改 activeId（tabs 不动），workspace 域随尾沿写；
-   * 预览源显式收回标签（D20）——点选已激活标签时 activeId 不变、收回 effect 不触发，
-   * 「切回标签看标签」的用户意图必须在此直达
+   * 激活标签（TabBar 点选统一入口）：仅改 activeId（tabs 不动），workspace 域随尾沿写
    */
   function activateTab(id: number): void {
     setTabsOp((prev) => ({ ...prev, activeId: id }));
-    setPreviewSource('tab');
     tabWriteThrottleRef.current?.call();
   }
 
@@ -1252,15 +1314,17 @@ export function Workspace(): React.JSX.Element {
   }, []);
 
   // —— 渲染段（M6 spec §2 壳层）——
-  // 预览面板展示源合成（M5 批次⑦，D20 双源）：媒体驱动呈现 previewNode，标签驱动呈现激活
-  // 标签；源='image' 而 previewNode 为空的组合构造上不可达，回落激活标签仅为契约收尾
-  const previewDisplayNode =
-    previewSource === 'image'
-      ? (previewNode ?? activeTab?.meta ?? null)
-      : (activeTab?.meta ?? null);
-  // 树弱选中（D20 附则）：仅媒体驱动期间以 previewOnlyNodeId 呈现；源回标签即退场
-  //（previewNode 值保留，仅不再驱动树高亮）
-  const previewOnlyNodeId = previewSource === 'image' ? (previewNode?.id ?? null) : null;
+  // 画布标签分类（M6 spec §3.3）：HTML → 所见即所得画布（保活 iframe 集）；媒体 → 原生
+  // 组件；其余文本 → CM（EditorPanel 仅随激活文本标签挂载）
+  const activeTabKind =
+    activeTab === null
+      ? 'none'
+      : activeTab.meta.mimeType === 'text/html'
+        ? 'html'
+        : activeTab.meta.mimeType !== null && previewableMime(activeTab.meta.mimeType) !== null
+          ? 'media'
+          : 'code';
+  const htmlTabs = tabsOp.tabs.filter((t) => t.meta.mimeType === 'text/html');
   // 设置伪标签激活判定（哨兵值）；状态栏脏态（仅 doc 标签参与）
   const settingsActive = tabsOp.activeId === 'settings';
   const hasDirty = tabsOp.tabs.some((t) => t.dirty);
@@ -1327,7 +1391,6 @@ export function Workspace(): React.JSX.Element {
                 <TreePanel
                   roots={roots}
                   selectedId={selectedTreeId}
-                  previewOnlyNodeId={previewOnlyNodeId}
                   moveMode={moveMode !== null}
                   moveTargetId={moveTargetId}
                   onToggle={onToggle}
@@ -1414,8 +1477,8 @@ export function Workspace(): React.JSX.Element {
           aria-orientation="vertical"
           onPointerDown={layout.sidebarCollapsed ? undefined : onDividerPointerDown}
         />
-        {/* 编辑画布区（M6 spec §2.4）：标签栏 + 类型化画布（设置标签页/编辑|预览对/欢迎页）。
-            编辑|预览对为批次①过渡形态（滚动同步接线保留），批次②替换为所见即所得单画布 */}
+        {/* 编辑画布区（M6 spec §2.4）：标签栏 + 类型化画布（所见即所得/媒体/CM 文本/
+            设置标签页/欢迎页，随激活标签类型切换——spec §3.3） */}
         <section className="lt-canvas flex min-h-0 min-w-0 flex-1 flex-col bg-background">
           {tabsOp.tabs.length > 0 || tabsOp.settingsOpen ? (
             <TabBar
@@ -1445,30 +1508,30 @@ export function Workspace(): React.JSX.Element {
               onFontSizeChange={changeEditorFontSize}
               onDebounceChange={changeDebounceMs}
               onAutoSaveChange={changeAutoSaveMs}
+              storageInfo={storageInfo}
+              onOpenStorageDir={openStorageDir}
+              onChangeStorageDir={beginChangeStorageDir}
             />
+          ) : activeTabKind === 'html' ? (
+            // 所见即所得画布（spec §3.3）：全部 HTML 标签保活渲染，激活可见后台隐藏；
+            // 编辑经 lt:doc-edit → handleDocEdit 进保存管线；无预览面板（编辑面=渲染面）
+            <HtmlCanvas
+              tabs={htmlTabs}
+              activeId={typeof tabsOp.activeId === 'number' ? tabsOp.activeId : null}
+              activeDirty={activeTab?.dirty ?? false}
+              onDocEdit={handleDocEdit}
+            />
+          ) : activeTabKind === 'media' && activeTab !== null ? (
+            <MediaCanvas node={activeTab.meta} />
           ) : activeTab !== null ? (
-            <div className="flex min-h-0 flex-1">
-              <EditorPanel
-                sessions={sessions}
-                activeTab={activeTab}
-                debounceMs={debounceMs}
-                theme={resolvedTheme}
-                editorFontSize={editorFontSize}
-                onSaveRequest={() => saveController.flushActive()}
-                // 滚动同步接线（M5 Task 11）：比例上行中转至预览投递槽；锚点滚动命令槽交面板登记
-                onScrollRatio={(ratio) => previewScrollPostRef.current?.(ratio)}
-                anchorScrollRef={editorAnchorScrollRef}
-              />
-              <div className="lt-divider-editor w-1 shrink-0 bg-border" aria-hidden="true" />
-              <div className="lt-pane-preview flex min-h-0 w-2/5 min-w-0 flex-col bg-background">
-                <PreviewPanel
-                  node={previewDisplayNode}
-                  // 滚动同步接线（M5 Task 11）：投递槽交面板登记；锚点 report 中转至编辑器命令槽
-                  scrollPostRef={previewScrollPostRef}
-                  onScrollReport={(anchorText) => editorAnchorScrollRef.current?.(anchorText)}
-                />
-              </div>
-            </div>
+            <EditorPanel
+              sessions={sessions}
+              activeTab={activeTab}
+              debounceMs={debounceMs}
+              theme={resolvedTheme}
+              editorFontSize={editorFontSize}
+              onSaveRequest={() => saveController.flushActive()}
+            />
           ) : (
             // 欢迎页（M6 spec §2.5）：无激活 doc 标签且未开设置时的「首页」空态
             <WelcomePage
@@ -1602,6 +1665,38 @@ export function Workspace(): React.JSX.Element {
                 onClick={confirmImport}
               >
                 确认导入
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
+      {/* 数据迁移确认弹层（M6 批次③，FR-AUX-03）：数据覆盖级操作——列明迁移内容与
+          「成功后自动重启」语义；失败（目标非法/复制出错）由主进程回滚并 toast 呈现 */}
+      {storageChangeTarget !== null ? (
+        <AlertDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setStorageChangeTarget(null);
+          }}
+        >
+          <AlertDialogContent className="p-4">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="text-base">更改数据位置</AlertDialogTitle>
+              <AlertDialogDescription>
+                将把数据库、设置与备份迁移到「{storageChangeTarget}」，完成后应用将自动重启。
+                迁移期间请勿关闭应用；失败时原位置数据不受影响
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel aria-label="取消迁移" className="h-8 text-xs">
+                取消
+              </AlertDialogCancel>
+              <AlertDialogAction
+                aria-label="确认迁移"
+                className="h-8 text-xs"
+                onClick={confirmChangeStorageDir}
+              >
+                确认迁移
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

@@ -7,12 +7,9 @@
  * 行内「⋯」菜单（M5 批次④ Task 10）：每行 dropdown-menu 提供重命名/移动到…/删除（M6 起带
  * 图标），dir 与 file 均有，操作以节点 id 直传（脱离 selectedId 选中锚——目录不开标签即可
  * 操作；根为唯一例外，不渲染入口）。
- * 媒体弱选中（M5 批次⑦ Task 14，spec §8/D20 附则）：previewOnlyNodeId 标记「仅预览选中」
- * 的 image/audio 行——与强选中（selectedId，aria-current='true'）并存两套语义：强选中行
- * 恒 aria-current='true' 且不带弱标记（同一行不双标）；弱选中行以 data-preview-selected
- * 承载样式/断言锚、可访问名追加「（预览中）」说明。
  * M6：原 TreePane（树栏三态标题栏）退役——视图切换移交活动栏（spec §2.3），本组件回归
- * 纯树呈现；TreePaneView 类型保留（活动视图枚举消费）。
+ * 纯树呈现；TreePaneView 类型保留（活动视图枚举消费）。媒体弱选中（D20）已随画布化退役
+ * （媒体文件一律开标签，spec D4/D6）。
  */
 import { FilePlus, FolderInput, FolderPlus, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
@@ -34,11 +31,6 @@ const ROOT_ID = 1;
 export interface TreePanelProps {
   readonly roots: readonly TreeNode[];
   readonly selectedId: number | null;
-  /**
-   * 媒体弱选中 id（M5 批次⑦ D20 附则）：previewableMime 分流驱动的 image/audio 行高亮；
-   * null=无（源回标签即退场）。可选——弱选中为呈现性增量，缺省（冒烟桩/未接线）即无标记
-   */
-  readonly previewOnlyNodeId?: number | null;
   /** move 选择模式进行中（dir 点选临时变为「选定目标」语义，file 点选禁用） */
   readonly moveMode: boolean;
   /** move 模式下已选定的目标目录 id（null=尚待点选）；命中者按钮带 data-move-target 高亮 */
@@ -67,17 +59,15 @@ const TOOLBAR_ICON_BUTTON_CLASS =
 
 /**
  * 树节点行主按钮标准类串（设计系统文档 §7.2 树列表形态）：强选中 aria-current 半透明底 +
- * 加粗；弱选中（媒体仅预览）data-preview-selected 减半底色不加粗——与强选中同色系弱一档，
- * 视觉上可区分「看图」与「激活标签」两态并存
+ * 加粗；move 目标 ring 提示
  */
 const TREE_ROW_BUTTON_CLASS =
-  'min-w-0 flex-1 truncate rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40 aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground data-[preview-selected=true]:bg-accent/60 data-[move-target=true]:bg-primary/10 data-[move-target=true]:ring-1 data-[move-target=true]:ring-ring';
+  'min-w-0 flex-1 truncate rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40 aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground data-[move-target=true]:bg-primary/10 data-[move-target=true]:ring-1 data-[move-target=true]:ring-ring';
 
 /** 树节点行（行内菜单承载容器 + 主按钮）：主按钮占余宽，行尾「⋯」触发钮 20px 独立成钮 */
 function TreeItem({
   node,
   selectedId,
-  previewOnlyNodeId,
   moveMode,
   moveTargetId,
   onToggle,
@@ -88,7 +78,6 @@ function TreeItem({
 }: {
   readonly node: TreeNode;
   readonly selectedId: number | null;
-  readonly previewOnlyNodeId: number | null;
   readonly moveMode: boolean;
   readonly moveTargetId: number | null;
   onToggle(id: number): void;
@@ -98,9 +87,6 @@ function TreeItem({
   onTrash(nodeId: number): void;
 }): React.JSX.Element {
   const isDir = node.meta.nodeType === 'dir';
-  // 弱选中标记（M5 批次⑦ D20 附则）：仅命中 previewOnlyNodeId 且非强选中的行呈现——
-  // 同一行强选中恒优先（aria-current='true' 独占，不双标）
-  const isPreviewOnly = node.meta.id === previewOnlyNodeId && node.meta.id !== selectedId;
   return (
     // 行容器为 group：「⋯」触发钮的悬停/焦点显形作用域（见 ROW_MENU_TRIGGER_CLASS 注）
     <li className="list-none">
@@ -108,8 +94,6 @@ function TreeItem({
         <button
           type="button"
           aria-current={node.meta.id === selectedId ? 'true' : undefined}
-          aria-label={isPreviewOnly ? `${node.meta.name}（预览中）` : undefined}
-          data-preview-selected={isPreviewOnly ? 'true' : undefined}
           data-move-target={moveMode && isDir && node.meta.id === moveTargetId ? 'true' : undefined}
           disabled={moveMode && !isDir}
           className={TREE_ROW_BUTTON_CLASS}
@@ -168,7 +152,6 @@ function TreeItem({
               key={child.meta.id}
               node={child}
               selectedId={selectedId}
-              previewOnlyNodeId={previewOnlyNodeId}
               moveMode={moveMode}
               moveTargetId={moveTargetId}
               onToggle={onToggle}
@@ -254,7 +237,6 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
             key={node.meta.id}
             node={node}
             selectedId={props.selectedId}
-            previewOnlyNodeId={props.previewOnlyNodeId ?? null}
             moveMode={props.moveMode}
             moveTargetId={props.moveTargetId}
             onToggle={props.onToggle}

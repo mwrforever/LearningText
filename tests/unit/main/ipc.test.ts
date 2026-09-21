@@ -1,7 +1,7 @@
 // IPC 入口两道校验的单元测试：origin 白名单（B.5-6）+ zod 载荷校验（A.7-5）
 // vfs 通道组另覆盖 Result 转换（AppError 保真 / E_STORE_INTERNAL 兜底）与
 // 广播时机（事务提交后语义，宪法 B.3-4）。
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 
 const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
 vi.mock('electron', () => ({
@@ -25,6 +25,8 @@ import {
 import { AppError } from '../../../src/shared/result';
 import type { NodeMeta, TrashedNodeMeta } from '../../../src/shared/vfs-contract';
 import { registerIpcHandlers } from '../../../src/main/ipc';
+import type { IpcHandlerDeps } from '../../../src/main/ipc';
+import type { ChangeDataDirResponse, DataDirInfo } from '../../../src/shared/storage-contract';
 import type { VfsService } from '../../../src/main/vfs/vfsService';
 import type { SearchService } from '../../../src/main/search/searchService';
 import type { SettingsService } from '../../../src/main/settings/settingsService';
@@ -109,10 +111,41 @@ function makeOpenPathStub(): (dir: string) => Promise<void> {
   return vi.fn(() => Promise.resolve());
 }
 
+// 数据目录布局查询桩（M6 批次③）：默认位置（custom=false）布局，storage 用例可编程覆写
+function makeGetStorageInfoStub(): Mock<() => DataDirInfo> {
+  return vi.fn((): DataDirInfo => ({
+    root: 'C:/Users/t/AppData/LearningText',
+    dbFile: 'C:/Users/t/AppData/LearningText/learningtext.db',
+    backupsDir: 'C:/Users/t/AppData/LearningText/backups',
+    settingsFile: 'C:/Users/t/AppData/LearningText/settings.json',
+    custom: false,
+  }));
+}
+
+// 数据目录迁移编排桩（M6 批次③）：默认成功返回 { relaunch: true }
+function makeChangeDataDirStub(): Mock<(targetDir: string) => ChangeDataDirResponse> {
+  return vi.fn((): ChangeDataDirResponse => ({ relaunch: true }));
+}
+
+/**
+ * 注册器：为既有用例补齐 storage 两供给默认桩（非 storage 用例零关注该域；
+ * storage 专属用例经 overrides 注入自建桩以取回断言引用）。其余 deps 原样透传。
+ */
+function registerHandlers(
+  deps: Omit<IpcHandlerDeps, 'getStorageInfo' | 'changeDataDir'> &
+    Partial<Pick<IpcHandlerDeps, 'getStorageInfo' | 'changeDataDir'>>,
+): void {
+  registerIpcHandlers({
+    getStorageInfo: makeGetStorageInfoStub(),
+    changeDataDir: makeChangeDataDirStub(),
+    ...deps,
+  });
+}
+
 describe('system:ping 入口校验', () => {
   beforeEach(() => {
     handlers.clear();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
@@ -186,7 +219,7 @@ describe('vfs 通道接线', () => {
   it('vfs:resolve 合法请求 → ok；非法载荷 → E_IPC_BAD_PAYLOAD', () => {
     const vfs = makeVfsStub();
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs,
       search: makeSearchStub(),
@@ -232,7 +265,7 @@ describe('vfs 通道接线', () => {
     const vfs = makeVfsStub();
     (vfs.createNode as ReturnType<typeof vi.fn>).mockReturnValue(node);
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs,
       search: makeSearchStub(),
@@ -269,7 +302,7 @@ describe('vfs 通道接线', () => {
       throw new Error('意外错误');
     });
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs,
       search: makeSearchStub(),
@@ -306,7 +339,7 @@ describe('vfs 通道接线', () => {
 
   it('非白名单 origin 对 vfs 通道同样拒绝', () => {
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
@@ -354,7 +387,7 @@ describe('vfs 通道接线', () => {
     (vfs.restoreNode as ReturnType<typeof vi.fn>).mockReturnValue(node);
     (vfs.purgeNode as ReturnType<typeof vi.fn>).mockReturnValue(affected);
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs,
       search: makeSearchStub(),
@@ -455,7 +488,7 @@ describe('search 通道接线', () => {
   it('search:query 合法请求透传服务结果；非法载荷 E_IPC_BAD_PAYLOAD', () => {
     const search = makeSearchStub();
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search,
@@ -493,7 +526,7 @@ describe('search 通道接线', () => {
       });
     });
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search,
@@ -536,7 +569,7 @@ describe('settings 通道接线', () => {
   it('settings:get 返回服务缓存；null 外载荷 E_IPC_BAD_PAYLOAD', () => {
     const settings = makeSettingsStub();
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
@@ -568,7 +601,7 @@ describe('settings 通道接线', () => {
   it('settings:set 合法全量写入；越界 debounceMs 拒且不广播', () => {
     const settings = makeSettingsStub();
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
@@ -602,7 +635,7 @@ describe('settings 通道接线', () => {
   it('settings:set 前后 appearance.theme 变化 → onAppearanceThemeChange 恰一次且携带新意图（M6 主题联动）', () => {
     const onAppearanceThemeChange = vi.fn();
     handlers.clear();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
@@ -631,7 +664,7 @@ describe('settings 通道接线', () => {
   it('settings:set 主题未变化 → 不触发 onAppearanceThemeChange（等值写零联动）', () => {
     const onAppearanceThemeChange = vi.fn();
     handlers.clear();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
@@ -663,7 +696,7 @@ describe('vfs:get 通道接线', () => {
   it('getNode 命中返回 NodeMeta；未找到透传 E_VFS_NOT_FOUND', () => {
     handlers.clear();
     const vfs = makeVfsStub();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs,
       search: makeSearchStub(),
@@ -719,7 +752,7 @@ describe('vfs:count 通道接线', () => {
     handlers.clear();
     const vfs = makeVfsStub();
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs,
       search: makeSearchStub(),
@@ -780,7 +813,7 @@ describe('vfs:list-trashed 通道接线', () => {
     ];
     vfs.listTrashed = vi.fn(() => trashed);
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs,
       search: makeSearchStub(),
@@ -822,7 +855,7 @@ describe('shell:force-close 接线', () => {
   it('payload 非 null 拒 E_IPC_BAD_PAYLOAD；合法调用转发 deps.requestClose', () => {
     handlers.clear();
     const requestClose = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
@@ -857,7 +890,7 @@ describe('shell:force-close 接线', () => {
 describe('广播版本号 rev', () => {
   it('广播载荷为 { rev, event } 包装且 rev 取自事务层（spec §4.2）', () => {
     const broadcast = vi.fn();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
@@ -901,7 +934,7 @@ describe('backup 通道接线', () => {
       ...overrides,
     };
     handlers.clear();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
@@ -1023,7 +1056,7 @@ describe('io 通道接线', () => {
       ...overrides,
     };
     handlers.clear();
-    registerIpcHandlers({
+    registerHandlers({
       allowedOrigins: ['app://bundle'],
       vfs: makeVfsStub(),
       search: makeSearchStub(),
@@ -1255,5 +1288,106 @@ describe('io 通道接线', () => {
       ok: boolean;
     };
     expect(bad.ok).toBe(false);
+  });
+});
+
+// 数据目录域两通道（M6 批次③）：get-info 纯透传（null 载荷照 settingsGet 先例，不广播）；
+// change-data-dir 目标目录只认登记簿内串（与 io:export / shell:open-path 同一信任边界）
+describe('storage 通道接线', () => {
+  interface StorageDeps {
+    getStorageInfo: () => DataDirInfo;
+    changeDataDir: (targetDir: string) => ChangeDataDirResponse;
+    dialogProducedDirs: ReadonlySet<string>;
+  }
+
+  function registerWith(overrides: Partial<StorageDeps> = {}): StorageDeps {
+    const deps: StorageDeps = {
+      getStorageInfo: makeGetStorageInfoStub(),
+      changeDataDir: makeChangeDataDirStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      ...overrides,
+    };
+    handlers.clear();
+    registerHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      settings: makeSettingsStub(),
+      broadcast: vi.fn(),
+      requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: deps.dialogProducedDirs,
+      openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
+      getStorageInfo: deps.getStorageInfo,
+      changeDataDir: deps.changeDataDir,
+    });
+    return deps;
+  }
+
+  it('storage:get-info 合法 null 载荷透传 deps.getStorageInfo 布局；非 null 载荷 E_IPC_BAD_PAYLOAD；不广播', () => {
+    const info = makeGetStorageInfoStub();
+    const expected = info();
+    info.mockClear();
+    registerWith({ getStorageInfo: info });
+    const ok = handlers.get(IPC.storageGetInfo)?.(fakeEvent('app://bundle'), null) as {
+      ok: boolean;
+      value: DataDirInfo;
+    };
+    expect(ok).toEqual({ ok: true, value: expected });
+    expect(info).toHaveBeenCalledTimes(1);
+    const bad = handlers.get(IPC.storageGetInfo)?.(fakeEvent('app://bundle'), { x: 1 }) as {
+      ok: boolean;
+      error: { code: string };
+    };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    const forbidden = handlers.get(IPC.storageGetInfo)?.(fakeEvent('http://evil'), null) as {
+      ok: boolean;
+    };
+    expect(forbidden.ok).toBe(false);
+  });
+
+  it('storage:change-data-dir 登记簿内目标目录调 deps.changeDataDir 携 targetDir 且返回 relaunch:true；不广播', () => {
+    const change = makeChangeDataDirStub();
+    const deps = registerWith({ changeDataDir: change });
+    const ok = handlers.get(IPC.storageChangeDataDir)?.(fakeEvent('app://bundle'), {
+      targetDir: 'D:/picked',
+    }) as { ok: boolean; value: ChangeDataDirResponse };
+    expect(ok).toEqual({ ok: true, value: { relaunch: true } });
+    expect(deps.changeDataDir).toHaveBeenCalledWith('D:/picked');
+  });
+
+  it('storage:change-data-dir 登记簿外伪造目标拒绝（E_IPC_BAD_PAYLOAD）且迁移编排不被调用', () => {
+    const change = makeChangeDataDirStub();
+    const deps = registerWith({ changeDataDir: change });
+    const forged = handlers.get(IPC.storageChangeDataDir)?.(fakeEvent('app://bundle'), {
+      targetDir: 'C:/Windows/System32',
+    }) as { ok: boolean; error: { code: string; message: string } };
+    expect(forged.ok).toBe(false);
+    expect(forged.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    expect(forged.error.message).toBe('目标目录必须来自目录选择对话框');
+    expect(deps.changeDataDir).not.toHaveBeenCalled();
+  });
+
+  it('storage:change-data-dir 非法载荷与非白名单 origin 拒绝；迁移编排不被调用', () => {
+    const change = makeChangeDataDirStub();
+    const deps = registerWith({ changeDataDir: change });
+    const bad = handlers.get(IPC.storageChangeDataDir)?.(fakeEvent('app://bundle'), {
+      nope: 1,
+    }) as { ok: boolean; error: { code: string } };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    const forbidden = handlers.get(IPC.storageChangeDataDir)?.(fakeEvent('http://evil'), {
+      targetDir: 'D:/picked',
+    }) as { ok: boolean; error: { code: string } };
+    expect(forbidden.ok).toBe(false);
+    expect(forbidden.error.code).toBe(E_IPC_FORBIDDEN_ORIGIN);
+    expect(deps.changeDataDir).not.toHaveBeenCalled();
   });
 });

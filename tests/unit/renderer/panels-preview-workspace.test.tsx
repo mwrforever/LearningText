@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-// PreviewPanel：src 初值/沙箱属性/订阅 cleanup；Workspace：M6 壳层（标题栏/活动栏/侧栏/
-// 画布/状态栏）启动装配（resolve+listChildren+settingsGet+countNodes）、广播→树刷新、
-// stale 重取与侧栏折叠布局记忆的接线（决策逻辑本体已在纯函数单测，此处验证 wiring 成对）
+// Workspace：M6 壳层（标题栏/活动栏/侧栏/画布/状态栏）启动装配（resolve+listChildren+
+// settingsGet+countNodes）、广播→树刷新、stale 重取与侧栏折叠布局记忆的接线（决策逻辑本体
+// 已在纯函数单测，此处验证 wiring 成对）；M6 批次②起画布三分流（HTML 画布/媒体/CM 文本）
+// 开签语义与 HTML 画布保存管线接线也在此覆盖（画布组件本体的冒烟归 html/media-canvas.test.tsx）
 import { act } from 'react';
 import { EditorView } from '@codemirror/view';
 import { createRoot } from 'react-dom/client';
@@ -9,7 +10,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_LAYOUT, DEFAULT_SETTINGS } from '../../../src/shared/settings-contract';
 import type { ShellCommand } from '../../../src/shared/shell-contract';
 import type { NodeMeta, VfsChangedBroadcast } from '../../../src/shared/vfs-contract';
-import { PreviewPanel } from '../../../src/renderer/src/features/preview/PreviewPanel';
 import { previewableMime } from '../../../src/renderer/src/features/preview/previewableMime';
 import { ToastHost } from '../../../src/renderer/src/features/ui/Toast';
 import { MAX_TABS } from '../../../src/renderer/src/features/workspace/tabModel';
@@ -110,132 +110,6 @@ function stubApiCaptureVfs(overrides: Partial<Record<string, unknown>> = {}): {
   return { api, vfsHandlers };
 }
 
-describe('PreviewPanel', () => {
-  it('沙箱属性逐字 + src=vfs URL + 无选中占位文案', () => {
-    stubApi();
-    const tree = createRoot(container);
-    act(() => {
-      tree.render(<PreviewPanel node={meta(2, '笔记/index.html')} />);
-    });
-    const iframe = container.querySelector('iframe');
-    expect(iframe?.getAttribute('sandbox')).toBe('allow-scripts');
-    expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer');
-    expect(iframe?.getAttribute('src')).toContain('vfs://');
-    act(() => {
-      tree.render(<PreviewPanel node={null} />);
-    });
-    expect(container.querySelector('iframe')).toBeNull();
-    expect(container.textContent).toContain('未选中文件');
-    tree.unmount();
-  });
-
-  it('卸载必须解绑 onVfsChanged（资源成对释放，宪法自查项）', () => {
-    const api = stubApi() as unknown as { onVfsChanged: ReturnType<typeof vi.fn> };
-    const tree = createRoot(container);
-    act(() => {
-      tree.render(<PreviewPanel node={meta(2, 'a.html')} />);
-    });
-    expect(api.onVfsChanged).toHaveBeenCalledTimes(1);
-    act(() => {
-      tree.unmount();
-    });
-    const unsub = unsubscribes[0];
-    expect(unsub).toBeDefined();
-    // 主控裁决强化：断言 React cleanup 确实调用了退订函数，而非仅要求其存在
-    expect(unsub).toHaveBeenCalled();
-  });
-
-  it('订阅挂载期一次：node 变化不退订重订（终审 M-4 收口，消丢广播微窗口）', async () => {
-    const api = stubApi() as unknown as { onVfsChanged: ReturnType<typeof vi.fn> };
-    const tree = createRoot(container);
-    await act(async () => {
-      tree.render(<PreviewPanel node={meta(2, 'a.html')} />);
-    });
-    await act(async () => {
-      tree.render(<PreviewPanel node={meta(3, 'b.html')} />);
-    });
-    await act(async () => {
-      tree.render(<PreviewPanel node={null} />);
-    });
-    expect(api.onVfsChanged).toHaveBeenCalledTimes(1); // 依赖恒空，不随 node 重建
-    act(() => {
-      tree.unmount();
-    });
-  });
-
-  it('written 命中当前节点且 getNode 反查失败 → 「文档不可用」占位；切节点复位', async () => {
-    const { vfsHandlers } = stubApiCaptureVfs({
-      getNode: vi.fn(() =>
-        Promise.resolve({ ok: false, error: { code: 'E_VFS_NOT_FOUND', message: '节点不存在' } }),
-      ),
-    });
-    const tree = createRoot(container);
-    await act(async () => {
-      tree.render(<PreviewPanel node={meta(2, 'a.html')} />);
-    });
-    expect(container.querySelector('iframe')).not.toBeNull();
-    await act(async () => {
-      vfsHandlers[0]?.({ rev: 1, event: { type: 'written', node: meta(2, 'a.html') } });
-    });
-    // 反查失败：iframe 摘除、占位态呈现（不重载旧路径，spec §6.1）
-    expect(container.querySelector('iframe')).toBeNull();
-    expect(container.textContent).toContain('文档不可用');
-    // 切节点即复位：占位态属上一节点的不可用事实，不沾染后续节点
-    await act(async () => {
-      tree.render(<PreviewPanel node={meta(3, 'b.html')} />);
-    });
-    expect(container.textContent).not.toContain('文档不可用');
-    expect(container.querySelector('iframe')).not.toBeNull();
-    tree.unmount();
-  });
-
-  it('written 命中当前节点且反查成功 → 不落占位，刷新链继续（iframe 保持）', async () => {
-    const { vfsHandlers } = stubApiCaptureVfs({
-      getNode: vi.fn(() => Promise.resolve({ ok: true, value: meta(2, 'a.html') })),
-    });
-    const tree = createRoot(container);
-    await act(async () => {
-      tree.render(<PreviewPanel node={meta(2, 'a.html')} />);
-    });
-    await act(async () => {
-      vfsHandlers[0]?.({ rev: 1, event: { type: 'written', node: meta(2, 'a.html') } });
-    });
-    expect(container.querySelector('iframe')).not.toBeNull();
-    expect(container.textContent).not.toContain('文档不可用');
-    tree.unmount();
-  });
-
-  it('written 为 text/css 且非当前节点 → fetch 拉新文本 postMessage 触发热替换（载荷含 path/text）', async () => {
-    const { vfsHandlers } = stubApiCaptureVfs();
-    const fetchStub = vi.fn(() =>
-      Promise.resolve({ text: () => Promise.resolve('body{color:red}') }),
-    );
-    vi.stubGlobal('fetch', fetchStub);
-    const tree = createRoot(container);
-    await act(async () => {
-      tree.render(<PreviewPanel node={meta(2, 'a.html')} />);
-    });
-    const iframe = container.querySelector('iframe');
-    expect(iframe).not.toBeNull();
-    expect(iframe?.contentWindow).not.toBeNull();
-    // jsdom iframe 内容窗 postMessage 探针（测试期桩适配，先例同 stubApi 的 as 注释）
-    const postMessage = vi.spyOn(iframe?.contentWindow as Window, 'postMessage');
-    await act(async () => {
-      vfsHandlers[0]?.({
-        rev: 1,
-        event: { type: 'written', node: { ...meta(5, 'style.css'), mimeType: 'text/css' } },
-      });
-    });
-    expect(fetchStub).toHaveBeenCalledWith('vfs://local/style.css');
-    expect(postMessage).toHaveBeenCalledWith(
-      { type: 'lt:css-swap', path: '/style.css', text: 'body{color:red}' },
-      '*',
-    );
-    vi.unstubAllGlobals();
-    tree.unmount();
-  });
-});
-
 describe('Workspace 启动装配', () => {
   it('settingsGet + listChildren 根拉取后渲染树与欢迎页空态；countNodes 装配文档计数', async () => {
     const api = stubApi() as unknown as {
@@ -264,8 +138,8 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     vi.useRealTimers(); // toast 消退用例切假时钟，逐用例还原防泄漏到相邻用例
   });
 
-  // M5 批次⑦ 起 image/png 归媒体预览分流（Task 14），拒开夹具改用不可预览的 octet-stream；
-  // 拦截语义本体（非文本且非媒体 → toast 拒开）不变
+  // M6 批次②起拒开面收窄为「非文本且非媒体且非 HTML」；octet-stream 夹具沿用，
+  // 拦截语义本体（前置拦截 + toast 拒开）不变，仅文案随三分流改述
   it('二进制文件前置拦截：toast 呈现拒开原因且 3s 自动消退，不读库不开标签', async () => {
     vi.useFakeTimers();
     const api = stubApi({
@@ -293,11 +167,11 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     });
     expect(api.readFile).not.toHaveBeenCalled(); // 前置拦截在读库之前
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    expect(container.textContent).toContain('二进制文件暂不支持编辑');
+    expect(container.textContent).toContain('该文件类型暂不支持打开（仅 HTML/媒体/文本）');
     await act(async () => {
       vi.advanceTimersByTime(3000);
     });
-    expect(container.textContent).not.toContain('二进制文件暂不支持编辑'); // 3s 消退（spec §5.5）
+    expect(container.textContent).not.toContain('该文件类型暂不支持打开'); // 3s 消退（spec §5.5）
     act(() => {
       tree.unmount();
     });
@@ -310,7 +184,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       listChildren: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          value: [{ ...meta(3, 'huge.html'), size: 50 * 1024 * 1024 + 1 }],
+          value: [{ ...meta(3, 'huge.txt'), mimeType: 'text/plain', size: 50 * 1024 * 1024 + 1 }],
         }),
       ),
     }) as unknown as { readFile: ReturnType<typeof vi.fn> };
@@ -328,7 +202,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       });
       await act(async () => {
         Array.from(container.querySelectorAll('button'))
-          .find((b) => b.textContent === 'huge.html')
+          .find((b) => b.textContent === 'huge.txt')
           ?.click();
       });
       // 硬上限分支先于确认分支与读库：>50MB 无征询意义，直接拒开（spec §2.4 D7 前置判定语义）
@@ -349,13 +223,16 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       listChildren: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          value: [{ ...meta(3, 'big.html'), size: 5 * 1024 * 1024 + 1 }],
+          value: [{ ...meta(3, 'big.txt'), mimeType: 'text/plain', size: 5 * 1024 * 1024 + 1 }],
         }),
       ),
       readFile: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          value: { content: new TextEncoder().encode('<p>大文</p>'), meta: meta(3, 'big.html') },
+          value: {
+            content: new TextEncoder().encode('<p>大文</p>'),
+            meta: { ...meta(3, 'big.txt'), mimeType: 'text/plain' },
+          },
         }),
       ),
     }) as unknown as { readFile: ReturnType<typeof vi.fn> };
@@ -367,7 +244,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       });
       await act(async () => {
         Array.from(container.querySelectorAll('button'))
-          .find((b) => b.textContent === 'big.html')
+          .find((b) => b.textContent === 'big.txt')
           ?.click();
       });
       expect(confirmSpy).toHaveBeenCalledWith('大文件打开可能卡顿，是否继续？');
@@ -387,7 +264,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       listChildren: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          value: [{ ...meta(3, 'big.html'), size: 50 * 1024 * 1024 }],
+          value: [{ ...meta(3, 'big.txt'), mimeType: 'text/plain', size: 50 * 1024 * 1024 }],
         }),
       ),
     }) as unknown as { readFile: ReturnType<typeof vi.fn> };
@@ -399,7 +276,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       });
       await act(async () => {
         Array.from(container.querySelectorAll('button'))
-          .find((b) => b.textContent === 'big.html')
+          .find((b) => b.textContent === 'big.txt')
           ?.click();
       });
       expect(confirmSpy).toHaveBeenCalledWith('大文件打开可能卡顿，是否继续？');
@@ -418,13 +295,16 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       listChildren: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          value: [{ ...meta(3, 'edge.html'), size: 5 * 1024 * 1024 }],
+          value: [{ ...meta(3, 'edge.txt'), mimeType: 'text/plain', size: 5 * 1024 * 1024 }],
         }),
       ),
       readFile: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          value: { content: new TextEncoder().encode('文'), meta: meta(3, 'edge.html') },
+          value: {
+            content: new TextEncoder().encode('文'),
+            meta: { ...meta(3, 'edge.txt'), mimeType: 'text/plain' },
+          },
         }),
       ),
     }) as unknown as { readFile: ReturnType<typeof vi.fn> };
@@ -436,7 +316,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       });
       await act(async () => {
         Array.from(container.querySelectorAll('button'))
-          .find((b) => b.textContent === 'edge.html')
+          .find((b) => b.textContent === 'edge.txt')
           ?.click();
       });
       // 软阈值含边界（<= 判定）：恰 5MB 不征询直接开
@@ -451,15 +331,9 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     }
   });
 
-  it('点选文本文件开标签：TabBar 激活态、树选中联动、CM 会话就绪与预览命中', async () => {
+  it('点选 HTML 文件开画布标签：不读库直载 vfs://（所见即所得），TabBar 激活态与树选中联动', async () => {
     const api = stubApi({
       listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
-      readFile: vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          value: { content: new TextEncoder().encode('<p>正文</p>'), meta: meta(3, 'a.html') },
-        }),
-      ),
     }) as unknown as { readFile: ReturnType<typeof vi.fn> };
     const tree = createRoot(container);
     await act(async () => {
@@ -470,7 +344,8 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
         .find((b) => b.textContent === 'a.html')
         ?.click();
     });
-    expect(api.readFile).toHaveBeenCalledWith({ nodeId: 3 });
+    // HTML 开签分流（M6 批次②）：画布直载，不建 CM 会话亦不读库
+    expect(api.readFile).not.toHaveBeenCalled();
     // TabBar 出现且 a.html 激活（aria-current）
     const activeTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
       (b) => b.getAttribute('aria-current') === 'true',
@@ -481,9 +356,55 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       container.querySelectorAll('nav[aria-label="资源树"] button'),
     ).find((b) => b.textContent === 'a.html');
     expect(treeFileBtn?.getAttribute('aria-current')).toBe('true');
-    // CM 会话就绪且文档为 BLOB 解码文本；预览命中激活标签 meta
-    expect(container.querySelector('.cm-content')?.textContent).toBe('<p>正文</p>');
-    expect(container.querySelector('iframe')).not.toBeNull();
+    // 所见即所得画布呈现：iframe 经 vfs:// 直载（沙箱属性本体归 html-canvas.test.tsx）
+    expect(container.querySelector('iframe.lt-canvas-frame')).not.toBeNull();
+    expect(container.querySelector('.cm-content')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('点选文本文件开标签：TabBar 激活态、树选中联动、CM 会话就绪（HTML 以外文本走 CM）', async () => {
+    const api = stubApi({
+      listChildren: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: [{ ...meta(3, 'a.txt'), mimeType: 'text/plain' }],
+        }),
+      ),
+      readFile: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: {
+            content: new TextEncoder().encode('正文'),
+            meta: { ...meta(3, 'a.txt'), mimeType: 'text/plain' },
+          },
+        }),
+      ),
+    }) as unknown as { readFile: ReturnType<typeof vi.fn> };
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === 'a.txt')
+        ?.click();
+    });
+    expect(api.readFile).toHaveBeenCalledWith({ nodeId: 3 });
+    // TabBar 出现且 a.txt 激活（aria-current）
+    const activeTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (b) => b.getAttribute('aria-current') === 'true',
+    );
+    expect(activeTab?.textContent).toBe('a.txt');
+    // 树选中由 activeTab 派生（selected 概念已被取代）
+    const treeFileBtn = Array.from(
+      container.querySelectorAll('nav[aria-label="资源树"] button'),
+    ).find((b) => b.textContent === 'a.txt');
+    expect(treeFileBtn?.getAttribute('aria-current')).toBe('true');
+    // CM 会话就绪且文档为 BLOB 解码文本；无画布元素（文本标签不呈现 iframe/img）
+    expect(container.querySelector('.cm-content')?.textContent).toBe('正文');
+    expect(container.querySelector('iframe')).toBeNull();
     act(() => {
       tree.unmount();
     });
@@ -494,7 +415,10 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       listChildren: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          value: [meta(3, 'a.html'), { ...meta(4, 'b.css'), mimeType: 'text/css' }],
+          value: [
+            { ...meta(3, 'a.txt'), mimeType: 'text/plain' },
+            { ...meta(4, 'b.css'), mimeType: 'text/css' },
+          ],
         }),
       ),
       readFile: vi.fn((request: { nodeId: number }) =>
@@ -504,7 +428,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
             content: new TextEncoder().encode(request.nodeId === 3 ? '甲' : '乙'),
             meta:
               request.nodeId === 3
-                ? meta(3, 'a.html')
+                ? { ...meta(3, 'a.txt'), mimeType: 'text/plain' }
                 : { ...meta(4, 'b.css'), mimeType: 'text/css' },
           },
         }),
@@ -516,7 +440,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     });
     await act(async () => {
       Array.from(container.querySelectorAll('button'))
-        .find((b) => b.textContent === 'a.html')
+        .find((b) => b.textContent === 'a.txt')
         ?.click();
     });
     await act(async () => {
@@ -527,7 +451,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     expect(api.readFile).toHaveBeenCalledTimes(2);
     const tabs = () => Array.from(container.querySelectorAll('[role="tab"]'));
     expect(tabs()).toHaveLength(2);
-    // 关闭激活的 b.css：右邻无 → 左邻 a.html 补位，编辑区随 activeTab 换入 a 的会话文档
+    // 关闭激活的 b.css：右邻无 → 左邻 a.txt 补位，编辑区随 activeTab 换入 a 的会话文档
     const closeB = container.querySelector<HTMLButtonElement>(
       'button[aria-label="关闭标签 b.css"]',
     );
@@ -536,11 +460,11 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     });
     expect(tabs()).toHaveLength(1);
     expect(tabs()[0]?.getAttribute('aria-current')).toBe('true');
-    expect(tabs()[0]?.textContent).toBe('a.html');
+    expect(tabs()[0]?.textContent).toBe('a.txt');
     expect(container.querySelector('.cm-content')?.textContent).toBe('甲');
     // 全关：编辑画布回欢迎页空态，TabBar 摘除
     const closeA = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="关闭标签 a.html"]',
+      'button[aria-label="关闭标签 a.txt"]',
     );
     await act(async () => {
       closeA?.click();
@@ -551,7 +475,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     // 会话已随标签关闭（而非仅视图摘除）：重开同文件必须重新读库建会话
     await act(async () => {
       Array.from(container.querySelectorAll('button'))
-        .find((b) => b.textContent === 'a.html')
+        .find((b) => b.textContent === 'a.txt')
         ?.click();
     });
     expect(api.readFile).toHaveBeenCalledTimes(3);
@@ -560,16 +484,10 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     });
   });
 
-  it('删除已开标签的节点：trash 成功后标签与会话同收、编辑区回空态', async () => {
+  it('删除已开画布标签的节点：trash 后标签同收（画布标签无 CM 会话亦可关）、编辑区回空态', async () => {
     const api = stubApi({
       listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
-      readFile: vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          value: { content: new TextEncoder().encode('甲'), meta: meta(3, 'a.html') },
-        }),
-      ),
-    }) as unknown as { trashNode: ReturnType<typeof vi.fn>; readFile: ReturnType<typeof vi.fn> };
+    }) as unknown as { trashNode: ReturnType<typeof vi.fn> };
     const tree = createRoot(container);
     await act(async () => {
       tree.render(<Workspace />);
@@ -585,15 +503,17 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="删除"]')?.click();
     });
     expect(api.trashNode).toHaveBeenCalledWith({ nodeId: 3 });
+    // 画布标签关闭判定（M6 批次②）：tabs 集含该 id 即收——不依赖 CM 会话存在
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
     expect(container.querySelector('.lt-welcome')).not.toBeNull();
-    // 会话同收证据：重开必须重新读库
+    expect(container.querySelector('iframe')).toBeNull();
+    // 重开：画布标签重新呈现（库内容即事实源，无读库语义）
     await act(async () => {
       Array.from(container.querySelectorAll('button'))
         .find((b) => b.textContent === 'a.html')
         ?.click();
     });
-    expect(api.readFile).toHaveBeenCalledTimes(2);
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
     act(() => {
       tree.unmount();
     });
@@ -653,11 +573,19 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
 
   it('save 命令 → flushActive 立即写激活标签（不等尾沿去抖）', async () => {
     const { api, handlers } = captureShell({
-      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
+      listChildren: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: [{ ...meta(3, 'a.txt'), mimeType: 'text/plain' }],
+        }),
+      ),
       readFile: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          value: { content: new TextEncoder().encode(''), meta: meta(3, 'a.html') },
+          value: {
+            content: new TextEncoder().encode(''),
+            meta: { ...meta(3, 'a.txt'), mimeType: 'text/plain' },
+          },
         }),
       ),
     });
@@ -665,7 +593,7 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
     await act(async () => {
       tree.render(<Workspace />);
     });
-    await clickButton('a.html');
+    await clickButton('a.txt');
     const view = mountedView(container);
     expect(view).not.toBeNull();
     await act(async () => {
@@ -680,6 +608,80 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
       nodeId: 3,
       content: new TextEncoder().encode('甲'),
     });
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  // HTML 画布保存管线接线（M6 批次②，spec §3.3）：iframe lt:doc-edit 上报 → 画布缓存
+  // （getDoc 事实源）→ SaveController；「关闭标签清画布缓存」以写桥观察——关签 flush 消费
+  // 缓存落库一次，此后管线态/缓存随签清理，尾沿去抖不再二次写
+  it('HTML 画布编辑进保存管线：iframe lt:doc-edit 上报后 save 命令落库画布缓存内容', async () => {
+    const { api, handlers } = captureShell({
+      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await clickButton('a.html');
+    // 以激活画布 iframe 为消息来源上报编辑（来源精确比对是路由前提，画布本体归 html-canvas 用例）
+    const iframe = container.querySelector<HTMLIFrameElement>('iframe.lt-canvas-frame');
+    expect(iframe).not.toBeNull();
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          source: iframe?.contentWindow ?? null,
+          data: { type: 'lt:doc-edit', html: '<p>改</p>' },
+        }),
+      );
+    });
+    // 编辑即挂起（去抖未到期不写库），save 命令触发立即落库且内容取自画布缓存
+    expect(api.writeFile).not.toHaveBeenCalled();
+    await act(async () => {
+      handlers[0]?.({ type: 'save' });
+    });
+    expect(api.writeFile).toHaveBeenCalledWith({
+      nodeId: 3,
+      content: new TextEncoder().encode('<p>改</p>'),
+    });
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('关闭画布标签：挂起编辑随关签 flush 落库一次（消费画布缓存），尾沿去抖不再二次写', async () => {
+    const { api } = captureShell({
+      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await clickButton('a.html');
+    const iframe = container.querySelector<HTMLIFrameElement>('iframe.lt-canvas-frame');
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          source: iframe?.contentWindow ?? null,
+          data: { type: 'lt:doc-edit', html: '<p>改</p>' },
+        }),
+      );
+    });
+    // 关标签（spec §2.2-5 flush 后关）：画布缓存内容即刻落库
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="关闭标签 a.html"]')?.click();
+    });
+    expect(api.writeFile).toHaveBeenCalledTimes(1);
+    expect(api.writeFile).toHaveBeenCalledWith({
+      nodeId: 3,
+      content: new TextEncoder().encode('<p>改</p>'),
+    });
+    // 缓存与管线态已随签清理：越过尾沿去抖窗口（默认 300ms）无第二次写
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(api.writeFile).toHaveBeenCalledTimes(1);
     act(() => {
       tree.unmount();
     });
@@ -710,11 +712,19 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     try {
       const { api, handlers } = captureShell({
-        listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(3, 'a.html')] })),
+        listChildren: vi.fn(() =>
+          Promise.resolve({
+            ok: true,
+            value: [{ ...meta(3, 'a.txt'), mimeType: 'text/plain' }],
+          }),
+        ),
         readFile: vi.fn(() =>
           Promise.resolve({
             ok: true,
-            value: { content: new TextEncoder().encode(''), meta: meta(3, 'a.html') },
+            value: {
+              content: new TextEncoder().encode(''),
+              meta: { ...meta(3, 'a.txt'), mimeType: 'text/plain' },
+            },
           }),
         ),
       });
@@ -722,7 +732,7 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
       await act(async () => {
         tree.render(<Workspace />);
       });
-      await clickButton('a.html');
+      await clickButton('a.txt');
       await act(async () => {
         mountedView(container)?.dispatch({ changes: { from: 0, insert: '甲' } });
       });
@@ -768,9 +778,14 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
       name: '新建文件.html',
       nodeType: 'file',
     });
-    // 创建即开标签回路（onCreate 同款语义）：读库建会话 + 标签呈现
-    expect(api.readFile).toHaveBeenCalledWith({ nodeId: 3 });
+    // 创建即开标签回路（onCreate 同款语义，M6 批次②）：HTML 新建走画布分流——
+    // 不读库（iframe 直载）+ 标签呈现
+    expect(api.readFile).not.toHaveBeenCalled();
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    const activeTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (b) => b.getAttribute('aria-current') === 'true',
+    );
+    expect(activeTab?.textContent).toBe('新文件');
     act(() => {
       tree.unmount();
     });
@@ -946,7 +961,7 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
     return { ...meta(3, 'a.html'), parentId: 2, virtualPath: '/笔记/a.html' };
   }
 
-  /** 装配 Workspace 并开出 a.html 标签（选中态 = activeId，rename/move 源）；返回根供卸载 */
+  /** 装配 Workspace 并开出 a.html 画布标签（选中态 = activeId，rename/move 源）；返回根供卸载 */
   async function setupWithFileTab(overrides: Partial<Record<string, unknown>> = {}): Promise<{
     api: Record<string, ReturnType<typeof vi.fn>>;
     vfsHandlers: Array<(b: VfsChangedBroadcast) => void>;
@@ -957,12 +972,6 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
         request.parentId === 1
           ? Promise.resolve({ ok: true, value: [meta(2, '笔记', 'dir')] })
           : Promise.resolve({ ok: true, value: [fileInDir()] }),
-      ),
-      readFile: vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          value: { content: new TextEncoder().encode('<p>正文</p>'), meta: fileInDir() },
-        }),
       ),
       ...overrides,
     });
@@ -1177,8 +1186,8 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
       ),
     });
     await act(async () => {
-      // 广播主进程侧 fan-out 语义：PreviewPanel（恒挂载、先注册）与 Workspace（后注册）
-      // 各持一份订阅，逐份下发（Preview 侧对 renamed 无感知，仅 Workspace 消费）
+      // 广播主进程侧 fan-out 语义：HtmlCanvas（画布挂载期订阅）与 Workspace（挂载期订阅）
+      // 各持一份订阅，逐份下发（HtmlCanvas 仅消费 written css 热替换，renamed 归 Workspace）
       vfsHandlers.forEach((handler) => {
         handler({ rev: 1, event: { type: 'renamed', nodeId: 3, affectedCount: 1 } });
       });
@@ -1519,16 +1528,17 @@ describe('Workspace 导入链路（M5 Task 12）', () => {
   });
 });
 
-// —— M5 批次⑦ Task 14（FR-EDIT-04，spec §8/D20）：图片/音频只读预览 ——
-// previewableMime 纯函数全分支 + openFile 媒体分流（不开标签不读库、双源状态机）+
-// 树弱选中 aria 语义 + PreviewPanel 媒体渲染分支
+// —— M6 批次②（FR-EDIT-04 修订版，spec §2.4/D4/D6；D20 退役）：媒体与 HTML 一律开标签 ——
+// previewableMime 纯函数全分支 + openFile 三分流（媒体/HTML 开签不读库、二进制拒开）+
+// 画布随激活标签类型换装（MediaCanvas 原生组件 ↔ HtmlCanvas iframe）；组件本体冒烟归
+// html-canvas.test.tsx / media-canvas.test.tsx
 
 /** 媒体文件 meta：默认顶层 pic.png（id=3），mime/名称可覆盖 */
 function mediaMeta(mimeType: string, name = 'pic.png'): NodeMeta {
   return { ...meta(3, name), mimeType };
 }
 
-describe('previewableMime（M5 批次⑦ 全分支）', () => {
+describe('previewableMime（全分支）', () => {
   it('图片族 mime → image：png/jpg/jpeg/gif/webp/svg 全覆盖', () => {
     expect(previewableMime('image/png')).toBe('image');
     expect(previewableMime('image/jpeg')).toBe('image');
@@ -1552,7 +1562,7 @@ describe('previewableMime（M5 批次⑦ 全分支）', () => {
   });
 });
 
-describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
+describe('Workspace 媒体/HTML 开签分流（M6 批次②）', () => {
   /** 树点选指定名称的行钮（树/标签同名时取树栏内首个命中——顶层单层无重名） */
   async function clickTreeRow(text: string): Promise<void> {
     await act(async () => {
@@ -1562,7 +1572,14 @@ describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
     });
   }
 
-  it('image 节点树点选：不开标签不读库（保存管线零接触），树弱选中标记预览中行', async () => {
+  /** 当前激活标签文本（activeId 观察锚） */
+  function activeTabText(): string | undefined {
+    return Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (b) => b.getAttribute('aria-current') === 'true',
+    )?.textContent;
+  }
+
+  it('image 节点树点选：一律开媒体标签（不读库），画布以原生 <img> 直载 vfs:// 资源', async () => {
     const api = stubApi({
       listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [mediaMeta('image/png')] })),
     }) as unknown as { readFile: ReturnType<typeof vi.fn> };
@@ -1571,47 +1588,41 @@ describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
       tree.render(<Workspace />);
     });
     await clickTreeRow('pic.png');
-    // 不读库：img 经 vfs:// 协议直载，openFile 分流在读库之前返回
+    // 媒体开签分流（M6 批次②）：img 经 vfs:// 协议直载，读库不发生（保存管线零接触）
     expect(api.readFile).not.toHaveBeenCalled();
-    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    // M6 单画布模型：无并存 doc 标签时媒体呈现面退场（画布由欢迎页承载，批次②画布化回收），
-    // 双源状态机仍以树弱选中为观察锚——行带 data-preview-selected 与「（预览中）」可访问名
-    expect(container.querySelector('img.lt-preview-media')).toBeNull();
-    const picRow = Array.from(container.querySelectorAll('button')).find(
-      (b) => b.textContent === 'pic.png',
-    );
-    expect(picRow?.getAttribute('data-preview-selected')).toBe('true');
-    expect(picRow?.getAttribute('aria-label')).toBe('pic.png（预览中）');
-    expect(container.querySelector('.lt-welcome')).not.toBeNull();
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(activeTabText()).toBe('pic.png');
+    const img = container.querySelector('img.lt-media-content');
+    expect(img?.getAttribute('src')).toBe('vfs://local/pic.png');
+    expect(img?.getAttribute('alt')).toBe('pic.png');
     act(() => {
       tree.unmount();
     });
   });
 
-  it('audio 节点树点选：同款不开标签不读库、树弱选中标记（表单呈现随并存标签承载）', async () => {
-    const api = stubApi({
+  it('audio 节点树点选：开媒体标签，画布以 <audio controls> 直载', async () => {
+    stubApi({
       listChildren: vi.fn(() =>
         Promise.resolve({ ok: true, value: [mediaMeta('audio/mpeg', 'song.mp3')] }),
       ),
-    }) as unknown as { readFile: ReturnType<typeof vi.fn> };
+    });
     const tree = createRoot(container);
     await act(async () => {
       tree.render(<Workspace />);
     });
     await clickTreeRow('song.mp3');
-    expect(api.readFile).not.toHaveBeenCalled();
-    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    const audioRow = Array.from(container.querySelectorAll('button')).find(
-      (b) => b.textContent === 'song.mp3',
-    );
-    expect(audioRow?.getAttribute('data-preview-selected')).toBe('true');
-    expect(audioRow?.getAttribute('aria-label')).toBe('song.mp3（预览中）');
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(activeTabText()).toBe('song.mp3');
+    const audio = container.querySelector('audio.lt-media-content');
+    expect(audio?.hasAttribute('controls')).toBe(true);
+    expect(audio?.getAttribute('src')).toBe('vfs://local/song.mp3');
+    expect(container.querySelector('iframe')).toBeNull();
     act(() => {
       tree.unmount();
     });
   });
 
-  it('其余二进制维持拒开 toast：octet-stream 不读库不开标签、预览态不被牵动', async () => {
+  it('其余二进制维持拒开 toast：octet-stream 不读库不开标签、画布不落任何媒体/画布元素', async () => {
     const api = stubApi({
       listChildren: vi.fn(() =>
         Promise.resolve({
@@ -1632,16 +1643,17 @@ describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
     await clickTreeRow('data.bin');
     expect(api.readFile).not.toHaveBeenCalled();
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    expect(container.textContent).toContain('二进制文件暂不支持编辑');
-    // 画布不落任何媒体元素：拒开路径不触碰双源状态机（空态由欢迎页承载，M6 起）
-    expect(container.querySelector('img.lt-preview-media')).toBeNull();
-    expect(container.querySelector('audio.lt-preview-media')).toBeNull();
+    expect(container.textContent).toContain('该文件类型暂不支持打开（仅 HTML/媒体/文本）');
+    // 拒开路径不触碰任何画布面（空态由欢迎页承载）
+    expect(container.querySelector('img.lt-media-content')).toBeNull();
+    expect(container.querySelector('audio.lt-media-content')).toBeNull();
+    expect(container.querySelector('iframe')).toBeNull();
     act(() => {
       tree.unmount();
     });
   });
 
-  it('媒体点选与标签并存（D20 双源）：激活标签保留、切回标签预览回 iframe、弱选中随源进退', async () => {
+  it('HTML 与媒体标签并存切换：画布随激活标签类型换装（iframe ↔ img），tabs 集与 activeId 正确', async () => {
     stubApi({
       listChildren: vi.fn(() =>
         Promise.resolve({
@@ -1649,135 +1661,29 @@ describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
           value: [mediaMeta('image/png'), meta(4, 'a.html')],
         }),
       ),
-      readFile: vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          value: { content: new TextEncoder().encode('<p>正文</p>'), meta: meta(4, 'a.html') },
-        }),
-      ),
     });
     const tree = createRoot(container);
     await act(async () => {
       tree.render(<Workspace />);
     });
-    // 开 a.html 标签（iframe 预览）→ 点 pic.png（媒体预览）
-    const aRow = (): HTMLButtonElement | null =>
-      Array.from(
-        container.querySelectorAll<HTMLButtonElement>('nav[aria-label="资源树"] button'),
-      ).find((b) => b.textContent === 'a.html') ?? null;
-    const picRow = (): HTMLButtonElement | null =>
-      Array.from(
-        container.querySelectorAll<HTMLButtonElement>('nav[aria-label="资源树"] button'),
-      ).find((b) => b.textContent === 'pic.png') ?? null;
+    // 开 a.html（画布标签）→ 开 pic.png（媒体标签）：两标签并存，媒体标签激活
     await clickTreeRow('a.html');
-    expect(container.querySelector('iframe')).not.toBeNull();
     await clickTreeRow('pic.png');
-    // 预览切图片；激活标签保留在 TabBar 且强选中语义原样
-    expect(container.querySelector('img.lt-preview-media')).not.toBeNull();
-    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
-    expect(
-      Array.from(container.querySelectorAll('[role="tab"]')).find(
-        (b) => b.getAttribute('aria-current') === 'true',
-      )?.textContent,
-    ).toBe('a.html');
-    // 树弱选中 aria 语义并存：强选中行 aria-current=true 原样；媒体行 data-preview-selected
-    // 标记 + 可访问名带「（预览中）」说明（强选中恒无弱标记，同一行不双标）
-    expect(aRow()?.getAttribute('aria-current')).toBe('true');
-    expect(aRow()?.getAttribute('data-preview-selected')).toBeNull();
-    expect(picRow()?.getAttribute('data-preview-selected')).toBe('true');
-    expect(picRow()?.getAttribute('aria-label')).toBe('pic.png（预览中）');
-    // 切回标签（TabBar 点选）：预览回 iframe，弱选中随源退场（previewNode 保留不展示）
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(2);
+    expect(activeTabText()).toBe('pic.png');
+    expect(container.querySelector('img.lt-media-content')).not.toBeNull();
+    expect(container.querySelector('iframe')).toBeNull();
+    // 切回 a.html（TabBar 点选）：画布换装回 iframe，img 退场（D20 双源退役后的单一画布面）
     await act(async () => {
       Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
         .find((b) => b.textContent === 'a.html')
         ?.click();
     });
-    expect(container.querySelector('iframe')).not.toBeNull();
-    expect(container.querySelector('img.lt-preview-media')).toBeNull();
-    expect(picRow()?.getAttribute('data-preview-selected')).toBeNull();
+    expect(activeTabText()).toBe('a.html');
+    expect(container.querySelector('iframe.lt-canvas-frame')).not.toBeNull();
+    expect(container.querySelector('img.lt-media-content')).toBeNull();
     act(() => {
       tree.unmount();
     });
-  });
-
-  it('全关标签不连带收回媒体源（源=image 不被「关空标签」清掉）；文本重开即收回', async () => {
-    stubApi({
-      listChildren: vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          value: [mediaMeta('image/png'), meta(4, 'a.html')],
-        }),
-      ),
-      readFile: vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          value: { content: new TextEncoder().encode('<p>正文</p>'), meta: meta(4, 'a.html') },
-        }),
-      ),
-    });
-    const tree = createRoot(container);
-    await act(async () => {
-      tree.render(<Workspace />);
-    });
-    await clickTreeRow('a.html');
-    await clickTreeRow('pic.png');
-    expect(container.querySelector('img.lt-preview-media')).not.toBeNull();
-    // 关闭最后一个标签（activeId→null，无标签可激活）：媒体源保持——关闭标签不表达
-    // 「看标签」意图；M6 无并存标签时呈现面退场（画布回欢迎页），弱选中标记仍在
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[aria-label="关闭标签 a.html"]')?.click();
-    });
-    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-    expect(container.querySelector('.lt-welcome')).not.toBeNull();
-    const picRow = Array.from(container.querySelectorAll('button')).find(
-      (b) => b.textContent === 'pic.png',
-    );
-    expect(picRow?.getAttribute('data-preview-selected')).toBe('true');
-    // 重开文本文件：打开成功即收回预览源到标签（含 activeId 不变的重开路径，effect 不触发须显式）；
-    // 弱选中随源退场，预览回 iframe
-    await clickTreeRow('a.html');
-    expect(container.querySelector('iframe')).not.toBeNull();
-    expect(container.querySelector('img.lt-preview-media')).toBeNull();
-    expect(picRow?.getAttribute('data-preview-selected')).toBeNull();
-    act(() => {
-      tree.unmount();
-    });
-  });
-});
-
-describe('PreviewPanel 媒体分支（M5 批次⑦ Task 14）', () => {
-  it('image meta 渲染 <img>（无滚动同步条、无 iframe）；onError 落「文档不可用」占位', () => {
-    stubApi();
-    const tree = createRoot(container);
-    act(() => {
-      tree.render(<PreviewPanel node={mediaMeta('image/png')} />);
-    });
-    const img = container.querySelector('img.lt-preview-media');
-    expect(img?.getAttribute('src')).toBe('vfs://local/pic.png');
-    expect(img?.getAttribute('alt')).toBe('pic.png');
-    expect(container.querySelector('iframe')).toBeNull();
-    // 媒体态无滚动同步语义（无 iframe 可同步），开关条不呈现（Task 11 html 分支不受影响）
-    expect(container.querySelector('button[aria-label="滚动同步"]')).toBeNull();
-    // 加载失败态沿用既有占位语义：onError → 「文档不可用」占位（媒体元素接管 unavailable 通道）
-    act(() => {
-      img?.dispatchEvent(new Event('error'));
-    });
-    expect(container.querySelector('img.lt-preview-media')).toBeNull();
-    expect(container.textContent).toContain('文档不可用');
-    tree.unmount();
-  });
-
-  it('audio meta 渲染 <audio controls>（同款无开关条、无 iframe）', () => {
-    stubApi();
-    const tree = createRoot(container);
-    act(() => {
-      tree.render(<PreviewPanel node={mediaMeta('audio/mpeg', 'song.mp3')} />);
-    });
-    const audio = container.querySelector('audio.lt-preview-media');
-    expect(audio?.hasAttribute('controls')).toBe(true);
-    expect(audio?.getAttribute('src')).toBe('vfs://local/song.mp3');
-    expect(container.querySelector('iframe')).toBeNull();
-    expect(container.querySelector('button[aria-label="滚动同步"]')).toBeNull();
-    tree.unmount();
   });
 });

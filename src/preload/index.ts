@@ -48,6 +48,9 @@ const api: WindowApi = {
   // openPath 白名单边界（B.5-4 精神）：dir 仅接受主进程 dialog 产出的目录串，主进程
   // handler 按当次会话登记簿校验，伪造串不达 shell（包装为纯透传，校验在主进程侧）
   openPath: (request) => ipcRenderer.invoke(IPC.shellOpenPath, request),
+  // —— 数据目录域（M6 批次③）：get-info 无参沿 null 先例；change 为 invoke 长动作 ——
+  getDataDirInfo: () => ipcRenderer.invoke(IPC.storageGetInfo, null),
+  changeDataDir: (request) => ipcRenderer.invoke(IPC.storageChangeDataDir, request),
   /** 订阅 io 进度广播（导入/导出可辨识联合按 kind 区分）：同 onBackupDone 先例，退订成对 */
   onIoProgress: (callback) => {
     const listener = (_event: IpcRendererEvent, value: IoProgress): void => callback(value);

@@ -396,7 +396,7 @@ describe('Workspace search 态接线', () => {
     expect(container.querySelector('nav[aria-label="资源树"]')).not.toBeNull();
   });
 
-  it('search 态点选结果走 openFile 主链路（readFile 发起、开标签）', async () => {
+  it('search 态点选结果走 openFile 主链路（HTML 一律开标签：画布直载不读库）', async () => {
     const { api } = stubSearchApi();
     act(() => {
       tree.render(<Workspace />);
@@ -410,9 +410,14 @@ describe('Workspace search 态接线', () => {
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="打开 文件1.html"]')?.click();
     });
-    expect(api.readFile).toHaveBeenCalledWith({ nodeId: 1 });
-    // 标签 opened：TabBar 呈现（openFile 成功链路）
-    expect(container.textContent).toContain('文件1.html');
+    // HTML 命中经开签分流直达画布（M6 批次②）：不读库，iframe 经 vfs:// 直载
+    expect(api.readFile).not.toHaveBeenCalled();
+    // 标签 opened：TabBar 呈现且文件1.html 激活
+    const activeTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (b) => b.getAttribute('aria-current') === 'true',
+    );
+    expect(activeTab?.textContent).toBe('文件1.html');
+    expect(container.querySelector('iframe.lt-canvas-frame')).not.toBeNull();
   });
 
   // —— reveal 树侧定位链路（M5 Task 7 评审 fix，spec §2.2 两条路径）——
@@ -569,18 +574,20 @@ describe('Workspace search 态接线', () => {
     expect(api.listChildren).not.toHaveBeenCalledWith({ parentId: 10 });
   });
 
-  it('点击定位打开（spec §2.2）：树侧展开与 openFile 并行——readFile 发起且祖先段解析', async () => {
+  it('点击定位打开（spec §2.2）：树侧展开与 openFile 并行——开画布标签（不读库）且祖先段解析', async () => {
     const api = await renderSearchWithTodoHit();
-    (api.readFile as ReturnType<typeof vi.fn>).mockImplementation(() =>
-      Promise.resolve({ ok: true, value: { content: new Uint8Array(), meta: NESTED_TODO } }),
-    );
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="打开 todo.html"]')?.click();
     });
     await flushMicrotasks();
     // 树侧展开（点击路径的「树侧展开至该节点」）+ openFile 主链路并发推进
     expect(api.resolvePath).toHaveBeenCalledWith({ virtualPath: '/笔记' });
-    expect(api.readFile).toHaveBeenCalledWith({ nodeId: 11 });
-    expect(container.textContent).toContain('todo.html');
+    // HTML 命中开画布标签（M6 批次②）：不读库，iframe 直载且激活
+    expect(api.readFile).not.toHaveBeenCalled();
+    const activeTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (b) => b.getAttribute('aria-current') === 'true',
+    );
+    expect(activeTab?.textContent).toBe('todo.html');
+    expect(container.querySelector('iframe.lt-canvas-frame')).not.toBeNull();
   });
 });

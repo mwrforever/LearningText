@@ -45,6 +45,12 @@ import type {
 } from '../shared/io-contract';
 import { OpenPathRequestSchema } from '../shared/shell-contract';
 import type { OpenPathRequest } from '../shared/shell-contract';
+import { ChangeDataDirRequestSchema } from '../shared/storage-contract';
+import type {
+  ChangeDataDirRequest,
+  ChangeDataDirResponse,
+  DataDirInfo,
+} from '../shared/storage-contract';
 import {
   CreateNodeRequestSchema,
   ListChildrenRequestSchema,
@@ -121,6 +127,13 @@ export interface IpcHandlerDeps {
    * 变更后调用，主进程内聚更新自绘标题栏 overlay 配色（不新增 IPC 通道）。
    */
   readonly onAppearanceThemeChange: (intent: 'light' | 'dark' | 'system') => void;
+  /** 当前数据目录布局查询（M6 spec §5，app.ts 装配期闭包供给） */
+  readonly getStorageInfo: () => DataDirInfo;
+  /**
+   * 数据目录迁移编排（M6 spec §5.2，app.ts 供给）：校验/关库/复制/写指针/重启全链路；
+   * 成功即 relaunch（响应续体可能不落地，同 backup:restore 语义）。
+   */
+  readonly changeDataDir: (targetDir: string) => ChangeDataDirResponse;
 }
 
 /** origin 白名单判定（B.5-6）：senderFrame 可能为 null，null/空串/非白名单一律拒绝 */
@@ -420,6 +433,22 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       }
       await deps.openDirectoryInShell(q.dir);
       return null;
+    }),
+  );
+
+  // —— 数据目录域（M6 spec §5）：查看 / 更改迁移（登记簿信任边界同 openPath）——
+  ipcMain.handle(
+    IPC.storageGetInfo,
+    handleWith(deps, z.null(), () => ({ result: deps.getStorageInfo() })),
+  );
+  ipcMain.handle(
+    IPC.storageChangeDataDir,
+    handleWith(deps, ChangeDataDirRequestSchema, (q: ChangeDataDirRequest) => {
+      // 信任边界（B.5-4 精神）：迁移目标必须是本会话目录选择对话框产出的目录
+      if (!deps.dialogProducedDirs.has(q.targetDir)) {
+        throw new AppError(E_IPC_BAD_PAYLOAD, '目标目录必须来自目录选择对话框');
+      }
+      return { result: deps.changeDataDir(q.targetDir) satisfies ChangeDataDirResponse };
     }),
   );
 }

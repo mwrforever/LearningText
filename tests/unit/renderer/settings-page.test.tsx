@@ -14,6 +14,7 @@ import { DEFAULT_SETTINGS } from '../../../src/shared/settings-contract';
 import type { SettingsData } from '../../../src/shared/settings-contract';
 import type { ShellCommand } from '../../../src/shared/shell-contract';
 import type { BackupEntry } from '../../../src/shared/backup-contract';
+import type { DataDirInfo } from '../../../src/shared/storage-contract';
 import { SettingsPage } from '../../../src/renderer/src/features/settings/SettingsPage';
 import { ToastHost } from '../../../src/renderer/src/features/ui/Toast';
 import { Workspace } from '../../../src/renderer/src/features/workspace/Workspace';
@@ -30,7 +31,19 @@ vi.mock('../../../src/renderer/src/features/editor/EditorPanel', () => ({
 
 // —— Workspace 桥桩（quick-open 先例）：设置域可编程（get 失败/set 失败两异常面）——
 
-/** 文件节点 meta（withTab 桩专用：根下可开标签文件） */
+/** 数据目录布局桩（M6 批次③）：默认位置（custom=false），storage 分区与接线用例共用 */
+function stubStorageInfo(custom: boolean): DataDirInfo {
+  return {
+    root: 'C:/Users/t/AppData/Roaming/LearningText',
+    dbFile: 'C:/Users/t/AppData/Roaming/LearningText/learningtext.db',
+    backupsDir: 'C:/Users/t/AppData/Roaming/LearningText/backups',
+    settingsFile: 'C:/Users/t/AppData/Roaming/LearningText/settings.json',
+    custom,
+  };
+}
+
+/** 文件节点 meta（withTab 桩专用：根下可开标签文件；M6 批次②起 HTML 走画布标签，
+ *  EditorPanel 挂载需文本标签——夹具用 text/plain 保 CM 会话路径） */
 function stubFileMeta(
   id: number,
   name: string,
@@ -51,7 +64,7 @@ function stubFileMeta(
     nodeType: 'file',
     name,
     virtualPath: `/${name}`,
-    mimeType: 'text/html',
+    mimeType: 'text/plain',
     size: 4,
     createdAt: '2026-09-18T10:00:00.000+08:00',
     updatedAt: '2026-09-18T10:00:00.000+08:00',
@@ -104,7 +117,7 @@ function stubWorkspaceApi(
     return Promise.resolve({ ok: true as const, value: { relaunch: true } });
   });
   // withTab 桩（M6 起 EditorPanel 仅随激活 doc 标签挂载）：根下预置一个可开标签文件
-  const tabFile = stubFileMeta(3, 'a.html');
+  const tabFile = stubFileMeta(3, 'a.txt');
   const api = {
     listChildren: vi.fn(() =>
       Promise.resolve({
@@ -142,6 +155,13 @@ function stubWorkspaceApi(
     }),
     // 导入进度订阅（M5 批次⑥ Task 12）：Workspace 挂载即订阅，桩按契约形态注入
     onIoProgress: vi.fn(() => vi.fn()),
+    // 数据目录域（M6 批次③）：设置标签打开期间拉取布局；迁移链路按用例驱动
+    getDataDirInfo: vi.fn(() =>
+      Promise.resolve({ ok: true as const, value: stubStorageInfo(false) }),
+    ),
+    openPath: vi.fn(() => Promise.resolve({ ok: true as const, value: null })),
+    pickDirectory: vi.fn(() => Promise.resolve({ ok: true as const, value: ['D:/new-home'] })),
+    changeDataDir: vi.fn(() => Promise.resolve({ ok: true as const, value: { relaunch: true } })),
     // 状态栏文档计数与平台标识（M6 壳层装配路径）：挂载即查 countNodes，TitleBar 消费 platform
     countNodes: vi.fn(() => Promise.resolve({ ok: true as const, value: 0 })),
     platform: 'win32',
@@ -236,6 +256,10 @@ beforeEach(() => {
   });
   onCreateBackup = vi.fn();
   onRestoreBackup = vi.fn();
+  // 数据与存储分区（M6 批次③）：受控布局值与两回调桩
+  currentStorageInfo = stubStorageInfo(false);
+  onOpenStorageDir = vi.fn();
+  onChangeStorageDir = vi.fn();
 });
 
 afterEach(() => {
@@ -266,8 +290,12 @@ let restoreOnStart: boolean;
 let onRestoreOnStartChange: Mock<(enabled: boolean) => void>;
 let onCreateBackup: Mock<() => void>;
 let onRestoreBackup: Mock<(fileName: string) => void>;
+// 数据与存储分区受控值与回调桩（M6 批次③）
+let currentStorageInfo: DataDirInfo | null;
+let onOpenStorageDir: Mock<() => void>;
+let onChangeStorageDir: Mock<() => void>;
 
-/** 以受控 props 渲染设置页（默认外观区；主题/备份/恢复开关显示值随各桩联动） */
+/** 以受控 props 渲染设置页（默认外观区；主题/备份/恢复开关/存储布局显示值随各桩联动） */
 function renderPage(): void {
   act(() => {
     tree.render(
@@ -287,6 +315,9 @@ function renderPage(): void {
         onFontSizeChange={onFontSizeChange}
         onDebounceChange={onDebounceChange}
         onAutoSaveChange={onAutoSaveChange}
+        storageInfo={currentStorageInfo}
+        onOpenStorageDir={onOpenStorageDir}
+        onChangeStorageDir={onChangeStorageDir}
       />,
     );
   });
@@ -515,6 +546,50 @@ describe('SettingsPage 设置页表单', () => {
     setRangeValue('自动保存间隔', 120000);
     expect(onAutoSaveChange).toHaveBeenLastCalledWith(60000);
   });
+
+  // —— 数据与存储分区（M6 批次③，FR-AUX-03）——
+
+  it('数据与存储分区：默认位置呈现「默认」badge 与 root 路径；自定义位置换「自定义」badge', () => {
+    renderPage();
+    act(() => {
+      navButton('数据与存储')?.click();
+    });
+    expect(document.querySelector('.lt-storage-badge')?.textContent).toBe('默认');
+    expect(document.querySelector('.lt-storage-root')?.textContent).toBe(
+      'C:/Users/t/AppData/Roaming/LearningText',
+    );
+    // 自定义位置：badge 随 storageInfo.custom 切换，路径照实呈现
+    currentStorageInfo = { ...stubStorageInfo(true), root: 'D:/lt-data/LearningText' };
+    renderPage();
+    expect(document.querySelector('.lt-storage-badge')?.textContent).toBe('自定义');
+    expect(document.querySelector('.lt-storage-root')?.textContent).toBe('D:/lt-data/LearningText');
+  });
+
+  it('数据与存储分区两钮分别回调 onOpenStorageDir / onChangeStorageDir', () => {
+    renderPage();
+    act(() => {
+      navButton('数据与存储')?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="打开数据目录"]')?.click();
+    });
+    expect(onOpenStorageDir).toHaveBeenCalledTimes(1);
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="更改数据位置"]')?.click();
+    });
+    expect(onChangeStorageDir).toHaveBeenCalledTimes(1);
+  });
+
+  it('storageInfo 尚未装载（null）→ 「正在读取…」占位且两钮不呈现（防空路径误触）', () => {
+    currentStorageInfo = null;
+    renderPage();
+    act(() => {
+      navButton('数据与存储')?.click();
+    });
+    expect(container.textContent).toContain('正在读取…');
+    expect(container.querySelector('button[aria-label="打开数据目录"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="更改数据位置"]')).toBeNull();
+  });
 });
 
 // —— Workspace 设置态接线 ——
@@ -632,7 +707,7 @@ describe('Workspace 设置态接线', () => {
     await flushMicrotasks();
     await act(async () => {
       Array.from(container.querySelectorAll('button'))
-        .find((b) => b.textContent === 'a.html')
+        .find((b) => b.textContent === 'a.txt')
         ?.click();
     });
     act(() => {
@@ -655,7 +730,7 @@ describe('Workspace 设置态接线', () => {
     await flushMicrotasks();
     await act(async () => {
       Array.from(container.querySelectorAll('button'))
-        .find((b) => b.textContent === 'a.html')
+        .find((b) => b.textContent === 'a.txt')
         ?.click();
     });
     act(() => {
@@ -776,5 +851,117 @@ describe('Workspace 设置态接线', () => {
     await flushMicrotasks();
     expect(api.backupRestore).toHaveBeenCalledWith({ fileName: 'lt-20260920-080000.db' });
     expect(latestToastText()).toContain('还原失败');
+  });
+});
+
+// —— 数据目录域 Workspace 接线（M6 批次③）：设置标签打开期间拉取布局、
+// 打开目录直达 openPath、更改位置经 pickDirectory → 强确认弹层 → changeDataDir ——
+
+describe('Workspace 数据与存储接线（M6 批次③）', () => {
+  it('打开设置标签拉取数据目录信息（storage:get-info）；关闭再开重拉（随标签进出装载）', async () => {
+    const { api } = renderWorkspace();
+    await flushMicrotasks();
+    expect(api.getDataDirInfo).not.toHaveBeenCalled(); // 未开设置不预取
+    act(() => {
+      statusSettingsButton()?.click();
+    });
+    await flushMicrotasks();
+    expect(api.getDataDirInfo).toHaveBeenCalledTimes(1);
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="关闭设置"]')?.click();
+    });
+    act(() => {
+      statusSettingsButton()?.click();
+    });
+    await flushMicrotasks();
+    expect(api.getDataDirInfo).toHaveBeenCalledTimes(2);
+  });
+
+  it('「打开数据目录」经 openPath 携登记簿内的当前数据根', async () => {
+    const { api } = renderWorkspace();
+    await flushMicrotasks();
+    act(() => {
+      statusSettingsButton()?.click();
+    });
+    await flushMicrotasks();
+    act(() => {
+      navButton('数据与存储')?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="打开数据目录"]')?.click();
+    });
+    await flushMicrotasks();
+    expect(api.openPath).toHaveBeenCalledWith({
+      dir: 'C:/Users/t/AppData/Roaming/LearningText',
+    });
+  });
+
+  it('更改数据位置：pickDirectory 单选 → 强确认弹层；取消不发起迁移，确认才调 changeDataDir 携目标目录', async () => {
+    const { api } = renderWorkspace();
+    await flushMicrotasks();
+    act(() => {
+      statusSettingsButton()?.click();
+    });
+    await flushMicrotasks();
+    act(() => {
+      navButton('数据与存储')?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="更改数据位置"]')?.click();
+    });
+    await flushMicrotasks();
+    // 目录选择弹窗为单选（迁移只收一个目标）
+    expect(api.pickDirectory).toHaveBeenCalledWith({ multiple: false });
+    // 强确认弹层（数据覆盖级操作）呈现迁移内容与重启语义
+    const confirmDialog = document.querySelector('[role="alertdialog"]');
+    expect(confirmDialog?.textContent).toContain('更改数据位置');
+    expect(confirmDialog?.textContent).toContain('D:/new-home');
+    expect(confirmDialog?.textContent).toContain('自动重启');
+    // 取消：不发起迁移，弹层收起
+    act(() => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="取消迁移"]')?.click();
+    });
+    expect(api.changeDataDir).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    // 再走一遍后确认：changeDataDir 携对话框产出的目标目录
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="更改数据位置"]')?.click();
+    });
+    await flushMicrotasks();
+    act(() => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="确认迁移"]')?.click();
+    });
+    await flushMicrotasks();
+    expect(api.changeDataDir).toHaveBeenCalledWith({ targetDir: 'D:/new-home' });
+  });
+
+  it('迁移失败（未达 relaunch）toast 呈现原因并清确认态（可重试）', async () => {
+    const { api } = renderWorkspace({ withToastHost: true });
+    (api.changeDataDir as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.resolve({
+        ok: false as const,
+        error: { code: 'E_STORAGE_MIGRATE_FAILED', message: '目标目录不可写' },
+      }),
+    );
+    await flushMicrotasks();
+    act(() => {
+      statusSettingsButton()?.click();
+    });
+    await flushMicrotasks();
+    act(() => {
+      navButton('数据与存储')?.click();
+    });
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="更改数据位置"]')?.click();
+    });
+    await flushMicrotasks();
+    act(() => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="确认迁移"]')?.click();
+    });
+    await flushMicrotasks();
+    expect(latestToastText()).toContain('数据迁移失败');
+    expect(latestToastText()).toContain('目标目录不可写');
+    // 失败清确认态：弹层收起（用户可改道重试）
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 });

@@ -32,6 +32,8 @@ interface ExposedApi {
   pickDirectory(request: unknown): Promise<unknown>;
   exportNodes(request: unknown): Promise<unknown>;
   openPath(request: unknown): Promise<unknown>;
+  getDataDirInfo(request: unknown): Promise<unknown>;
+  changeDataDir(request: unknown): Promise<unknown>;
   onShellCommand(callback: (event: unknown) => void): () => void;
   onVfsChanged(callback: (event: unknown) => void): () => void;
   onBackupDone(callback: (event: unknown) => void): () => void;
@@ -99,6 +101,8 @@ describe('preload 桥注册', () => {
       'pickDirectory',
       'exportNodes',
       'openPath',
+      'getDataDirInfo',
+      'changeDataDir',
       'onIoProgress',
       'onShellCommand',
       'onVfsChanged',
@@ -160,6 +164,9 @@ describe('preload 桥注册', () => {
       // 导出域（M5 批次⑥ Task 13）：导出请求透传、打开目录串透传（白名单登记簿校验在主进程侧）
       ['exportNodes', IPC.ioExport, { nodeId: 7, targetDir: 'D:/picked' }],
       ['openPath', IPC.shellOpenPath, { dir: 'D:/picked' }],
+      // 数据目录域（M6 批次③）：get-info 无参沿 null 先例，change 请求透传
+      ['getDataDirInfo', IPC.storageGetInfo, null],
+      ['changeDataDir', IPC.storageChangeDataDir, { targetDir: 'D:/picked' }],
     ];
     mocks.invoke.mockResolvedValue({ ok: true, value: null });
     for (const [method, channel, request] of channelCases) {

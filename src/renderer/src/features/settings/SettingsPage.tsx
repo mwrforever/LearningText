@@ -9,7 +9,15 @@
  * M6 移除「重建搜索索引」disabled 占位按钮（用户需求：未实现功能不设计；TASK.md 保留接线项）。
  */
 import { useState } from 'react';
-import { DatabaseBackup, History, Palette, SlidersHorizontal } from 'lucide-react';
+import {
+  DatabaseBackup,
+  FolderInput,
+  FolderOpen,
+  HardDrive,
+  History,
+  Palette,
+  SlidersHorizontal,
+} from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -28,6 +36,7 @@ import {
   AlertDialogTitle,
 } from '@components/ui/alert-dialog';
 import type { BackupEntry } from '../../../../shared/backup-contract';
+import type { DataDirInfo } from '../../../../shared/storage-contract';
 import { clampAutoSave, clampDebounce, clampFontSize } from './settingsFormModel';
 import type { ThemeIntent } from './themeResolver';
 
@@ -62,16 +71,23 @@ export interface SettingsPageProps {
   readonly onDebounceChange: (debounceMs: number) => void;
   /** 自动保存变更回调（入参已经 clampAutoSave 钳制到 1000–60000 整数） */
   readonly onAutoSaveChange: (autoSaveMs: number) => void;
+  /** 数据目录布局（M6 批次③；设置标签打开期间装载，null = 尚未装载） */
+  readonly storageInfo: DataDirInfo | null;
+  /** 打开数据目录（系统文件管理器，主进程登记簿校验） */
+  readonly onOpenStorageDir: () => void;
+  /** 发起更改数据位置（Workspace 收口：目录选择 → 强确认 → 迁移 → 重启） */
+  readonly onChangeStorageDir: () => void;
 }
 
-/** 表单分区：外观/编辑与预览/备份/数据与存储（批次③接入）/工作区 */
+/** 表单分区：外观/编辑与预览/备份/数据与存储/工作区 */
 type SettingsSection = 'appearance' | 'editor' | 'backup' | 'storage' | 'workspace';
 
-/** 导航分区元数据（图标 + 中文名；storage 分区批次③前禁用入口不渲染，避免无内容分区） */
+/** 导航分区元数据（图标 + 中文名） */
 const SECTIONS: readonly { key: SettingsSection; label: string; icon: typeof Palette }[] = [
   { key: 'appearance', label: '外观', icon: Palette },
   { key: 'editor', label: '编辑与预览', icon: SlidersHorizontal },
   { key: 'backup', label: '备份', icon: DatabaseBackup },
+  { key: 'storage', label: '数据与存储', icon: HardDrive },
   { key: 'workspace', label: '工作区', icon: History },
 ];
 
@@ -110,6 +126,9 @@ export function SettingsPage({
   onFontSizeChange,
   onDebounceChange,
   onAutoSaveChange,
+  storageInfo,
+  onOpenStorageDir,
+  onChangeStorageDir,
 }: SettingsPageProps): React.JSX.Element {
   const [section, setSection] = useState<SettingsSection>('appearance');
   // 还原强确认目标（备份文件名）：null=浮层收起；确认/取消均收起，确认侧才上抛还原
@@ -324,6 +343,56 @@ export function SettingsPage({
                   </AlertDialogContent>
                 </AlertDialog>
               ) : null}
+            </>
+          ) : section === 'storage' ? (
+            <>
+              {/* 数据与存储（M6 spec §4/FR-AUX-03 修订版）：布局展示 + 打开/更改迁移入口 */}
+              <div className="mb-4">
+                <p className="m-0 mb-1 text-sm font-medium">当前数据位置</p>
+                {storageInfo === null ? (
+                  <p className="m-0 text-xs text-muted-foreground">正在读取…</p>
+                ) : (
+                  <>
+                    <div className="mb-1 flex items-center gap-2">
+                      <span
+                        className={`lt-storage-badge inline-flex items-center rounded-sm px-1.5 py-0.5 text-xs ${
+                          storageInfo.custom
+                            ? 'bg-accent text-accent-foreground'
+                            : 'bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        {storageInfo.custom ? '自定义' : '默认'}
+                      </span>
+                      <span className="lt-storage-root truncate font-mono text-xs text-foreground">
+                        {storageInfo.root}
+                      </span>
+                    </div>
+                    <p className="m-0 mb-2 text-xs text-muted-foreground">
+                      数据库、设置与备份均保存在该目录下；更改后自动迁移并重启生效
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        aria-label="打开数据目录"
+                        className={BUTTON_CLASS}
+                        onClick={onOpenStorageDir}
+                      >
+                        <FolderOpen aria-hidden="true" className="mr-1 inline size-3.5" />
+                        打开目录
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="更改数据位置"
+                        className={BUTTON_CLASS}
+                        onClick={onChangeStorageDir}
+                      >
+                        <FolderInput aria-hidden="true" className="mr-1 inline size-3.5" />
+                        更改数据位置…
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </>
           ) : (
             <>
