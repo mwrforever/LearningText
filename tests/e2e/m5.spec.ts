@@ -1,12 +1,14 @@
-// M5 验收（docs/03 §6.2 M5 出口 / spec §10.1-1 主链路）：8 组用例——
-// ① 主链路（磁盘 seed → 导入 → 树/图片节点 → 编辑自动保存 → 预览一致 → 搜索命中定位打开 →
-//    回收站 trash/还原 → 导出子树 + Node 侧结构与引用改写断言 → 设置页 dark → 同 userData
-//    重启 → 工作区恢复）；② 快速打开（菜单触发 cmdk 浮层、Enter 打开、空关键词最近打开）；
-// ③ 回收站（列表原路径/删除时间、还原、撞名还原失败、彻底删除 confirm）；④ 设置页（主题
-//    三态 + 字号滑块计算样式）；⑤ 备份还原（手动建份、列表名形、强确认、重启、数据回滚）；
-// ⑥ 滚动同步（200 段落长文档比例 ±5%、开关关闭不跟随）；⑦ 导入取消（600 文件、进度面板
-//    取消按钮「可见即点」触发、已写入保留 + toast）；⑧ 图片预览（img src=vfs URL、无新
-//    标签）+ 恢复开关关闭后重启不恢复。
+// M5 验收（docs/03 §6.2 M5 出口 / spec §10.1-1 主链路；M6 画布语义改写）——7 组用例：
+// ① 主链路（磁盘 seed → 导入 → 树/图片节点 → 画布编辑自动保存 → 渲染一致 → 搜索命中定位
+//    打开 → 回收站 trash/还原 → 导出子树 + Node 侧结构与引用改写断言 → 设置页 dark → 同
+//    userData 重启 → 工作区恢复）；② 快速打开（菜单触发 cmdk 浮层、Enter 打开、空关键词
+//    最近打开）；③ 回收站（列表原路径/删除时间、还原、撞名还原失败、彻底删除 confirm）；
+// ④ 设置页（主题三态 + 字号滑块计算样式 + 数据与存储分区冒烟：默认 badge/根路径/更改数据
+//    位置强确认弹层可开可取消）；⑤ 备份还原（手动建份、列表名形、强确认、重启、数据回滚）；
+// ⑥ 导入取消（600 文件、进度面板取消按钮「可见即点」触发、已写入保留 + toast）；⑦ 图片
+//    打开（媒体一律开标签 img 直载 vfs URL，M6 D4）+ 恢复开关关闭后重启不恢复。
+// M6 语义映射：HTML 编辑面由 CM 平移为画布 iframe（所见即所得，输入即渲染、无重载链），
+// 「预览一致」断言面改为画布 frame 文本；滚动同步用例随能力退役整体删除（spec D5）。
 // 用例隔离策略：主链路/快速打开共用一个会话（②消费①的最近打开与树数据），其余各组各自
 // 独立 userData 自播种——排除跨用例状态串扰（迭代实证：共享会话下前序用例的视图态/选中态
 // 与数据残留会让后续用例的断言面漂移，且失败难以归因）。
@@ -27,7 +29,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { expect, test } from '@playwright/test';
 import { _electron as electron } from 'playwright';
-import type { ElectronApplication, Locator, Page } from 'playwright';
+import type { ElectronApplication, FrameLocator, Locator, Page } from 'playwright';
 import { closeAppGracefully } from './close-app';
 
 // 外层句柄命名 page 而非 window：避免遮蔽 DOM 全局 window（app.spec 同款纪律）
@@ -155,46 +157,24 @@ async function pathExists(virtualPath: string): Promise<boolean> {
   return result.ok;
 }
 
-/** 聚焦编辑区（CM6 contenteditable）把光标移到行尾后键入追加（editor.spec 同款形态） */
-async function typeAtEnd(text: string): Promise<void> {
-  await page.locator('.cm-content').click();
-  const endKey = process.platform === 'darwin' ? 'Meta+ArrowRight' : 'End';
-  await page.keyboard.press(endKey);
-  await page.keyboard.type(text);
-}
-
 /** 树作用域（资源树 nav 内首层列表，与工具栏同名按钮隔离，editor.spec 先例） */
 function treeNodes(): Locator {
   return page.locator('nav[aria-label="资源树"] > ul');
 }
 
-/** 编辑器滚动比例（与 scrollSync.ratioFromScroll 同式，±5% 断言基准） */
-async function editorRatio(): Promise<number> {
-  return page.locator('.cm-editor .cm-scroller').evaluate((el) => {
-    const max = el.scrollHeight - el.clientHeight;
-    return max <= 0 ? 0 : Math.min(1, Math.max(0, el.scrollTop / max));
-  });
-}
-
-/** 预览滚动比例（iframe 沙箱文档 window 滚动，与 vfsProtocol 接收器同式） */
-async function previewRatio(): Promise<number> {
-  return page
-    .frameLocator('iframe.lt-preview-frame')
-    .locator('body')
-    .evaluate((el) => {
-      const view = el.ownerDocument.defaultView;
-      if (view === null) throw new Error('预览文档无默认视图');
-      const doc = view.document.documentElement;
-      const max = doc.scrollHeight - view.innerHeight;
-      return max <= 0 ? 0 : Math.min(1, Math.max(0, (view.scrollY || 0) / max));
-    });
-}
-
-/** 程序化滚动编辑器到目标比例（触发 scroll 事件 → 节流上报 → postMessage 下行链路） */
-async function scrollEditorTo(ratio: number): Promise<void> {
-  await page.locator('.cm-editor .cm-scroller').evaluate((el, r) => {
-    el.scrollTop = (el.scrollHeight - el.clientHeight) * r;
-  }, ratio);
+/**
+ * HTML 画布编辑（M6 所见即所得，editor.spec 同款驱动形态）：等注入桥置 contenteditable
+ * 就绪 → 点 iframe 面聚焦（空文档 body 零高不可点，iframe 全幅可见必可点）→ 光标推到
+ * 文档末尾 → 键入追加。返回画布 frame 供内容断言
+ */
+async function typeAtCanvasEnd(name: string, text: string): Promise<FrameLocator> {
+  const holder = page.locator(`iframe.lt-canvas-frame[title="编辑 ${name}"]`);
+  const frame = holder.contentFrame();
+  await expect(frame.locator('body')).toHaveAttribute('contenteditable', 'true');
+  await holder.click();
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
+  await page.keyboard.type(text);
+  return frame;
 }
 
 test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
@@ -252,24 +232,49 @@ test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
     await expect(tree.getByRole('button', { name: 'p.html' })).toBeVisible();
     await expect(tree.getByRole('button', { name: 'p.css' })).toBeVisible();
     await expect(tree.getByRole('button', { name: '图片.png' })).toBeVisible();
-    // —— 编辑已有文件（自动保存落库）→ 预览一致（含相对引用 css 与真图渲染）——
+    // —— 编辑已有文件（画布所见即所得：输入即渲染；自动保存落库供导出与重启恢复读回）——
     await tree.getByRole('button', { name: 'p.html' }).click();
     await expect(page.getByRole('tab', { name: /p\.html/ })).toBeVisible();
-    await expect(page.frameLocator('iframe.lt-preview-frame').locator('#pp')).toHaveText(
-      '探针正文锚点',
-    );
-    await typeAtEnd('<p id="chain">链路增量</p>');
-    // 预览一致性用 innerText 容错（接收器 script 不计可见文本，M4 先例）；toContain 使
-    // 重试轮（文档已含前次增量）可重入
-    await expect(page.frameLocator('iframe.lt-preview-frame').locator('body')).toContainText(
-      '链路增量',
-      { useInnerText: true },
-    );
-    // 图片经相对引用真实渲染（合法 PNG，naturalWidth=1）——「预览一致」的媒体面证据
+    // 初始渲染证据：正文锚点已呈现（charset utf-8 正确解码，M4 Task 8 语义）
+    await expect(
+      page.locator('iframe.lt-canvas-frame[title="编辑 p.html"]').contentFrame().locator('#pp'),
+    ).toHaveText('探针正文锚点');
+    const canvas = await typeAtCanvasEnd('p.html', '链路增量');
+    // 所见即所得：输入即渲染（编辑面=渲染面零重载）；innerText 容错（接收器 script 不计
+    // 可见文本，M4 先例）；toContain 使重试轮（文档已含前次增量）可重入
+    await expect(canvas.locator('body')).toContainText('链路增量', { useInnerText: true });
+    // 编辑上报入管线证据（脏点亮起）：画布注入桥的 200ms 去抖上报计时器位于沙箱 iframe 的
+    // 任务队列，探针实证该队列在无帧内活动时可被渲染器长期搁置（帧可见有焦点仍不派发，
+    // 计时器延迟至秒级以上甚至不触发，直至下一次帧内任务）——以帧内 evaluate 泵一次任务
+    // 队列再等脏点，保证「已上报」先于 trash 关签 flush 与导出读库发生（详见报告
+    // 「疑似产品缺陷」节：真实用户任意后续交互都会唤醒该队列，自动化长驱动父页侧才暴露）
+    await expect(async () => {
+      await canvas.locator('body').evaluate(() => undefined);
+      await expect(
+        page.getByRole('tab', { name: /p\.html/ }).locator('[aria-label="未保存"]'),
+      ).toBeVisible();
+    }).toPass({ timeout: 10000 });
+    // 落库完成证据（库为 oracle）：自动保存写落库后才推进 trash/导出/重启断言面
+    const pHtmlId = await page.evaluate(async () => {
+      const r = await window.api.resolvePath({ virtualPath: '/探针目录/p.html' });
+      return r.ok ? r.value.nodeId : -1;
+    });
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(async (id) => {
+            const r = await window.api.readFile({ nodeId: id });
+            return r.ok ? new TextDecoder().decode(r.value.content).includes('链路增量') : false;
+          }, pHtmlId),
+        { timeout: 10000, intervals: [200] },
+      )
+      .toBe(true);
+    // 图片经相对引用真实渲染（合法 PNG，naturalWidth=1）——「渲染一致」的媒体面证据
     await expect
       .poll(async () =>
         page
-          .frameLocator('iframe.lt-preview-frame')
+          .locator('iframe.lt-canvas-frame[title="编辑 p.html"]')
+          .contentFrame()
           .locator('img')
           .evaluate((img: HTMLImageElement) => ({
             count: document.querySelectorAll('img').length,
@@ -330,7 +335,7 @@ test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
     expect(exportedHtml).not.toContain('vfs://local'); // 改写无残留
     // —— 设置页切 dark（.dark 类 + 语义变量计算样式）——
     await page.getByLabel('打开设置').click();
-    await page.getByLabel('主题').click();
+    await page.getByRole('combobox', { name: '主题' }).click();
     await page.getByRole('option', { name: '暗色' }).click();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
@@ -355,7 +360,10 @@ test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
     await restartApp();
     await launchApp(userDataDir);
     await expect(page.getByRole('tab', { name: /p\.html/ })).toBeVisible(); // 标签会话恢复
-    await expect(page.locator('.cm-content')).toContainText('链路增量'); // 恢复式打开读回内容
+    // 恢复式打开读回内容：p.html 为画布标签（M6 三分流），内容断言平移到画布 frame
+    await expect(
+      page.locator('iframe.lt-canvas-frame[title="编辑 p.html"]').contentFrame().locator('body'),
+    ).toContainText('链路增量', { useInnerText: true });
   });
 
   test('快速打开：菜单触发浮层、空关键词最近打开、部分名搜索 Enter 打开', async () => {
@@ -444,15 +452,17 @@ test.describe('M5 设置页（独立 userData）', () => {
     rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  test('设置页：主题三态切换（.dark + 计算样式）与字号滑块（.cm-content 计算样式）', async () => {
-    // 自播种样例文档并开签：字号断言面 = 激活标签的 CM 实例（独立会话无标签残留）
-    await seedFile(1, '滑块样例.html', '<p>字号样例</p>');
-    await treeNodes().getByRole('button', { name: '滑块样例.html' }).click();
+  test('设置页：主题三态切换（.dark + 计算样式）、字号滑块（.cm-content 计算样式）与数据目录分区冒烟', async () => {
+    // 自播种源码样例（.css → CM 标签：M6 起 HTML 走画布无 CM 实例，字号断言面必须 CM）
+    // 并开签：字号断言面 = 激活标签的 CM 实例（独立会话无标签残留）
+    await seedFile(1, '滑块样例.css', '.demo { color: red; }');
+    await treeNodes().getByRole('button', { name: '滑块样例.css' }).click();
+    await expect(page.locator('.cm-editor')).toBeVisible();
     await page.getByLabel('打开设置').click();
     const settingsSection = page.locator('section[aria-label="设置"]');
     await expect(settingsSection).toBeVisible();
     // —— 暗色：.dark 挂载 + dark 语义背景 ——
-    await page.getByLabel('主题').click();
+    await page.getByRole('combobox', { name: '主题' }).click();
     await page.getByRole('option', { name: '暗色' }).click();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
@@ -461,7 +471,7 @@ test.describe('M5 设置页（独立 userData）', () => {
       .poll(() => settingsSection.evaluate((el) => getComputedStyle(el).backgroundColor))
       .toBe('rgb(15, 23, 42)'); // dark --background #0f172a
     // —— 亮色：.dark 摘除 + light 语义背景 ——
-    await page.getByLabel('主题').click();
+    await page.getByRole('combobox', { name: '主题' }).click();
     await page.getByRole('option', { name: '亮色' }).click();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
@@ -470,7 +480,7 @@ test.describe('M5 设置页（独立 userData）', () => {
       .poll(() => settingsSection.evaluate((el) => getComputedStyle(el).backgroundColor))
       .toBe('rgb(248, 250, 252)'); // light --background #f8fafc
     // —— 跟随系统：解析结果 = matchMedia 偏好（意图持久化 system）——
-    await page.getByLabel('主题').click();
+    await page.getByRole('combobox', { name: '主题' }).click();
     await page.getByRole('option', { name: '跟随系统' }).click();
     await expect
       .poll(async () =>
@@ -486,7 +496,7 @@ test.describe('M5 设置页（独立 userData）', () => {
     await expect
       .poll(() => page.evaluate(() => document.documentElement.classList.contains('dark')))
       .toBe(systemPrefersDark);
-    // —— 字号滑块：写入 20 → 设置落盘 + CM 计算样式即时重配 ——
+    // —— 字号滑块：写入 20 → 设置落盘（意图持久化证据）——
     await page.getByLabel('编辑器字号').fill('20');
     await expect
       .poll(async () =>
@@ -496,10 +506,32 @@ test.describe('M5 设置页（独立 userData）', () => {
         }),
       )
       .toBe(20);
+    // —— 数据与存储分区冒烟（M6 批次③）：默认 badge + 根路径展示 + 更改数据位置强确认弹层可开可取消 ——
+    await page.getByRole('button', { name: '数据与存储' }).click();
+    await expect(page.locator('.lt-storage-badge')).toHaveText('默认'); // 未自定义：出厂数据根
+    const storageRoot = page.locator('.lt-storage-root');
+    await expect(storageRoot).toBeVisible();
+    expect((await storageRoot.innerText()).trim().length).toBeGreaterThan(0); // 根路径已呈现
+    // 更改数据位置：目录选择打桩（OS 对话框不可驱动，探针先例）→ 强确认弹层呈现 → 取消收场
+    //（迁移动作留集成层，E2E 不做 relaunch，spec §8 测试策略）
+    const migrateTarget = mkdtempSync(path.join(tmpdir(), 'lt-e2e-m5-storage-'));
+    try {
+      await stubDialogPick(migrateTarget);
+      await page.getByLabel('更改数据位置').click();
+      await expect(page.getByText('将把数据库、设置与备份迁移到')).toBeVisible();
+      await expect(page.getByText(/完成后应用将自动重启/)).toBeVisible();
+      await page.getByLabel('取消迁移').click();
+      await expect(page.getByText('将把数据库、设置与备份迁移到')).toHaveCount(0);
+    } finally {
+      rmSync(migrateTarget, { recursive: true, force: true });
+    }
+    await page.getByLabel('关闭设置').click();
+    // 字号持久化值在 CM 实例上生效：设置为编辑区伪标签（M6 D3），打开期间 CM 卸载——
+    // 「计算样式即时重配」断言移至关设置后的编辑器面（激活补位回落最后一个 doc 标签）
+    await expect(page.locator('.cm-content')).toBeVisible();
     await expect
       .poll(() => page.locator('.cm-content').evaluate((el) => getComputedStyle(el).fontSize))
       .toBe('20px');
-    await page.getByLabel('关闭设置').click();
   });
 });
 
@@ -601,50 +633,7 @@ test.describe('M5 备份还原（独立 userData）', () => {
   });
 });
 
-test.describe('M5 滚动同步（独立 userData）', () => {
-  let userDataDir: string;
-
-  test.beforeAll(async () => {
-    userDataDir = mkdtempSync(path.join(tmpdir(), 'lt-e2e-m5-scroll-'));
-    await launchApp(userDataDir);
-  });
-
-  test.afterAll(async () => {
-    await closeAppGracefully(app, page);
-    rmSync(userDataDir, { recursive: true, force: true });
-  });
-
-  test('滚动同步：编辑器滚动预览按比例跟随（±5%）、开关关闭不跟随', async () => {
-    // 200 段落长文档（桥 seed）：每段独立成行（编辑器滚动量需要多行——单行文档无纵向
-    // 可滚动量，比例恒 0）；编辑器与预览均有足量可滚动高度
-    const paragraphs = Array.from(
-      { length: 200 },
-      (_, i) => `<p id="seg${String(i)}">第${String(i)}段落</p>`,
-    ).join('\n');
-    await seedFile(1, '滚动长文.html', `<meta charset="utf-8">\n${paragraphs}`);
-    await treeNodes().getByRole('button', { name: '滚动长文.html' }).click();
-    await expect(page.frameLocator('iframe.lt-preview-frame').locator('#seg199')).toHaveText(
-      '第199段落',
-    );
-    // 编辑器滚到 70% → 预览比例跟随至 ±5%（100ms 节流 + postMessage 下行 + iframe scrollTo）
-    await scrollEditorTo(0.7);
-    const editorAt = await editorRatio();
-    expect(editorAt).toBeGreaterThan(0.6); // 前置证据：编辑器确已滚动到目标区间
-    await expect.poll(previewRatio, { timeout: 5000 }).toBeGreaterThan(editorAt - 0.05);
-    await expect.poll(previewRatio, { timeout: 5000 }).toBeLessThan(editorAt + 0.05);
-    // 开关关闭（会话级偏好 D14）：编辑器再滚到 10%，预览保持原位不跟随
-    const syncToggle = page.getByLabel('滚动同步');
-    await expect(syncToggle).toHaveAttribute('aria-pressed', 'true');
-    await syncToggle.click();
-    await expect(syncToggle).toHaveAttribute('aria-pressed', 'false');
-    await scrollEditorTo(0.1);
-    await expect.poll(editorRatio, { timeout: 5000 }).toBeLessThan(0.15); // 编辑器已到位
-    const frozenRatio = await previewRatio();
-    expect(frozenRatio).toBeGreaterThan(editorAt - 0.05); // 预览未被牵动（仍停在原 70% 附近）
-  });
-});
-
-test.describe('M5 图片预览与恢复开关（独立 userData）', () => {
+test.describe('M5 图片打开与恢复开关（独立 userData）', () => {
   let userDataDir: string;
 
   test.beforeAll(async () => {
@@ -657,7 +646,7 @@ test.describe('M5 图片预览与恢复开关（独立 userData）', () => {
     rmSync(userDataDir, { recursive: true, force: true });
   });
 
-  test('图片预览：树点选图片 → 预览面板 img 直载 vfs URL、不开新标签', async () => {
+  test('图片打开：树点选图片 → 开媒体标签 img 直载 vfs URL（D4：媒体一律开标签）', async () => {
     // 桥 seed 合法 PNG（createNode 按扩展名推导 image/png——previewableMime 命中的前提）；
     // 字节经 number 数组穿越桥，页内还原 Uint8Array（TextEncoder 会破坏二进制）
     const png = make1x1Png();
@@ -672,15 +661,16 @@ test.describe('M5 图片预览与恢复开关（独立 userData）', () => {
       Array.from(png),
     );
     if (!created.ok) throw new Error('建图片节点失败');
+    // M6 D4/D6：点击一律开标签——媒体文件开媒体 doc 标签（D20 弱选中双源已退役），
+    // MediaCanvas 原生 img 直载（无 iframe、无 CM）
     await treeNodes().getByRole('button', { name: '图片.png' }).click();
-    const img = page.locator('img.lt-preview-media');
+    await expect(page.getByRole('tab', { name: /图片\.png/ })).toBeVisible();
+    const img = page.locator('img.lt-media-content');
     await expect(img).toBeVisible();
     await expect(img).toHaveAttribute('src', 'vfs://local/图片.png'); // vfs 协议直载
     await expect
       .poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth), { timeout: 5000 })
       .toBe(1); // 合法 PNG 真实解码（排除 onError 占位假象）
-    // 无新标签：媒体点选不开编辑标签（激活标签原样保留，D20）
-    await expect(page.getByRole('tab')).toHaveCount(0);
     expect(app.windows().length).toBe(1); // setWindowOpenHandler deny 的窗口面佐证
   });
 

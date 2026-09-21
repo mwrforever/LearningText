@@ -1470,9 +1470,10 @@ export function Workspace(): React.JSX.Element {
             )}
           </aside>
         )}
-        {/* 侧栏分隔条（可拖拽调宽；侧栏折叠时收窄轨、不响应拖拽，比例维持记忆值） */}
+        {/* 侧栏分隔条（可拖拽调宽；w-1 显式命中区——flex 行内无宽度类则分隔条实际 0px，
+            hit-test 永不命中（E2E 探针实证的产品缺陷，M6 批次④修复）；折叠时不响应拖拽） */}
         <div
-          className="lt-divider lt-divider-sidebar cursor-col-resize bg-border transition-colors duration-100 hover:bg-ring/50"
+          className="lt-divider lt-divider-sidebar w-1 shrink-0 cursor-col-resize bg-border transition-colors duration-100 hover:bg-ring/50"
           role="separator"
           aria-orientation="vertical"
           onPointerDown={layout.sidebarCollapsed ? undefined : onDividerPointerDown}

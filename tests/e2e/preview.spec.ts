@@ -1,6 +1,7 @@
-// M3 验收关键项（spec §9.1）：三形态路径/越界 404/内联 script/null-origin fetch/
-// https 外链 CSP 阻断/连续输入最终态一致/重载仅变更回 200 + 未变子资源重取/localStorage
-// 隔离 + NFR-04 计时（304 重验探针勘误见 spec §4.2；两断言为终审 I-2 补强）
+// M3 验收关键项（spec §9.1）→ M6 画布语义改写：三形态路径/越界 404/内联 script/null-origin
+// fetch/https 外链 CSP 阻断/删除后不可达保持；「连续输入最终态一致/未变子资源重取/NFR-04
+// 重载计时」改写为画布语义（编辑面=渲染面零重载 + D7 外部写入后手动「从库重新加载」，
+// 304 重验探针勘误见 spec §4.2；编辑面上 CSP/localStorage 隔离等由保活 iframe 同面承载）
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -171,45 +172,70 @@ test('localStorage 抛 SecurityError（验收项 7，隔离断言=已知边界�
   expect(threw).toBe(true);
 });
 
-test('连续输入最终态一致 + 未变子资源重取与校验器稳定 + NFR-04 重载计时（验收项 5/6 + spec §4.4）', async () => {
-  const before = vfsResponses.length;
-  const editor = page.getByLabel('编辑区');
-  // charset meta 同主链路用例（协议对 text/* 追加 charset=utf-8，M4 Task 8）；保留 ./a.css 引用——
-  // 使未变更子资源进入重载请求面（终审 I-2 补强，断言与降级依据见 tail 段注释）；
-  // <p> 不闭合——pressSequentially 在文尾续打时字符须落进 #t 内（闭合标签会把续打字符挤到段外）
-  const target =
-    '<meta charset="utf-8"><link rel="stylesheet" href="./a.css"><p id="t">最终态一二三四五六七八九十';
-  const start = Date.now();
-  await editor.fill(target); // fill 单次提交终值：等价高频输入的尾沿
-  // 接收器注入（Task 9）适配：主文档无 </body> 标记，接收器脚本尾部追加后被未闭合的
-  // <p id="t"> 吸收为子元素（HTML 解析规则：script 属 phrasing 内容可入 p），textContent
-  // 因此含脚本源码——改用 innerText（渲染可见文本，script 节点 UA 样式 display:none 不计），
-  // 「可见文本精确一致」的断言语义不变
-  await expect(page.frameLocator('iframe').locator('#t')).toHaveText('最终态一二三四五六七八九十', {
+test('画布编辑零重载最终态一致 + 外部写入后手动重载子资源重取与校验器稳定（验收项 5/6 画布语义改写）', async () => {
+  // M6 语义映射（原「编辑器 fill→预览重载 + NFR-04 计时」）：编辑面=渲染面后无重载链——
+  // ① 连续输入断言「编辑全程零主文档导航 + 渲染面实时一致」；② 重载链由 D7 的显式入口
+  // 承载：外部写入（桥直写同通道）→ 画布会话 written 一律不重载 → 手动「从库重新加载」
+  // 拉取（计时语义 NFR-04 平移为「点击重载→首帧一致」）；③ 未变子资源重取与弱校验器
+  // 稳定断言在手动重载链上等价保留（304 形态仍由集成测试 vfs-protocol.test 锁定）。
+  const holder = page.locator('iframe.lt-canvas-frame');
+  const frame = holder.contentFrame();
+  const doc200s = (): number =>
+    vfsResponses.filter((r) => r.url().endsWith('/a.html') && r.status() === 200).length;
+  const doc200Before = doc200s();
+  // —— 画布连续输入：内容实时一致（编辑面=渲染面），输入全程零主文档导航 ——
+  await expect(frame.locator('body')).toHaveAttribute('contenteditable', 'true');
+  await holder.click();
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
+  await page.keyboard.type('最终态一二三四五六七八九十', { delay: 10 });
+  await expect(frame.locator('body')).toContainText('最终态一二三四五六七八九十', {
     useInnerText: true,
   });
-  const reloadMs = Date.now() - start;
-  console.log(`[perf-m3] NFR-04 预览重载端到端耗时 ${String(reloadMs)}ms（fill→首帧一致）`);
-  expect(reloadMs).toBeLessThan(2000); // NFR-04 宽松上限（300ms 目标 + CI 余量），中位数报告回填
-  await editor.pressSequentially('！', { delay: 10 }); // 高频输入（远小于去抖 300ms）
-  await expect(page.frameLocator('iframe').locator('#t')).toHaveText(
-    '最终态一二三四五六七八九十！',
-    { useInnerText: true },
-  );
-  const tail = vfsResponses.slice(before);
-  expect(tail.filter((r) => r.status() === 200).length).toBeGreaterThanOrEqual(2); // 主文档两次刷新均 200（内容变）
-  // 未变子资源重验（验收项 6 后半句；终审 I-2 按探针实证降级，勘误见 spec §4.2）：
-  // E2E 探针实证 Chromium 对 vfs:// 自定义 scheme 子资源跨重载不稳定执行 no-cache 条件
-  // 重验——常态为「无 If-None-Match 的 200 全量重取」（连续 3 次复现），304 形态仅混现
-  // 一次，故 304 不可作 E2E 断言依赖（If-None-Match→304 传输语义由集成测试
-  // vfs-protocol.test.ts 锁死）。此处断言实测恒真的两层：未变子资源每轮重载均被重新
-  // 请求（no-cache 不放行免验复用）+ 校验器稳定（200 形态 css 响应 ETag 弱校验器逐一相等）
-  const cssRequests = vfsResponses.slice(before).filter((r) => r.url().endsWith('/a.css'));
-  expect(cssRequests.length).toBeGreaterThanOrEqual(2); // 两次导航各重新请求一次
+  expect(doc200s()).toBe(doc200Before);
+  // —— 编辑落库（出厂去抖 300ms 尾沿；脏点消失 = 报告已入管线且写完成，重载钮解禁）——
+  const reloadBtn = page.getByLabel('从库重新加载');
+  await expect(async () => {
+    // 帧内 evaluate 泵一次任务队列：画布注入桥 200ms 去抖上报计时器位于沙箱 iframe 的
+    // 任务队列，父页侧操作不回访帧内时该队列可被长期搁置（探针实证，editor/m5 spec 同款
+    // 处理，详见报告「疑似产品缺陷」节）
+    await frame.locator('body').evaluate(() => undefined);
+    await expect(reloadBtn).toBeEnabled();
+  }).toPass({ timeout: 10000 });
+  // —— 外部写入（与编辑管线同一 vfs:write 通道）→ D7 刷新抑制：画布会话零重载 ——
+  const written = await page.evaluate(async () => {
+    const resolved = await window.api.resolvePath({ virtualPath: '/笔记/a.html' });
+    if (!resolved.ok) return false;
+    const result = await window.api.writeFile({
+      nodeId: resolved.value.nodeId,
+      content: new TextEncoder().encode(
+        '<meta charset="utf-8"><link rel="stylesheet" href="./a.css"><p id="t">外部写入终态</p>',
+      ),
+    });
+    return result.ok;
+  });
+  if (!written) throw new Error('桥直写 a.html 失败');
+  const doc200AfterWrite = doc200s();
+  await expect(frame.locator('body')).toContainText('最终态一二三四五六七八九十', {
+    useInnerText: true,
+  });
+  expect(doc200AfterWrite).toBe(doc200Before); // written 命中画布会话：零主文档请求
+  // —— 手动「从库重新加载」：拉取库内容；NFR-04 计时语义平移（点击→首帧一致）——
+  const reloadStart = Date.now();
+  await reloadBtn.click();
+  await expect(frame.locator('#t')).toHaveText('外部写入终态');
+  const reloadMs = Date.now() - reloadStart;
+  console.log(`[perf-m3] 画布手动重载端到端耗时 ${String(reloadMs)}ms（点击→首帧一致）`);
+  expect(reloadMs).toBeLessThan(2000); // NFR-04 宽松上限（300ms 目标 + CI 余量），中位数回填
+  // —— 未变子资源重取与校验器稳定（验收项 6 后半句；终审 I-2 按探针实证降级，勘误见
+  // spec §4.2）：Chromium 对 vfs:// 自定义 scheme 子资源跨重载不稳定执行条件重验，常态为
+  // 「无 If-None-Match 的 200 全量重取」，304 不可作 E2E 断言依赖；此处断言实测恒真两层：
+  // 未变子资源（a.css）在重载链上被重新请求 + 200 形态弱校验器跨请求逐一相等（etagOf 契约）
+  const cssRequests = vfsResponses.filter((r) => r.url().endsWith('/a.css'));
+  expect(cssRequests.length).toBeGreaterThanOrEqual(2); // 首开 + 手动重载各至少一次
   const cssEtags = cssRequests.filter((r) => r.status() === 200).map((r) => r.headers()['etag']);
   expect(cssEtags.length).toBeGreaterThanOrEqual(2);
-  expect(cssEtags.every((e) => typeof e === 'string' && e.startsWith('W/'))).toBe(true); // 弱校验器形态（etagOf 契约）
-  expect(new Set(cssEtags).size).toBe(1); // 内容未变 → 校验器跨重载稳定（304 收益的前提）
+  expect(cssEtags.every((e) => typeof e === 'string' && e.startsWith('W/'))).toBe(true);
+  expect(new Set(cssEtags).size).toBe(1); // 内容未变 → 校验器跨请求稳定（304 收益的前提）
 });
 
 test('删除（回收站）后预览不可达', async () => {

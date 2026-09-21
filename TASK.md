@@ -18,7 +18,6 @@
 | macOS 签名 / 公证证书 | 无证书期发未签名包；证书就绪后填 secrets 并开启 `forceCodeSigning` 硬门禁（跟踪见「执行项登记」release 行） | 待定 |
 | better-sqlite3 13.x（N-API）可否免 electron-rebuild | 调研 P-2：官方未给 Electron 场景操作指引，保守保留 rebuild 兜底 | 待定 |
 | 开源许可证（README 暂标注待定：MIT） | 影响打包与发布 | 待定 |
-| package.json 缺 `author` 字段 | M6 electron-builder NSIS 打包需要，打包前必须补齐 | 待定 |
 | electron-builder 以 `postinstall: electron-builder install-app-deps` 替代直调 @electron/rebuild | 打包日志建议项（依赖编排更贴近 electron-builder 语义） | 待定 |
 | Vite/Vitest configLoader 'native' 迁移警告（config 文件含 ESM 语法但以 CJS 加载，native 计划成为默认） | 根治需切 `"type":"module"`（CJS/ESM 跨任务决策，影响构建产物形态），随 M1 构建编排重构一并评估 | 已裁决（2026-09-16）：M1 暂不切 "type":"module"——收益仅消除构建警告，代价是主进程 CJS 产物加载链与 preload 捆绑输出的连锁重构；待 Vite 将 native loader 设为默认（大版本升级预警）时随迁移条目再评估 |
 
@@ -48,7 +47,7 @@
 | --- | --- | --- | --- | --- |
 | docs/07 | 编辑器与保存管线设计 | 多标签页状态模型、自动保存去抖与写合并（竞态规则）、大文件阈值行为 | M4 开工前 | 待撰写 |
 | docs/08 | 导入导出与辅助功能设计 | 导入冲突判定键与三策略（跳过/重命名/覆盖）语义、vfs:// → 相对路径改写算法、设置 schema、备份命名与恢复流程 | M5 开工前 | 待撰写 |
-| docs/09 | 打包与发布规格 | electron-builder 配置基线、@electron/fuses 关闭清单（待调研项）、release 工作流与签名占位、版本号策略 | M6 开工前（先完成 fuses 待调研项） | 待撰写 |
+| docs/09 | 打包与发布规格 | electron-builder 配置基线、@electron/fuses 关闭清单（待调研项）、release 工作流与签名占位、版本号策略 | M6 发布批次开工前（先完成 fuses 待调研项） | 部分覆盖（2026-09-22）：NSIS 安装位置可选与 author 字段已由 `docs/superpowers/specs/2026-09-22-产品化UI重构-design.md` §5.3 落地；fuses/release 工作流/版本策略仍待本 spec |
 
 不需要单独 spec 的：M0 脚手架（宪法 C.4/C.6 + TASK.md 执行项已是完整依据）；IPC 字段级契约（在 `src/shared` 以 TS + zod 为单一来源，docs/03 §7 已定通道语义，代码即规格）；安全基线（宪法 B.5 禁令已完备）。
 
@@ -61,13 +60,12 @@
 | 【M1 前置】补齐 B.5-4/5 窗口安全基线缺口：`will-navigate` origin 白名单拦截（URL 解析器比较）、`setWindowOpenHandler` 一律 deny、`setPermissionRequestHandler` 默认拒绝 | 宪法 B.5-4/5 强制条款，M0 未落地 | M1 窗口 / 预览工作时优先补齐 | 完成（M1） |
 | 【M1 前置】preload 从 tsconfig.main 拆出独立构建：现 dev watch 与单独 `npm run build:main` 会用 tsc 多文件产物覆盖 rolldown 单文件 preload（sandbox 下坏产物、dev 形态 IPC 断），重构构建编排——dev 主开发循环即受影响，M1 开工首日即撞上 | M0-Task 8/11 实测遗留 | M1 前置（M1 开工首日） | 完成（M1） |
 | release 发布工作流：tag 触发、draft release 人工发布闸门、签名 / 公证 secrets 占位、`forceCodeSigning` 证书就绪后开启为硬门禁 | 同上 §三方案 C | M6 | 待办 |
-| 搜索索引重建修复例程（设置页：v1 对账不平或用户自修复触发——同 v2 复制范式重跑；M5 辅助功能批次） | docs/superpowers/specs/2026-09-17-搜索-design.md §7.1 | M5 | 待办（M5 Task 9 裁决：设置页维护区以 disabled 占位交付——brief 可选项评估为复用成本高（无既有可接线通道与例程出口），接线顺延后续批次） |
+| 搜索索引重建修复例程（设置页：v1 对账不平或用户自修复触发——同 v2 复制范式重跑） | docs/superpowers/specs/2026-09-17-搜索-design.md §7.1 | 后续批次 | 待办（M6 已按用户需求「未实现功能不设计」移除设置页 disabled 占位按钮；接线项保留） |
 | electron-builder v27 `electronGet` 更名复核 | 同上 §三（C.6-11） | v27 发布后 |
 | A.5-4 交互/批量预算分档与基句悬空指针清理（终审建议：交互单点写与批量导入分档、删「见 TASK.md」悬空引用） | M2 终审 | 下一修宪周期 | 待办 |
 | searchService `filterFragments` 类型白名单形态仅覆盖 ≤2 值（0/1/2 三分支，≥3 静默失真）——nodeTypes 枚举扩展时须同步参数化改造 | M2 终审 deferred（Task 7 评审） | M4 契约/枚举变更时 | 待办（M4 核对：未触碰对应文件，保留） |
 | 渲染层主 chunk 体积裁剪（D28 硬性出口 ≤ 800KB）：已闭环——**1,033,486B（Task 17 基线实建）→ 主 chunk 78,541B**。手段：① 共享域纯常量拆分 zod-free 模块（`vfs/search/settings-constants.ts`，渲染层零 zod 运行时、总量 1,033,486B→944,957B，全 chunk 指纹核验零残留）；② vite `codeSplitting` 三 vendor 分包（codemirror 492,838B / react 218,844B / 其余三方 154,145B），主 chunk 即业务+shadcn 组件；③ cn 双轨不做（不影响 chunk：clsx/tailwind-merge 仅测试消费不入包）。全量单测/集成/E2E 回归零变化 | M5 D28 按需导入红线；Task 1/6/15 评审登记 | M5 Task 17 出口验收前（硬性主 chunk ≤ 800KB） | 完成（M5 Task 17） |
 | persistLayout 裸写入队：Workspace.tsx 布局写（裸 get→set）与 M5 Task 5 新增的 recent/workspace 串行写队列并存，存在全文档 set 互踩丢写窗口——把 persistLayout 一并入队（一行改动）消掉最后一处全文档裸写 | M5 Task 5 评审 Minor | 下次触碰 Workspace settings 写链时顺手清 | 待办 |
 | mime 表扩展：src/main/vfs/mime.ts（M1 域）无 `.ogg`→`audio/ogg` 映射，M5 Task 14 的 audio 预览分支对 .ogg 文件不可达（落 octet-stream 拒开 toast）——补一行映射 | M5 Task 14 评审发现（跨里程碑缝隙） | 下次触碰 mime.ts 时顺手清 | 待办 |
-| 还原失败后半开状态改 relaunch：备份还原 rename 极端失败后重开的 db 与 vfs/search 旧连接脱节，此后库操作报错至重启——建议 relaunch+exit 替代重开连接（重开无人使用的连接不如干净重启） | M5 终审（2026-09-21） | M6 打包批次前打磨 | 待办 |
-| 导出/导入目标锚纳入媒体弱选中：exportSelectionRef 与 deriveImportTargetParentId 只看 revealSelectionId ?? activeId，图片预览后立即导出/导入静默落到旧锚，与 D20 预览双源语义存在观感缝隙 | M5 终审（2026-09-21） | M6 打包批次前打磨 | 待办 |
+| 还原失败后半开状态改 relaunch：备份还原 rename 极端失败后重开的 db 与 vfs/search 旧连接脱节，此后库操作报错至重启——建议 relaunch+exit 替代重开连接（重开无人使用的连接不如干净重启） | M5 终审（2026-09-21） | 后续批次打磨 | 待办（M6 数据目录迁移已按同向 D9 语义落地：关库后失败=清理+重启走旧指针） |
 | macOS Playwright _electron 进程退出验证不可驱动（guard E2E darwin 跳过）——Electron quit 流程被 guard preventDefault 中断后 forceClose 关窗不在 quit 流程内，mac window-all-closed 不自动退，Playwright 连接与 OS 句柄存在固有窗口；guard 链验收由 Windows/Linux 覆盖，mac 真实验证记录见 M4 Task 10 报告 §十二（第四轮 CI dialog 链全通日志） | M4 Task 10 fix loop 四轮 CI 实证 + SDD breaker 裁决（2026-09-19）；降级先例：spec §9.1-7 检查元素原生 popup 不可驱动 | mac 平台 guard E2E 覆盖需求出现时（或 Playwright _electron 进程退出能力演进时）重评 | 已裁决（darwin 跳过 + 留证） |

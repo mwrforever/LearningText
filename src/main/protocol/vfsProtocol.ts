@@ -37,12 +37,15 @@ function textResponse(body: string, status: number): Response {
  *    序列化对非 ASCII 路径恒百分号编码，而触发端 postMessage 的 path 为库内原始
  *    virtualPath，不解码则 CJK 路径永不命中；解码失败由 try/catch 兜底静默跳过。
  * ② 编辑会话（M6 spec §3.1）：父→子 lt:edit-enable（body contentEditable='true' +
- *    spellcheck=false，挂 input 监听）/lt:edit-disable（撤销编辑态）；input 触发 200ms
- *    去抖序列化上报 lt:doc-edit {html}——序列化 = clone documentElement → 摘除全部
- *    [data-lt-injected]（本桥自身，永不落库，否则每轮保存累积脚本且污染 content_hash）
- *    → 摘除 body 的 contenteditable/spellcheck 属性 → doctype 重建（name/publicId/systemId）
- *    → outerHTML 拼接（spec §3.2）。M6 起滚动同步退役（编辑面=渲染面，spec D5），
- *    原 lt:scroll-ratio / lt:scroll-report 注入段删除。
+ *    spellcheck=false，挂 input 监听）/lt:edit-disable（撤销编辑态）；input 触发**逐输入
+ *    即时**序列化上报 lt:doc-edit {html}（spec 批次④修正：原 200ms setTimeout 去抖在沙箱
+ *    iframe 内可被渲染器计时器搁置无限期延迟（E2E 探针实证 >30s 不触发），上报尾部丢失
+ *    即保存尾部丢失——改为每输入即报，postMessage 成本可忽略，写侧节奏由父窗
+ *    SaveController 的 preview.debounceMs 尾沿去抖全权承担）。序列化 = clone
+ *    documentElement → 摘除全部 [data-lt-injected]（本桥自身，永不落库，否则每轮保存累积
+ *    脚本且污染 content_hash）→ 摘除 body 的 contenteditable/spellcheck 属性 → doctype
+ *    重建（name/publicId/systemId）→ outerHTML 拼接（spec §3.2）。M6 起滚动同步退役
+ *    （编辑面=渲染面，spec D5），原 lt:scroll-ratio / lt:scroll-report 注入段删除。
  * 注意：字符串内不得出现 </script> 序列（会在宿主页提前闭合标签），闭合标签以
  * `'</' + 'script>'` 拼接形态落地；拼接体的 JS 语法由集成测试以 new Function 编译
  * 守卫兜底，序列化行为由 jsdom 运行时用例覆盖（unit 层真实执行注入体）。
@@ -52,8 +55,7 @@ const PREVIEW_RECEIVER =
   '<script data-lt-injected="1">' +
   '(function () {' +
   'function ltSerialize() {var clone = document.documentElement.cloneNode(true);var injected = clone.querySelectorAll("[data-lt-injected]");for (var i = injected.length - 1; i >= 0; i--) {injected[i].parentNode.removeChild(injected[i]);}var b = clone.tagName === "BODY" ? clone : clone.querySelector("body");if (b) {b.removeAttribute("contenteditable");b.removeAttribute("spellcheck");}var head = "";var dt = document.doctype;if (dt) {head = "<!DOCTYPE " + dt.name;if (dt.publicId) {head += " PUBLIC \\"" + dt.publicId + "\\"";if (dt.systemId) {head += " \\"" + dt.systemId + "\\"";}} else if (dt.systemId) {head += " SYSTEM \\"" + dt.systemId + "\\"";}head += ">\\n";}return head + clone.outerHTML;}' +
-  'var ltTimer = 0;' +
-  'function ltReport() {if (ltTimer) {clearTimeout(ltTimer);}ltTimer = setTimeout(function () {ltTimer = 0;parent.postMessage({ type: "lt:doc-edit", html: ltSerialize() }, "*");}, 200);}' +
+  'function ltReport() {parent.postMessage({ type: "lt:doc-edit", html: ltSerialize() }, "*");}' +
   'window.addEventListener("message", function (e) {var m = e.data;if (m && m.type === "lt:css-swap" && typeof m.path === "string" && typeof m.text === "string") {var links = document.querySelectorAll(\'link[rel="stylesheet"]\');for (var i = 0; i < links.length; i++) {var href = links[i].getAttribute("href");if (href !== null) {try {if (decodeURIComponent(new URL(href, document.baseURI).pathname) === m.path) {var s = document.createElement("style");s.textContent = m.text;links[i].replaceWith(s);}} catch (_e) {}}}} else if (m && m.type === "lt:edit-enable") {if (document.body) {document.body.contentEditable = "true";document.body.spellcheck = false;document.body.addEventListener("input", ltReport);}} else if (m && m.type === "lt:edit-disable") {if (document.body) {document.body.contentEditable = "false";document.body.removeEventListener("input", ltReport);}}});' +
   '})();</' +
   'script>';
