@@ -28,6 +28,7 @@ LearningText/
 ├── TASK.md                 # 登记台（待调研 / 待决策 / 待回填）
 ├── CHANGELOG.md            # 变更记录（先记再改）
 ├── README.md               # 项目导览
+├── scripts/                # 工程脚本（check:preload 产物守卫、start.sh/start.bat 启动脚本）
 ├── docs/                   # 设计文档与调研报告（见「配套文件职责」）
 ├── .github/workflows/      # CI 工作流（ci.yml，门禁基线见 C.5）      [M0]
 ├── src/main|preload|renderer|shared/  # 主进程 / 桥 / 渲染层 / 共享契约（内部结构见 B.1）[M0]
@@ -69,7 +70,7 @@ LearningText/
 
 ## A.2 配置管理
 
-1. 用户设置与用户数据统一写 `app.getPath('userData')` 下应用专属子目录；`userData` 禁放大文件——文档正文一律进 SQLite BLOB（C.2 选型）。
+1. 用户设置与用户数据**默认**写 `app.getPath('userData')` 下应用专属子目录；允许用户在设置中更改数据根目录并提供迁移能力（数据根由 userData 直下指针文件 `data-dir.json` 记录——该文件是 userData 直下唯一例外）；`userData` 禁放大文件——文档正文一律进 SQLite BLOB（C.2 选型）。
 2. 环境变量只在主进程读取；渲染进程需要时由主进程经 IPC 显式下发白名单字段。
 3. 渲染端构建期常量仅经 `VITE_` 前缀注入、经 `import.meta.env` 读取；**禁止把敏感值放入任何 `VITE_*` 变量**（会打进产物）。
 4. `.env.local` / `.env.*.local` 必须进 `.gitignore`；渲染端 env 类型扩展写在 `src/vite-env.d.ts`。
