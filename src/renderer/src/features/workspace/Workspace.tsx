@@ -59,7 +59,7 @@
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
-import { DEFAULT_LAYOUT } from '../../../../shared/settings-contract';
+import { DEFAULT_LAYOUT } from '../../../../shared/settings-constants';
 import type {
   RecentEntry,
   SettingsData,

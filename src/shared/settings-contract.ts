@@ -6,9 +6,11 @@
  * 校验失败由 handler 统一映射 E_IPC_BAD_PAYLOAD。
  */
 import { z } from 'zod';
+// 纯常量落 zod-free 模块（M5 D28 主 chunk 裁剪）：schema/迁移例程在运行时消费版本号与布局默认，
+// 经本文件聚合 re-export 维持域契约聚合出口（宪法 A.7-5 单一来源）
+import { DEFAULT_LAYOUT, SETTINGS_SCHEMA_VERSION } from './settings-constants';
 
-/** 设置 schema 版本号：v1（M3）→ v2（M4 additive）→ v3（M5 additive 四域）；不识别版本回退默认值 */
-export const SETTINGS_SCHEMA_VERSION = 3;
+export { DEFAULT_LAYOUT, DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION } from './settings-constants';
 
 /** 三栏布局态（M4 spec §5.1）：折叠三态 + 树/预览宽度比例（编辑器自适应占余） */
 export const ShellLayoutSchema = z.strictObject({
@@ -19,15 +21,6 @@ export const ShellLayoutSchema = z.strictObject({
   previewWidthRatio: z.number().min(0.15).max(0.6),
 });
 export type ShellLayout = z.infer<typeof ShellLayoutSchema>;
-
-/** 布局出厂默认：全展开，树 1/4、预览 0.4（编辑器自适应） */
-export const DEFAULT_LAYOUT: ShellLayout = {
-  treeCollapsed: false,
-  editorCollapsed: false,
-  previewCollapsed: false,
-  treeWidthRatio: 0.25,
-  previewWidthRatio: 0.4,
-};
 
 /** 外观域（M5 批次③）：UI 主题三态 + 编辑器字号（12–24 整数闭区间） */
 export const AppearanceSchema = z.strictObject({
@@ -132,15 +125,3 @@ export function migrateV2ToV3(legacy: SettingsDataV2): SettingsData {
 
 /** settings:get 请求形态：无参通道沿 system:ping 先例传 null（preload 包装侧固定） */
 export const SettingsGetRequestSchema = z.null();
-
-/** 出厂默认设置（文件缺失/损坏/版本不识别时的回退值） */
-export const DEFAULT_SETTINGS: SettingsData = {
-  schemaVersion: SETTINGS_SCHEMA_VERSION,
-  preview: { debounceMs: 300 },
-  editor: { autoSaveMs: 3000 },
-  shell: { layout: DEFAULT_LAYOUT },
-  appearance: { theme: 'system', editorFontSize: 14 },
-  backup: { autoEnabled: true },
-  recent: { opened: [] },
-  workspace: { tabNodeIds: [], activeTabNodeId: null, restoreOnStart: true },
-};

@@ -10,7 +10,7 @@
  * 回写覆盖新状态）；样式走设计系统规范类串模板字面量，不消费 cn()（D28 体积红线）。
  */
 import { useRef, useState } from 'react';
-import { SEARCH_LIMIT_DEFAULT } from '../../../../shared/search-contract';
+import { SEARCH_LIMIT_DEFAULT } from '../../../../shared/search-constants';
 import type { SearchHit, Snippet } from '../../../../shared/search-contract';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import { Input } from '@components/ui/input';

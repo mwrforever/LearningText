@@ -5,14 +5,14 @@
 import { z } from 'zod';
 import { NodeMetaSchema, type NodeMeta } from './vfs-contract';
 
-/** 每页命中数默认（spec §5） */
-export const SEARCH_LIMIT_DEFAULT = 50;
-/** 每页命中数硬上限（spec §5） */
-export const SEARCH_LIMIT_MAX = 200;
-/** 查询词项数上限（超限整条拒绝，spec §4） */
-export const MAX_SEARCH_TERMS = 8;
-/** 单词项码点长度上限（与名称长度上限量级一致） */
-export const MAX_SEARCH_TERM_CODEPOINTS = 255;
+// —— 纯常量落 zod-free 模块（M5 D28 主 chunk 裁剪：渲染层只 import 常量时零 zod 运行时），
+//    此处 re-export 维持本文件作为域契约聚合出口（宪法 A.7-5 单一来源）——
+export {
+  MAX_SEARCH_TERM_CODEPOINTS,
+  MAX_SEARCH_TERMS,
+  SEARCH_LIMIT_DEFAULT,
+  SEARCH_LIMIT_MAX,
+} from './search-constants';
 
 /** 命中区间：text 内 JS UTF-16 码元偏移，[start, end) 半开（spec §6） */
 export const SearchHitRangeSchema = z.strictObject({
