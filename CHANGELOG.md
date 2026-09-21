@@ -89,3 +89,16 @@
 ## 2026-09-21
 
 - **设计系统基线增量（M5 批次⑧ Task 15 taste 打磨，先记后改）**：`docs/design/设计系统.md` 新增「§九 打磨增量」承载审计增量，核心为 `--destructive` 双主题各调一档——审计实证破坏色文本真正最坏表面是悬停 accent 面（light `#DC2626`/`#E2E8F0` = 3.92:1、dark `#EF4444`/`#1E293B` = 3.89:1，均不达正文门槛 4.5:1，原 §3.1 只验 background 面属基线验算缺口），修正为 light `#B91C1C`（accent 面 5.25:1）/ dark `#F87171`（accent 面 5.29:1），§3.1 对比度表全组合重算并增列 #18/#19 悬停面行。随批交付：`theme.css` base 层 `button:focus-visible` 2px 焦点环基线、shadcn 浮层消费侧覆写惯例（`AlertDialogContent` p-4 / `AlertDialogTitle` text-base 对齐标尺）、数据数字 `tabular-nums`、面板级组合空态与树行「⋯」hover/focus/open 三态显形等呈现层打磨（全站行为与 aria 锚点零变更，既有测试全绿零改动）；geometry 过渡等 D24 红线不做项留证见 §九-8。打磨对照表：`.superpowers/sdd/2026-09-19-M5-导入导出与辅助功能/polish-checklist.md`。
+- **M5 导入导出与辅助功能里程碑定稿（SDD 执行 Task 1-17 完毕，Task 17 收尾）**：spec `docs/superpowers/specs/2026-09-19-导入导出与辅助功能-design.md` 与实施计划 `docs/superpowers/plans/2026-09-19-M5-导入导出与辅助功能.md` 定稿并全部落地。要点：
+  - **技术栈裁决落地（D26–D28，C.2/C.7）**：shadcn/ui（CLI add 组件源码）+ Tailwind CSS v4（`@tailwindcss/vite`，CSS-first）装配进渲染层；motion 13.4.x 虽经 C.2 修宪登记，实装裁决为零运行时引入——微交互走 CSS 过渡 + tw-animate-css；打磨阶段 taste-skill 逐面升级（对照表与增量见 2026-09-21 上一条）；A.8 撤销改以 C.7 三段律承载（2026-09-20 已记）；
+  - **搜索 UI（批次①）**：全局搜索面板入树栏 search 态（类型过滤/片段区间高亮/分页加载更多/在树中显示/过期响应丢弃）+ 快速打开浮层合流（最近打开 + 搜索结果双组，cmdk）；MatchIn 等检索契约缺陷随批次顺手清（spec §2.3 deferred）；
+  - **回收站 / 最近打开 / 工作区恢复（批次②与③数据源）**：回收站面板（列表含原路径与删除时刻/还原/撞名 toast/彻底删除 confirm）、最近打开上限 20 条、工作区标签集与激活标签持久化、启动恢复开关（86e547e 补设置页 UI 控件）；
+  - **设置页与 settings v3（批次③）**：schemaVersion 3 additive 四域 appearance/backup/recent/workspace，v1→v2→v3 链式迁移只补默认不改旧值；主题三态（亮/暗/跟随系统，`.dark` 类）+ 编辑器字号滑块联动 one-dark 与 CM 主题解析器重建（D10）；
+  - **备份本体（批次④，Task 9）**：每日滚动备份 + 设置页维护区（自动备份开关/手动建份/列表/还原——强确认「覆盖当前全部数据并重启应用」+ relaunch 生效）；搜索索引重建修复例程按 Task 9 裁决 disabled 占位留证（见 `TASK.md` 保留行）；
+  - **树行内操作（Task 10）**：树行「⋯」菜单 + 目录 rename/move 选中语义扩展 + move 模式状态条引导文案 + settingsService `set` 日志域摘要化；
+  - **滚动同步（批次⑤，FR-RENDER-06）**：比例+锚点协议双向跟随、150ms 回环抑制（D13）、开关关闭不跟随（D14）；随 Task 16 E2E 实测修复 CM6 无高度约束缺陷（e10076a——`.cm-scroller` 与内容同高致滚动链路死路，补 `heightConstraintTheme`）；
+  - **导入导出（批次⑥⑦，Task 12/13）**：导入磁盘遍历分批事务写入/重名三策略（跳过/重命名/覆盖）/进度广播与取消（D15–D17）；导出子树写盘/`vfs://` 引用改写相对路径与越界占位（D18）/目录选择登记簿校验与 openPath（D19）；缺陷修复两笔——导入后目标父目录子级直调回写补根（dd6a77c）、导出子树行序结构深度稳定排序（d35718f，move 过子树整批失败根因）；
+  - **图片音频只读预览（批次⑧，Task 14）**：openFile 媒体分流、预览双源状态机（媒体点选不清激活标签）、树弱选中；主文档 CSP 增补 `img-src/media-src 'self' vfs:`（e10076a，E2E 探针实证 CSP 回落拦截 `<img>` 载入）；
+  - **验收与实测（Task 16，`[perf-m5]` 计时）**：E2E 27/27 全绿（既有 18 + M5 9 用例：主链路/快速打开/回收站/设置/备份/滚动同步/导入取消/图片预览/恢复开关）；主链路导入 ~250ms；600×40KB 健康路径导入 ~0.9s；滚动同步 200 段落长文档比例 ±5% 双向（225–558ms）；图片真实解码 ~80ms；导入取消稳定生效（写入 400/601）；FR-EDIT-01 既有实测（≈170ms）不变；
+  - **D28 主 chunk 裁剪（Task 17 出口，硬性 ≤ 800KB）**：渲染层主 chunk 1,033,486B → **78,541B**——① 共享域纯常量拆分 zod-free 模块（`src/shared/vfs/search/settings-constants.ts`：渲染层仅消费常量时零 zod 运行时，契约校验仍归主进程 handler，A.7；JS 总量 1,033,486B → 944,957B，全 chunk 指纹核验零 zod 残留）；② vite `codeSplitting` 三 vendor 分包（codemirror 492,838B / react 218,844B / 其余三方 154,145B）——分包不减总量，是满足「主 chunk ≤ 800KB（原始体积）」口径的手段；cn 双轨不做（clsx/tailwind-merge 仅测试消费不入包）。全量单测（466）/集成（132）/E2E（27）回归零变化；
+  - `TASK.md` 登记台收尾：删「滚动同步（FR-RENDER-06）」行（批次⑤交付）；主 chunk 体积行闭环销账（终值 78,541B 与手段留档）；macOS guard 降级（darwin 跳过留证）、搜索索引重建（disabled 占位）、persistLayout 入队、mime `.ogg`、release 工作流等未到期项保留。
