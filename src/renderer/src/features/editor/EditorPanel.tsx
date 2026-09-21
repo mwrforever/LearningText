@@ -5,8 +5,9 @@
  * 前置拦截（非文本不开标签），本组件不再有二进制分支（无死分支纪律）。
  * M5 批次③ Task 8：外观联动——theme/editorFontSize 变化经外观 compartment reconfigure
  * effect 同 state 重配（doc/undo/光标/滚动全保留，CM6 官方习语；评审 Important fix round 1
- * 弃用 EditorState 整体重建——该路径丢失撤销历史）；切签换入后无条件对齐外观（非激活标签
- * 的 state compartment 内容可能滞后于当前外观）。
+ * 弃用 EditorState 整体重建——该路径丢失撤销历史）；切签换入与首挂建视图后均无条件对齐外观
+ * （非激活标签 / 恢复链 mount 闭包构造的 state，compartment 内容可能滞后于当前外观——
+ * M5 终审 Important：恢复式打开单标签场景的陈旧外观自愈落点在建视图分支）。
  * M5 批次⑤ Task 11：滚动同步（FR-RENDER-06）——上行：scrollDOM 监听（独立 effect 挂卸，
  * 不触碰会话 state 与 compartment，Task 8 同 state 重配机制零交互）经 100ms 节流计算比例
  * 回调 onScrollRatio（Workspace 桥接至预览投递），上报即盖章进 150ms 抑制窗（D13）；下行：
@@ -112,12 +113,16 @@ export function EditorPanel({
     const session = sessions.get(activeTab.meta.id);
     if (session === undefined) return undefined;
     if (view === null) {
-      // 首挂建 view：openFile 以当前外观构造会话 state（compartment 内容即当前值），无需对齐
+      // 首挂建 view：openFile 以当前外观构造会话 state（compartment 内容即当前值），无需对齐。
+      // 例外（M5 终审 Important）：恢复式打开的会话由 Workspace 恢复链的 mount 闭包构造，
+      // 可能持陈旧外观（且空态期的外观变更早已记账、appearanceChanged 恒 false）——创建分支
+      // 同样无条件对齐：reconfigure 与 compartment 当前值等值时为 no-op transaction，幂等安全
       const created = new EditorView({
         parent: hostRef.current ?? undefined,
         state: session.state,
       });
       created.scrollDOM.scrollTop = session.scrollTop;
+      created.dispatch({ effects: appearanceReconfigureEffect(lastAppearanceRef.current) });
       viewRef.current = created;
     } else {
       const prevId = activeNodeIdRef.current;

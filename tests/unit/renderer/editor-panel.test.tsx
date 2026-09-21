@@ -366,6 +366,59 @@ describe('EditorPanel（CodeMirror 内核）', () => {
     tree.unmount();
   });
 
+  it('恢复式打开：空态期外观变更已记账、会话持陈旧外观构造时，建视图分支仍对齐外观（终审回归）', () => {
+    // M5 终审 Important：Workspace 恢复链以 mount 闭包的旧外观构造会话 state，且空态期
+    // （activeTab=null）的外观 props 变化只记账不重配——首签创建视图走「无需对齐」分支，
+    // 整会话停留陈旧外观。修复后创建分支无条件派发 reconfigure（等值时为 no-op 幂等）。
+    // 断言口径：oneDark 携 {dark:true} 主题 → EditorView.darkTheme facet 反映 compartment
+    // 实际生效的主题；陈旧会话（light）+ 当前 props（dark）→ 挂载后 facet 必须翻转。
+    const sessions = new TabSessions();
+    const onDocChanged = vi.fn();
+    // 会话 state 按陈旧外观（light/14）构造——模拟恢复链 mount 闭包的旧值
+    sessions.open(
+      5,
+      createEditorState({
+        doc: '<p>恢复</p>',
+        mimeType: 'text/html',
+        handlers: { onDocChanged: (t) => onDocChanged(t), onScroll: () => {} },
+        appearance: { theme: 'light', fontSize: 14 },
+      }),
+    );
+    const tree = createRoot(container);
+    // 空态挂载：当前外观 props 已是 dark/20（记账进 lastAppearanceRef，无视图可重配）
+    act(() => {
+      tree.render(
+        <EditorPanel
+          sessions={sessions}
+          activeTab={null}
+          debounceMs={300}
+          theme="dark"
+          editorFontSize={20}
+        />,
+      );
+    });
+    // 恢复的单标签激活：会话先前以 light/14 构造，appearanceChanged 恒 false
+    act(() => {
+      tree.render(
+        <EditorPanel
+          sessions={sessions}
+          activeTab={{ meta: meta(5, 'restored.html'), dirty: false }}
+          debounceMs={300}
+          theme="dark"
+          editorFontSize={20}
+        />,
+      );
+    });
+    const view = mountedView(container);
+    expect(view).not.toBeNull();
+    // 外观对齐：compartment 实际生效主题为 dark（陈旧 light 被创建分支重配覆盖）
+    expect(view?.state.facet(EditorView.darkTheme)).toBe(true);
+    // 对齐不触碰文档：内容保留、不误报变更（不误触发保存管线）
+    expect(view?.state.doc.toString()).toBe('<p>恢复</p>');
+    expect(onDocChanged).not.toHaveBeenCalled();
+    tree.unmount();
+  });
+
   it('外观变更后撤销栈保留：可 undo 回变更前文档（history 面断言，评审 Important 配套背书）', () => {
     // spec §4.3 D10「保 doc/undo」两半的历史面验证：主题+字号双变更（compartment 重配）
     // 之后，撤销深度无损——变更后新输入仍可一路 undo 越过外观变更点回到变更前文档
