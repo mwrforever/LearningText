@@ -511,18 +511,21 @@ describe('主进程装配 bootstrapMain', () => {
   });
 
   // —— 自绘标题栏（M6 spec §2.2）——
-  it('自绘标题栏：system 意图经 nativeTheme 解析初始 overlay 配色（暗色偏好 → dark 套色）', async () => {
+  it('自绘标题栏：system 意图经 nativeTheme 解析初始 overlay 配色（暗色偏好 → dark 套色；显式钉 win32 平台保证 overlay 臂三平台覆盖）', async () => {
     mocks.nativeTheme.shouldUseDarkColors = true;
-    bootstrapMain();
-    await flushReadyChain();
+    const original = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      bootstrapMain();
+      await flushReadyChain();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true });
+    }
     const options = mocks.BrowserWindow.mock.calls[0]?.[0];
     expect(options).toMatchObject({ titleBarStyle: 'hidden' });
-    // overlay 断言仅非 darwin 平台（mac 无 overlay，darwin 专项语义由下条用例承载）
-    if (process.platform !== 'darwin') {
-      expect(options).toMatchObject({
-        titleBarOverlay: { color: '#1e293b', symbolColor: '#f8fafc', height: 40 },
-      });
-    }
+    expect(options).toMatchObject({
+      titleBarOverlay: { color: '#1e293b', symbolColor: '#f8fafc', height: 40 },
+    });
   });
 
   it('自绘标题栏：darwin 平台不设 titleBarOverlay（窗口控制钮归系统红绿灯）', async () => {
