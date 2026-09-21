@@ -30,3 +30,9 @@ export const E_BACKUP_CORRUPT = 'E_BACKUP_CORRUPT';
 export const E_IO_SOURCE_NOT_FOUND = 'E_IO_SOURCE_NOT_FOUND';
 /** 导出目标目录不可写或不存在（写探针预检失败，选择与发起之间目录被移动/权限收紧等） */
 export const E_IO_TARGET_UNWRITABLE = 'E_IO_TARGET_UNWRITABLE';
+
+// —— 以下为 M6 数据目录域实际使用的码（docs/03 §7.3 同步，禁预定义未使用码）——
+/** 数据目录迁移目标非法（等于当前目录/不可写/不存在/已含同名数据目录） */
+export const E_STORAGE_INVALID_TARGET = 'E_STORAGE_INVALID_TARGET';
+/** 数据目录迁移执行失败（关库后复制/写指针环节出错），已清理残留、旧位置不受影响 */
+export const E_STORAGE_MIGRATE_FAILED = 'E_STORAGE_MIGRATE_FAILED';

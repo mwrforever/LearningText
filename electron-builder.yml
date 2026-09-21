@@ -14,6 +14,12 @@ files:
 asarUnpack:
   - '**/node_modules/better-sqlite3/**/*.node'
 npmRebuild: true
+# NSIS 向导式安装（M6 spec §5.3，FR 用户需求：安装位置由用户选择）：
+# oneClick:false 是 allowToChangeInstallationDirectory 的前置条件（assisted installer only）
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: LearningText-Setup-${version}.${ext}
 win:
   target: nsis
 mac:

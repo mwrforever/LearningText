@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "跨平台桌面端 HTML 文档管理与实时预览工具",
+  "author": "mwrforever",
   "main": "dist/main/app.js",
   "engines": {
     "node": ">=24.0.0"
