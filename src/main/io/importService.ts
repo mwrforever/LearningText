@@ -270,6 +270,7 @@ export function createImportService(deps: {
             throw new AppError(E_IO_SOURCE_NOT_FOUND, '导入源路径不存在或不可读');
           }
           onProgress({
+            kind: 'import',
             importId,
             phase: 'scanning',
             done: index + 1,
@@ -353,6 +354,7 @@ export function createImportService(deps: {
             currentPath = entry.node.relPath;
           }
           onProgress({
+            kind: 'import',
             importId,
             phase: 'writing',
             done,

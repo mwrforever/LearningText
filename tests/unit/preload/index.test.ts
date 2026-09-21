@@ -27,6 +27,8 @@ interface ExposedApi {
   importNodes(request: unknown): Promise<unknown>;
   cancelImport(request: unknown): Promise<unknown>;
   pickDirectory(request: unknown): Promise<unknown>;
+  exportNodes(request: unknown): Promise<unknown>;
+  openPath(request: unknown): Promise<unknown>;
   onShellCommand(callback: (event: unknown) => void): () => void;
   onVfsChanged(callback: (event: unknown) => void): () => void;
   onBackupDone(callback: (event: unknown) => void): () => void;
@@ -90,6 +92,8 @@ describe('preload 桥注册', () => {
       'importNodes',
       'cancelImport',
       'pickDirectory',
+      'exportNodes',
+      'openPath',
       'onIoProgress',
       'onShellCommand',
       'onVfsChanged',
@@ -142,6 +146,9 @@ describe('preload 桥注册', () => {
       ],
       ['cancelImport', IPC.ioCancel, { importId: 1 }],
       ['pickDirectory', IPC.ioPickDirectory, { multiple: true }],
+      // 导出域（M5 批次⑥ Task 13）：导出请求透传、打开目录串透传（白名单登记簿校验在主进程侧）
+      ['exportNodes', IPC.ioExport, { nodeId: 7, targetDir: 'D:/picked' }],
+      ['openPath', IPC.shellOpenPath, { dir: 'D:/picked' }],
     ];
     mocks.invoke.mockResolvedValue({ ok: true, value: null });
     for (const [method, channel, request] of channelCases) {
@@ -207,7 +214,7 @@ describe('preload 桥注册', () => {
     expect(mocks.removeListener).toHaveBeenCalledWith(IPC.backupDone, listener);
   });
 
-  it('onIoProgress 订阅：剥离 event 首参仅回传导入进度载荷，退订移除同一监听器', () => {
+  it('onIoProgress 订阅：剥离 event 首参仅回传 io 进度载荷（导入/导出可辨识联合），退订移除同一监听器', () => {
     const callback = vi.fn<(event: unknown) => void>();
     const unsubscribe = exposedApi.onIoProgress(callback);
     // 订阅固定挂在 io:progress 广播通道上（M5 批次⑥）
@@ -218,10 +225,28 @@ describe('preload 桥注册', () => {
       throw new Error('onIoProgress 未注册监听器');
     }
     // 模拟主进程进度广播：首个参数为 IpcRendererEvent 形态，必须被剥离后不透传
-    const payload = { importId: 1, phase: 'writing', done: 200, total: 250, currentPath: 'a.txt' };
-    listener({ sender: 'ipc-event' }, payload);
+    const importPayload = {
+      kind: 'import',
+      importId: 1,
+      phase: 'writing',
+      done: 200,
+      total: 250,
+      currentPath: 'a.txt',
+    };
+    listener({ sender: 'ipc-event' }, importPayload);
     expect(callback).toHaveBeenCalledTimes(1);
-    expect(callback).toHaveBeenCalledWith(payload);
+    expect(callback).toHaveBeenCalledWith(importPayload);
+    // 导出进度同通道分发（kind: 'export' 判别字段区分，Task 13）
+    const exportPayload = {
+      kind: 'export',
+      exportId: 1,
+      phase: 'writing',
+      done: 3,
+      total: 9,
+      currentPath: 'notes/a.css',
+    };
+    listener({ sender: 'ipc-event' }, exportPayload);
+    expect(callback).toHaveBeenCalledWith(exportPayload);
     unsubscribe();
     expect(mocks.removeListener).toHaveBeenCalledWith(IPC.ioProgress, listener);
   });

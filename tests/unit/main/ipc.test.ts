@@ -16,6 +16,7 @@ import { IPC } from '../../../src/shared/ipc';
 import {
   E_BACKUP_CORRUPT,
   E_IO_SOURCE_NOT_FOUND,
+  E_IO_TARGET_UNWRITABLE,
   E_IPC_BAD_PAYLOAD,
   E_IPC_FORBIDDEN_ORIGIN,
   E_STORE_INTERNAL,
@@ -29,6 +30,7 @@ import type { SearchService } from '../../../src/main/search/searchService';
 import type { SettingsService } from '../../../src/main/settings/settingsService';
 import type { BackupService } from '../../../src/main/backup/backupService';
 import type { ImportService } from '../../../src/main/io/importService';
+import type { ExportService } from '../../../src/main/io/exportService';
 import { DEFAULT_SETTINGS, type SettingsData } from '../../../src/shared/settings-contract';
 
 function fakeEvent(origin: string | null): { senderFrame: { origin: string | null } | null } {
@@ -92,6 +94,20 @@ function makePickStub(): (allowMultiple: boolean) => Promise<readonly string[]> 
   return vi.fn(() => Promise.resolve(['D:/picked']));
 }
 
+// 导出服务桩（M5 批次⑥ Task 13）：exportNodes 可注入返回值（vi.fn 接口测试期适配先例同款）
+function makeExportStub(): ExportService {
+  return {
+    exportNodes: vi.fn(() =>
+      Promise.resolve({ exported: 1, rewritten: 0, missing: 0, skipped: 0, failed: 0 }),
+    ),
+  } as unknown as ExportService;
+}
+
+// 打开目录供给桩（M5 批次⑥ Task 13）：openDirectoryInShell 默认成功（shell.openPath 返回空串语义）
+function makeOpenPathStub(): (dir: string) => Promise<void> {
+  return vi.fn(() => Promise.resolve());
+}
+
 describe('system:ping 入口校验', () => {
   beforeEach(() => {
     handlers.clear();
@@ -107,6 +123,9 @@ describe('system:ping 入口校验', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
   });
 
@@ -177,6 +196,9 @@ describe('vfs 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     const okResult = handlers.get(IPC.vfsResolve)?.(fakeEvent('app://bundle'), {
       virtualPath: '/a',
@@ -219,6 +241,9 @@ describe('vfs 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
@@ -252,6 +277,9 @@ describe('vfs 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     const dup = handlers.get(IPC.vfsCreate)?.(fakeEvent('app://bundle'), {
       parentId: 1,
@@ -285,6 +313,9 @@ describe('vfs 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     const r = handlers.get(IPC.vfsList)?.(fakeEvent('http://evil'), { parentId: 1 }) as {
       ok: boolean;
@@ -329,6 +360,9 @@ describe('vfs 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
 
     const read = handlers.get(IPC.vfsRead)?.(fakeEvent('app://bundle'), { nodeId: 5 }) as {
@@ -426,6 +460,9 @@ describe('search 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     const okResult = handlers.get(IPC.searchQuery)?.(fakeEvent('app://bundle'), {
       keyword: '指数',
@@ -460,6 +497,9 @@ describe('search 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     const forbidden = handlers.get(IPC.searchQuery)?.(fakeEvent('http://evil'), {
       keyword: 'x',
@@ -499,6 +539,9 @@ describe('settings 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     const ok = handlers.get(IPC.settingsGet)?.(fakeEvent('app://bundle'), null) as {
       ok: boolean;
@@ -527,6 +570,9 @@ describe('settings 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     // M4 起 settings schema 为 v2：合法载荷以出厂默认为底、仅改写 debounceMs
     const r = handlers.get(IPC.settingsSet)?.(fakeEvent('app://bundle'), {
@@ -560,6 +606,9 @@ describe('vfs:get 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     // 桩返回服务层 NodeMeta（Result 包装由 handleWith 统一完成，同既有桩形态）
     const meta: NodeMeta = {
@@ -628,6 +677,9 @@ describe('vfs:list-trashed 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     const ok = handlers.get(IPC.vfsListTrashed)?.(fakeEvent('app://bundle'), null) as {
       ok: boolean;
@@ -666,6 +718,9 @@ describe('shell:force-close 接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     const bad = handlers.get(IPC.shellForceClose)?.(fakeEvent('app://bundle'), { x: 1 }) as {
       ok: boolean;
@@ -697,6 +752,9 @@ describe('广播版本号 rev', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     handlers.get(IPC.vfsWrite)?.(fakeEvent('app://bundle'), {
       nodeId: 2,
@@ -737,6 +795,9 @@ describe('backup 通道接线', () => {
       requestRelaunch: deps.requestRelaunch,
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
     });
     return deps;
   }
@@ -821,16 +882,23 @@ describe('backup 通道接线', () => {
 
 // 导入域三通道（M5 批次⑥ Task 12）：io:import 异步长任务（AppError 保真 / E_STORE_INTERNAL 兜底）、
 // io:cancel 按 importId 寻址、io:pick-directory 主进程目录选择供给；三通道均无 vfs 写事务 → 不广播
+// Task 13 追加：io:export 与 shell:open-path 同入本组（目录白名单登记簿两道校验同型）
 describe('io 通道接线', () => {
   interface IoDeps {
     io: ImportService;
     pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
+    export: ExportService;
+    dialogProducedDirs: ReadonlySet<string>;
+    openDirectoryInShell: (dir: string) => Promise<void>;
   }
 
   function registerWith(overrides: Partial<IoDeps> = {}): IoDeps {
     const deps: IoDeps = {
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      export: makeExportStub(),
+      dialogProducedDirs: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
       ...overrides,
     };
     handlers.clear();
@@ -846,6 +914,9 @@ describe('io 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: deps.io,
       pickDirectories: deps.pickDirectories,
+      export: deps.export,
+      dialogProducedDirs: deps.dialogProducedDirs,
+      openDirectoryInShell: deps.openDirectoryInShell,
     });
     return deps;
   }
@@ -944,5 +1015,87 @@ describe('io 通道接线', () => {
       multiple: false,
     })) as { ok: boolean; value: readonly string[] };
     expect(canceled).toEqual({ ok: true, value: [] });
+  });
+
+  it('io:export 白名单登记簿内的目标目录放行服务；登记外的串伪造拒绝（E_IPC_BAD_PAYLOAD）且服务不被调用', async () => {
+    const deps = registerWith();
+    const ok = (await handlers.get(IPC.ioExport)?.(fakeEvent('app://bundle'), {
+      nodeId: 7,
+      targetDir: 'D:/picked',
+    })) as { ok: boolean; value: { exported: number } };
+    expect(ok).toEqual({
+      ok: true,
+      value: { exported: 1, rewritten: 0, missing: 0, skipped: 0, failed: 0 },
+    });
+    expect(deps.export.exportNodes).toHaveBeenCalledWith({ nodeId: 7, targetDir: 'D:/picked' });
+
+    const forged = (await handlers.get(IPC.ioExport)?.(fakeEvent('app://bundle'), {
+      nodeId: 7,
+      targetDir: 'C:/Windows/System32',
+    })) as { ok: boolean; error: { code: string } };
+    expect(forged.ok).toBe(false);
+    expect(forged.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    expect(deps.export.exportNodes).toHaveBeenCalledTimes(1);
+  });
+
+  it('io:export 非法载荷与非法 origin 拒绝；业务错误码保真透传', async () => {
+    const deps = registerWith();
+    const bad = (await handlers.get(IPC.ioExport)?.(fakeEvent('app://bundle'), {
+      nodeId: 7,
+    })) as { ok: boolean; error: { code: string } };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    const forbidden = (await handlers.get(IPC.ioExport)?.(fakeEvent('http://evil'), {
+      nodeId: 7,
+      targetDir: 'D:/picked',
+    })) as { ok: boolean; error: { code: string } };
+    expect(forbidden.ok).toBe(false);
+    expect(forbidden.error.code).toBe(E_IPC_FORBIDDEN_ORIGIN);
+    expect(deps.export.exportNodes).not.toHaveBeenCalled();
+
+    const failing = makeExportStub();
+    (failing.exportNodes as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.reject(new AppError(E_IO_TARGET_UNWRITABLE, '导出目标目录不可写或不存在')),
+    );
+    registerWith({ export: failing });
+    const business = (await handlers.get(IPC.ioExport)?.(fakeEvent('app://bundle'), {
+      nodeId: 7,
+      targetDir: 'D:/picked',
+    })) as { ok: boolean; error: { code: string; message: string } };
+    expect(business.ok).toBe(false);
+    expect(business.error).toEqual({
+      code: E_IO_TARGET_UNWRITABLE,
+      message: '导出目标目录不可写或不存在',
+    });
+  });
+
+  it('shell:open-path 登记簿内目录转发主进程打开；登记外拒绝；打开失败收敛 E_STORE_INTERNAL', async () => {
+    const deps = registerWith();
+    const ok = (await handlers.get(IPC.shellOpenPath)?.(fakeEvent('app://bundle'), {
+      dir: 'D:/picked',
+    })) as { ok: boolean; value: null };
+    expect(ok).toEqual({ ok: true, value: null });
+    expect(deps.openDirectoryInShell).toHaveBeenCalledWith('D:/picked');
+
+    const forged = (await handlers.get(IPC.shellOpenPath)?.(fakeEvent('app://bundle'), {
+      dir: 'C:/Users/forged',
+    })) as { ok: boolean; error: { code: string } };
+    expect(forged.ok).toBe(false);
+    expect(forged.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    expect(deps.openDirectoryInShell).toHaveBeenCalledTimes(1);
+
+    registerWith({
+      openDirectoryInShell: vi.fn(() => Promise.reject(new Error('打开目录失败：目录已删除'))),
+    });
+    const failure = (await handlers.get(IPC.shellOpenPath)?.(fakeEvent('app://bundle'), {
+      dir: 'D:/picked',
+    })) as { ok: boolean; error: { code: string } };
+    expect(failure.ok).toBe(false);
+    expect(failure.error.code).toBe(E_STORE_INTERNAL);
+
+    const bad = (await handlers.get(IPC.shellOpenPath)?.(fakeEvent('app://bundle'), {})) as {
+      ok: boolean;
+    };
+    expect(bad.ok).toBe(false);
   });
 });

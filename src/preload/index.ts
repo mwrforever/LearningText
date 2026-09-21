@@ -8,7 +8,7 @@ import { IPC } from '../shared/ipc';
 import type { Result } from '../shared/result';
 import type { ShellCommand } from '../shared/shell-contract';
 import type { VfsChangedBroadcast } from '../shared/vfs-contract';
-import type { ImportProgress } from '../shared/io-contract';
+import type { IoProgress } from '../shared/io-contract';
 import type { WindowApi } from '../shared/window-api';
 
 const api: WindowApi = {
@@ -39,9 +39,14 @@ const api: WindowApi = {
   importNodes: (request) => ipcRenderer.invoke(IPC.ioImport, request),
   cancelImport: (request) => ipcRenderer.invoke(IPC.ioCancel, request),
   pickDirectory: (request) => ipcRenderer.invoke(IPC.ioPickDirectory, request),
-  /** 订阅导入进度广播（批次提交后发）：同 onBackupDone 先例，退订成对 */
+  // —— 导出域（M5 批次⑥ Task 13）：invoke 长任务 + 打开目录完成动作 ——
+  exportNodes: (request) => ipcRenderer.invoke(IPC.ioExport, request),
+  // openPath 白名单边界（B.5-4 精神）：dir 仅接受主进程 dialog 产出的目录串，主进程
+  // handler 按当次会话登记簿校验，伪造串不达 shell（包装为纯透传，校验在主进程侧）
+  openPath: (request) => ipcRenderer.invoke(IPC.shellOpenPath, request),
+  /** 订阅 io 进度广播（导入/导出可辨识联合按 kind 区分）：同 onBackupDone 先例，退订成对 */
   onIoProgress: (callback) => {
-    const listener = (_event: IpcRendererEvent, value: ImportProgress): void => callback(value);
+    const listener = (_event: IpcRendererEvent, value: IoProgress): void => callback(value);
     ipcRenderer.on(IPC.ioProgress, listener);
     return () => ipcRenderer.removeListener(IPC.ioProgress, listener);
   },

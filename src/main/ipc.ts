@@ -29,17 +29,22 @@ import type {
 } from '../shared/backup-contract';
 import type { BackupService } from './backup/backupService';
 import type { ImportService } from './io/importService';
+import type { ExportService } from './io/exportService';
 import {
+  ExportRequestSchema,
   ImportRequestSchema,
   IoCancelRequestSchema,
   IoPickDirectoryRequestSchema,
 } from '../shared/io-contract';
 import type {
+  ExportRequest,
   ImportRequest,
   ImportResult,
   IoCancelRequest,
   IoPickDirectoryRequest,
 } from '../shared/io-contract';
+import { OpenPathRequestSchema } from '../shared/shell-contract';
+import type { OpenPathRequest } from '../shared/shell-contract';
 import {
   CreateNodeRequestSchema,
   ListChildrenRequestSchema,
@@ -96,6 +101,19 @@ export interface IpcHandlerDeps {
    * （Task 13 复用）。用户取消返回空数组（不作为错误）。
    */
   readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
+  /** 导出服务（M5 批次⑥ Task 13）：export 长任务（逐节点写盘 + 引用改写 + 进度广播） */
+  readonly export: ExportService;
+  /**
+   * 当次会话目录选择登记簿（app.ts 持有，pickDirectories 产出时登记）：io:export 的
+   * targetDir 与 shell:open-path 的 dir 只接受登记簿内的串——渲染层可伪造任意 IPC 载荷，
+   * 用户可控串直达磁盘写与 shell 的信任边界必须在主进程侧收敛（B.5-4 精神）。
+   */
+  readonly dialogProducedDirs: ReadonlySet<string>;
+  /**
+   * 系统文件管理器打开目录（app.ts 提供，shell.openPath 包装）：空串语义成功；
+   * 非空返回值为错误描述串，转异常上抛经 handleWithAsync 收敛 E_STORE_INTERNAL。
+   */
+  readonly openDirectoryInShell: (dir: string) => Promise<void>;
 }
 
 /** origin 白名单判定（B.5-6）：senderFrame 可能为 null，null/空串/非白名单一律拒绝 */
@@ -354,5 +372,29 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     handleWithAsync(deps, IoPickDirectoryRequestSchema, (q: IoPickDirectoryRequest) =>
       deps.pickDirectories(q.multiple),
     ),
+  );
+
+  // —— 导出域（M5 批次⑥ Task 13）：写盘为事务外逐节点长任务（无 vfs 写事务 → 不广播，
+  //    进度经 io:progress 服务侧广播）；targetDir 只接受登记簿内串（见 deps 注）——
+  ipcMain.handle(
+    IPC.ioExport,
+    handleWithAsync(deps, ExportRequestSchema, async (q: ExportRequest) => {
+      if (!deps.dialogProducedDirs.has(q.targetDir)) {
+        throw new AppError(E_IPC_BAD_PAYLOAD, '导出目标目录必须来自目录选择对话框');
+      }
+      return deps.export.exportNodes(q);
+    }),
+  );
+  // 打开目录（导出完成动作）：入参信任边界同上（登记簿），伪造串不达 shell；
+  // 供给为 Promise<void>，响应固定 null（A.7-2 禁 undefined 承载语义）
+  ipcMain.handle(
+    IPC.shellOpenPath,
+    handleWithAsync(deps, OpenPathRequestSchema, async (q: OpenPathRequest) => {
+      if (!deps.dialogProducedDirs.has(q.dir)) {
+        throw new AppError(E_IPC_BAD_PAYLOAD, '目录必须来自目录选择对话框');
+      }
+      await deps.openDirectoryInShell(q.dir);
+      return null;
+    }),
   );
 }

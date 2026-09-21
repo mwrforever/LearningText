@@ -6,12 +6,15 @@ import type {
   BackupRestoreResponse,
 } from './backup-contract';
 import type {
-  ImportProgress,
+  ExportRequest,
+  ExportResult,
   ImportRequest,
   ImportResult,
   IoCancelRequest,
   IoPickDirectoryRequest,
+  IoProgress,
 } from './io-contract';
+import type { OpenPathRequest } from './shell-contract';
 import type { SearchQueryRequest, SearchQueryResponse } from './search-contract';
 import type { ShellCommand } from './shell-contract';
 import type { SettingsData } from './settings-contract';
@@ -82,8 +85,18 @@ export interface WindowApi {
   cancelImport(request: IoCancelRequest): Promise<Result<null>>;
   /** 主进程弹出目录选择框：multiple 多选（导入源），单选（导出目标，Task 13 复用）；取消返回空数组 */
   pickDirectory(request: IoPickDirectoryRequest): Promise<Result<readonly string[]>>;
-  /** 订阅导入进度广播（批次间、事务提交后发），返回取消订阅函数 */
-  onIoProgress(callback: (progress: ImportProgress) => void): () => void;
+  /**
+   * 导出 VFS 子树到磁盘（M5 批次⑥ Task 13）：targetDir 须为 pickDirectory 当次会话产出
+   * （主进程按登记簿校验，伪造串拒绝）。进度经 onIoProgress 订阅到达（kind: 'export'）。
+   */
+  exportNodes(request: ExportRequest): Promise<Result<ExportResult>>;
+  /**
+   * 在系统文件管理器中打开目录（导出完成动作）：dir 仅接受主进程 dialog 产出的目录串，
+   * 主进程按当次会话登记簿校验（渲染层不透传用户可控串直达 shell——B.5-4 同源纪律）。
+   */
+  openPath(request: OpenPathRequest): Promise<Result<null>>;
+  /** 订阅 io 进度广播（导入/导出可辨识联合，kind 判别字段），返回取消订阅函数 */
+  onIoProgress(callback: (progress: IoProgress) => void): () => void;
   // —— VFS 补充（M4）：nodeId → NodeMeta 反查（未找到 E_VFS_NOT_FOUND）——
   getNode(request: NodeIdRequest): Promise<Result<NodeMeta>>;
   /** 订阅树变更广播，返回取消订阅函数 */

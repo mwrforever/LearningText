@@ -1214,13 +1214,15 @@ describe('Workspace 导入链路（M5 Task 12）', () => {
     api: Record<string, ReturnType<typeof vi.fn>>;
     shellHandlers: Array<(command: ShellCommand) => void>;
     progressHandlers: Array<(p: unknown) => void>;
+    vfsHandlers: Array<(b: VfsChangedBroadcast) => void>;
     unsub: ReturnType<typeof vi.fn>;
   }
 
-  /** 捕获 shell 命令与导入进度订阅回调（供逐条驱动两条主→渲染链） */
+  /** 捕获 shell 命令、导入/导出进度与树广播订阅回调（供逐条驱动三条主→渲染链） */
   function captureImport(overrides: Partial<Record<string, unknown>> = {}): ImportCapture {
     const shellHandlers: Array<(command: ShellCommand) => void> = [];
     const progressHandlers: Array<(p: unknown) => void> = [];
+    const vfsHandlers: Array<(b: VfsChangedBroadcast) => void> = [];
     const unsub = vi.fn();
     const api = stubApi({
       onShellCommand: vi.fn((callback: (command: ShellCommand) => void) => {
@@ -1231,14 +1233,26 @@ describe('Workspace 导入链路（M5 Task 12）', () => {
         progressHandlers.push(callback);
         return unsub;
       }),
+      onVfsChanged: vi.fn((callback: (b: VfsChangedBroadcast) => void) => {
+        vfsHandlers.push(callback);
+        return unsub;
+      }),
       pickDirectory: vi.fn(() => Promise.resolve({ ok: true, value: ['D:/notes', 'D:/pics'] })),
       importNodes: vi.fn(() =>
         Promise.resolve({ ok: true, value: { imported: 2, skipped: 1, failed: 0 } }),
       ),
       cancelImport: vi.fn(() => Promise.resolve({ ok: true, value: null })),
+      // 导出链路（M5 批次⑥ Task 13）：单选目录 + 导出 invoke + 打开目录，桩按契约形态注入
+      exportNodes: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: { exported: 3, rewritten: 1, missing: 0, skipped: 0, failed: 0 },
+        }),
+      ),
+      openPath: vi.fn(() => Promise.resolve({ ok: true, value: null })),
       ...overrides,
     }) as Record<string, ReturnType<typeof vi.fn>>;
-    return { api, shellHandlers, progressHandlers, unsub };
+    return { api, shellHandlers, progressHandlers, vfsHandlers, unsub };
   }
 
   async function renderWorkspace(): Promise<ReturnType<typeof createRoot>> {
@@ -1399,9 +1413,10 @@ describe('Workspace 导入链路（M5 Task 12）', () => {
       (document.querySelector('[aria-label="确认导入"]') as HTMLElement).click();
     });
 
-    // 扫描阶段进度
+    // 扫描阶段进度（kind 判别字段：io:progress 为导入/导出可辨识联合，Task 13）
     await act(async () => {
       capture.progressHandlers[0]?.({
+        kind: 'import',
         importId: 7,
         phase: 'scanning',
         done: 1,
@@ -1415,6 +1430,7 @@ describe('Workspace 导入链路（M5 Task 12）', () => {
     // 写入阶段进度：done/total 文案 + 当前路径呈现
     await act(async () => {
       capture.progressHandlers[0]?.({
+        kind: 'import',
         importId: 7,
         phase: 'writing',
         done: 3,
@@ -1432,6 +1448,84 @@ describe('Workspace 导入链路（M5 Task 12）', () => {
     expect(capture.api.cancelImport).toHaveBeenCalledWith({ importId: 7 });
 
     // 导入 promise 永挂：直接卸载收尾（资源成对由 unmount 断言覆盖）
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('export 命令链（Task 13）：无选中引导提示；选中文件后单选目录 → io:export → 完成 toast 携带「打开目录」动作', async () => {
+    const capture = captureImport({
+      pickDirectory: vi.fn(() => Promise.resolve({ ok: true, value: ['D:/export-out'] })),
+      // 树根直挂一个文件节点：点选开标签 → activeId 即导出选中上下文
+      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(4, '新页')] })),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(
+        <>
+          <Workspace />
+          <ToastHost />
+        </>,
+      );
+    });
+    // 无选中上下文（无标签未 reveal）：引导 toast，不发起目录选择
+    await act(async () => {
+      capture.shellHandlers[0]?.({ type: 'export' });
+    });
+    expect(capture.api.pickDirectory).not.toHaveBeenCalled();
+    expect([...document.querySelectorAll('.lt-toast')].at(-1)?.textContent).toContain(
+      '请先在树中选择',
+    );
+
+    // 点选树中的「新页」文件（开标签 → 选中上下文就绪）
+    const fileButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('nav[aria-label="资源树"] button'),
+    ).find((b) => b.textContent === '新页');
+    expect(fileButton).toBeDefined();
+    await act(async () => {
+      fileButton?.click();
+    });
+    await act(async () => {
+      capture.shellHandlers[0]?.({ type: 'export' });
+    });
+    expect(capture.api.pickDirectory).toHaveBeenCalledWith({ multiple: false });
+    await act(async () => {});
+    expect(capture.api.exportNodes).toHaveBeenCalledWith({
+      nodeId: 4,
+      targetDir: 'D:/export-out',
+    });
+    // 完成 toast 计数 + 「打开目录」动作钮，点击经 openPath 回传同一目录串（主进程侧登记簿校验）
+    expect([...document.querySelectorAll('.lt-toast')].at(-1)?.textContent).toContain('导出完成');
+    const openButton = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.lt-toast button'),
+    ).find((b) => b.textContent === '打开目录');
+    expect(openButton).toBeDefined();
+    await act(async () => {
+      openButton?.click();
+    });
+    expect(capture.api.openPath).toHaveBeenCalledWith({ dir: 'D:/export-out' });
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('导出进度（kind: export）驱动导出进度面板，与导入面板互不串扰', async () => {
+    const capture = captureImport();
+    const tree = await renderWorkspace();
+    await act(async () => {
+      capture.progressHandlers[0]?.({
+        kind: 'export',
+        exportId: 1,
+        phase: 'writing',
+        done: 2,
+        total: 5,
+        currentPath: 'notes/a.css',
+      });
+    });
+    expect(container.querySelector('.lt-export-progress')).not.toBeNull();
+    expect(container.textContent).toContain('2/5');
+    expect(container.textContent).toContain('notes/a.css');
+    expect(container.querySelector('.lt-import-progress')).toBeNull();
     act(() => {
       tree.unmount();
     });

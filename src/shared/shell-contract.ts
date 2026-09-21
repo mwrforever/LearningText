@@ -4,8 +4,11 @@
  * quick-open 为菜单「快速打开」下发（M5 批次① Task 6，浮层开关命令）；
  * global-search 为菜单「全局搜索」下发（M5 批次① Task 7，树栏 search 态切入命令）；
  * open-settings 为菜单「设置…」下发（M5 批次③ Task 8，全屏覆盖设置页开启命令）；
- * import 为菜单「导入…」下发（M5 批次⑥ Task 12，目录选择 → 策略确认 → io:import 链入口）。
+ * import 为菜单「导入…」下发（M5 批次⑥ Task 12，目录选择 → 策略确认 → io:import 链入口）；
+ * export 为菜单「导出…」下发（M5 批次⑥ Task 13，目录选择 → io:export → 完成动作链入口）。
  */
+import { z } from 'zod';
+
 export type ShellCommand =
   | { readonly type: 'new-file' }
   | { readonly type: 'new-dir' }
@@ -14,4 +17,14 @@ export type ShellCommand =
   | { readonly type: 'quick-open' }
   | { readonly type: 'global-search' }
   | { readonly type: 'open-settings' }
-  | { readonly type: 'import' };
+  | { readonly type: 'import' }
+  | { readonly type: 'export' };
+
+/**
+ * shell:open-path 请求：在系统文件管理器中打开目录（shell.openPath）。
+ * dir 仅接受主进程 dialog 产出的目录串——ipc 层按「当次会话目录选择登记簿」校验，
+ * 渲染层伪造/透传用户可控串直达 shell 的边界在此钉死（B.5-4 openExternal 白名单的
+ * 同源纪律：openPath 非 openExternal 不涉 URL 白名单，但入参信任边界同样必须收敛）。
+ */
+export const OpenPathRequestSchema = z.strictObject({ dir: z.string().min(1) });
+export type OpenPathRequest = z.infer<typeof OpenPathRequestSchema>;

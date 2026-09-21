@@ -45,6 +45,11 @@
  * 进度面板（批次粒度，取消按 importId 寻址），invoke 结果即终态收口：D17 计数 toast +
  * 树刷新双通道（整树标记 stale 供展开目录重取 + 目标父目录子级直调回写——根不在 expanded
  * 集与已折叠目录两个盲区由直调补口，评审 Important fix）。
+ * 导出链路（M5 批次⑥ Task 13，FR-IO-02）：菜单 'export' 命令 → 树选中上下文推导导出根
+ * （无选中引导提示，根不可导出）→ pickDirectory 单选目标目录（复用 Task 12 通道，取消静默）
+ * → io:export 发起；io:progress 为导入/导出可辨识联合（kind 判别字段）按 kind 分流面板；
+ * invoke 结果即终态收口：计数 toast 携带「打开目录」动作钮（openPath 回传对话框产出的目录串，
+ * 主进程按当次会话登记簿校验——渲染层可伪造串的信任边界在主进程收敛）。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -56,7 +61,11 @@ import type {
   WorkspaceSettings,
 } from '../../../../shared/settings-contract';
 import type { BackupEntry } from '../../../../shared/backup-contract';
-import type { ImportConflict, ImportProgress } from '../../../../shared/io-contract';
+import type {
+  ExportProgress,
+  ImportConflict,
+  ImportProgress,
+} from '../../../../shared/io-contract';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import { toLocalIsoTime } from '../../../../shared/time';
 import {
@@ -165,6 +174,9 @@ export function Workspace({
     readonly conflict: ImportConflict;
   } | null>(null);
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
+  // 导出域（M5 批次⑥ Task 13）：进行中导出进度（io:progress kind:export 广播驱动；
+  // invoke 返回即收口置 null），无取消语义（FR-IO-02 未要求）
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   // 滚动同步桥槽位（M5 批次⑤ Task 11）：两侧面板各自在 effect 内登记实现（卸载摘除成对），
   // 本组件持可空槽位互为中转——previewScrollPostRef = 「比例→预览 postMessage」（开关闸门
   // 在预览侧）；editorAnchorScrollRef = 「锚点→编辑器滚动」（150ms 抑制窗在编辑器侧）
@@ -195,6 +207,17 @@ export function Workspace({
   useEffect(() => {
     dirtyRef.current = tabsOp.tabs.some((t) => t.dirty);
   }, [tabsOp]);
+  // 导出选中镜像（M5 批次⑥ Task 13）：shell 命令回调持稳态引用（dirtyRef 同款同步模式）——
+  // 命令订阅 effect 恒挂载期一份，闭包 tabsOp/roots 必陈旧；镜像值 = 树选中上下文中的
+  // 可导出节点（reveal 覆盖 ?? 激活标签，命中且非根且在树内），无则 null（引导提示）
+  const exportSelectionRef = useRef<number | null>(null);
+  useEffect(() => {
+    const selectedId = revealSelectionId ?? tabsOp.activeId;
+    exportSelectionRef.current =
+      selectedId !== null && selectedId !== ROOT_ID && findNode(roots, selectedId) !== null
+        ? selectedId
+        : null;
+  }, [revealSelectionId, tabsOp.activeId, roots]);
   // reveal 选中覆盖回收：activeId 变化即用户改变焦点（开签/切签/关签补位），覆盖值让位
   //（初始挂载同样触发一次，值为 null 无副作用）
   useEffect(() => {
@@ -381,12 +404,16 @@ export function Workspace({
     };
   }, [settingsOpen]);
 
-  // 导入进度订阅（M5 批次⑥ Task 12，挂载期常驻 + cleanup 成对摘除）：io:progress 广播
-  // 驱动进度面板（批次粒度——扫描按源根推进、写入按批推进，B.3-4 事务提交后到达即事实）；
-  // 完成态清理由 importNodes invoke 续体收口（toast + 树刷新），广播不负责终态
+  // io 进度订阅（M5 批次⑥ Task 12/13，挂载期常驻 + cleanup 成对摘除）：io:progress 广播
+  // 为导入/导出可辨识联合（kind 判别字段，A.1-4），按 kind 分流入各自进度面板；完成态
+  // 清理由 importNodes/exportNodes invoke 续体收口（toast + 收尾），广播不负责终态
   useEffect(() => {
     return window.api.onIoProgress((progress) => {
-      setImportProgress(progress);
+      if (progress.kind === 'import') {
+        setImportProgress(progress);
+      } else {
+        setExportProgress(progress);
+      }
     });
   }, []);
 
@@ -728,6 +755,45 @@ export function Workspace({
     const progress = importProgress;
     if (progress === null) return;
     void window.api.cancelImport({ importId: progress.importId });
+  }
+
+  // —— 导出链路（M5 批次⑥ Task 13，FR-IO-02）：选中子树 → 目录选择 → io:export → 完成动作 ——
+
+  /**
+   * 导出入口（菜单「导出…」命令唯一触发）：导出目标读 exportSelectionRef 实时镜像
+   * （命令回调闭包态必陈旧），无选中先引导提示；主进程弹目录选择框（单选），取消
+   * （空清单）静默返回；选定即发起 io:export（长任务，invoke 结果即终态收口）——
+   * 完成清进度面板、计数 toast 携带「打开目录」动作钮（openPath 回传本次对话框产出的
+   * 目录串，主进程按登记簿校验后经系统文件管理器打开）。
+   */
+  function beginExport(): void {
+    const nodeId = exportSelectionRef.current;
+    if (nodeId === null) {
+      showToast('请先在树中选择要导出的文件夹或文件');
+      return;
+    }
+    void window.api.pickDirectory({ multiple: false }).then((picked) => {
+      if (!picked.ok) {
+        showToast(`选择导出目录失败：${picked.error.message}`);
+        return;
+      }
+      const dir = picked.value[0];
+      if (dir === undefined) return; // 用户取消选择：静默返回
+      void window.api.exportNodes({ nodeId, targetDir: dir }).then((result) => {
+        setExportProgress(null);
+        if (result.ok) {
+          const { exported, skipped, failed } = result.value;
+          showToast(`导出完成：写出 ${exported}、跳过 ${skipped}、失败 ${failed}`, {
+            label: '打开目录',
+            onClick: () => {
+              void window.api.openPath({ dir });
+            },
+          });
+        } else {
+          showToast(`导出失败：${result.error.message}`);
+        }
+      });
+    });
   }
 
   /**
@@ -1081,6 +1147,10 @@ export function Workspace({
           // 菜单「导入…」（M5 批次⑥ Task 12）：目录选择 → 策略确认弹层 → io:import 链入口
           beginImport();
           break;
+        case 'export':
+          // 菜单「导出…」（M5 批次⑥ Task 13）：选中子树 → 目录选择 → io:export 链入口
+          beginExport();
+          break;
         case 'confirm-close':
           // 关窗确认链（spec §2.3）：无脏直接放行 forceClose；有脏弹原生 confirm，
           // 用户确认才放行（取消则留在应用）。放行动作即 shell:force-close，
@@ -1375,6 +1445,24 @@ export function Workspace({
           </div>
           <span className="lt-import-progress-path truncate text-muted-foreground">
             {importProgress.currentPath}
+          </span>
+        </div>
+      ) : null}
+      {/* 导出进度面板（M5 批次⑥ Task 13）：与导入面板同形态呈现（写盘无事务，批次粒度）；
+          无取消语义（FR-IO-02 未要求），invoke 结果到达即收口 */}
+      {exportProgress !== null ? (
+        <div
+          className="lt-export-progress pointer-events-auto fixed bottom-14 right-4 z-50 flex w-80 flex-col gap-1 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="font-medium">
+            {exportProgress.phase === 'collecting'
+              ? '正在准备导出…'
+              : `正在导出（${exportProgress.done}/${exportProgress.total}）`}
+          </span>
+          <span className="lt-export-progress-path truncate text-muted-foreground">
+            {exportProgress.currentPath}
           </span>
         </div>
       ) : null}

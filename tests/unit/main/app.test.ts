@@ -15,8 +15,12 @@ const mocks = vi.hoisted(() => {
   const searchStub = { __searchServiceStub: true } as const;
   // 导入服务桩标记对象：断言 io:import 通道的装配注入链路（M5 批次⑥ Task 12）
   const ioStub = { __ioServiceStub: true } as const;
+  // 导出服务桩标记对象：断言 io:export 通道的装配注入链路（M5 批次⑥ Task 13）
+  const exportServiceStub = { __exportServiceStub: true } as const;
   // 生产 fs 适配桩标记对象：断言 nodeFs 注入链路（mock 工厂须提供同名导出）
   const nodeFsStub = { __nodeFsStub: true } as const;
+  // 生产导出 fs 适配桩标记对象：断言 nodeExportFs 注入链路（M5 批次⑥ Task 13）
+  const nodeExportFsStub = { __nodeExportFsStub: true } as const;
   // 备份服务桩（M5 批次③ Task 9）：记录构造 deps 供装配断言；各实例方法独立 vi.fn，
   // restore/autoBackupIfNeeded 按用例编程（还原编排/每日触发链路断言面）
   class BackupServiceStub {
@@ -61,9 +65,13 @@ const mocks = vi.hoisted(() => {
     createSearchService: vi.fn<(db: unknown) => typeof searchStub>(),
     // 导入服务工厂桩（M5 批次⑥）：断言 db/fs/onProgress 装配注入
     createImportService: vi.fn<(deps: unknown) => typeof ioStub>(),
+    // 导出服务工厂桩（M5 批次⑥ Task 13）：断言 db/vfs/fs/onProgress 装配注入
+    createExportService: vi.fn<(deps: unknown) => typeof exportServiceStub>(),
     // 主进程目录选择弹窗桩（io:pick-directory 供给闭包消费）
     showOpenDialog:
       vi.fn<(options: unknown) => Promise<{ canceled: boolean; filePaths: string[] }>>(),
+    // shell.openPath 桩（M5 批次⑥ Task 13）：成功返回空串，失败返回错误描述串（Electron 契约）
+    shellOpenPath: vi.fn<(dir: string) => Promise<string>>(),
     getAllWindows:
       vi.fn<() => Array<{ webContents: { send: (channel: string, payload: unknown) => void } }>>(),
     BrowserWindow: vi.fn<(options: unknown) => { loadURL: (url: string) => Promise<void> }>(),
@@ -98,6 +106,9 @@ const mocks = vi.hoisted(() => {
           readonly restoreBackup: (fileName: string) => void;
           readonly requestRelaunch: () => void;
           readonly io: unknown;
+          readonly export: unknown;
+          readonly dialogProducedDirs: ReadonlySet<string>;
+          readonly openDirectoryInShell: (dir: string) => Promise<void>;
           readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
         }) => void
       >(),
@@ -120,6 +131,8 @@ const mocks = vi.hoisted(() => {
   m.createSearchService.mockImplementation(() => searchStub);
   // 导入服务工厂桩：同上（M5 批次⑥）
   m.createImportService.mockImplementation(() => ioStub);
+  // 导出服务工厂桩：同上（M5 批次⑥ Task 13）
+  m.createExportService.mockImplementation(() => exportServiceStub);
   // 目录选择弹窗桩默认「用户取消」：具体用例内覆写返回值
   m.showOpenDialog.mockResolvedValue({ canceled: true, filePaths: [] });
   // context-menu「检查元素」弹出桩（Task 9）：buildFromTemplate 产物须带 popup 方法，
@@ -148,7 +161,9 @@ const mocks = vi.hoisted(() => {
     vfsStub,
     searchStub,
     ioStub,
+    exportServiceStub,
     nodeFsStub,
+    nodeExportFsStub,
     BackupServiceStub,
     backupStubs,
   });
@@ -172,6 +187,8 @@ vi.mock('electron', () => ({
   BrowserWindow: Object.assign(mocks.BrowserWindow, { getAllWindows: mocks.getAllWindows }),
   // 目录选择弹窗（M5 批次⑥ io:pick-directory 供给闭包消费）
   dialog: { showOpenDialog: mocks.showOpenDialog },
+  // shell.openPath（M5 批次⑥ Task 13：导出完成后「打开目录」供给闭包消费）
+  shell: { openPath: mocks.shellOpenPath },
   // 应用菜单装配面（M4 spec §5.2）：bootstrapMain 建窗后 installApplicationMenu 一次
   Menu: {
     buildFromTemplate: mocks.menuBuildFromTemplate,
@@ -190,6 +207,10 @@ vi.mock('../../../src/main/search/searchService', () => ({
 vi.mock('../../../src/main/io/importService', () => ({
   createImportService: mocks.createImportService,
   nodeFs: mocks.nodeFsStub,
+}));
+vi.mock('../../../src/main/io/exportService', () => ({
+  createExportService: mocks.createExportService,
+  nodeExportFs: mocks.nodeExportFsStub,
 }));
 vi.mock('../../../src/main/backup/backupService', () => ({
   BackupService: mocks.BackupServiceStub,
@@ -673,6 +694,73 @@ describe('主进程装配 bootstrapMain', () => {
       const singleOptions = lastDialogOptions();
       expect(singleOptions.properties).toContain('openDirectory');
       expect(singleOptions.properties).not.toContain('multiSelections');
+    });
+  });
+
+  // —— 导出服务装配与打开目录供给（M5 批次⑥ Task 13）——
+  describe('导出服务装配与打开目录供给', () => {
+    interface Task13Deps {
+      readonly export: unknown;
+      readonly dialogProducedDirs: ReadonlySet<string>;
+      readonly openDirectoryInShell: (dir: string) => Promise<void>;
+      readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
+    }
+
+    async function bootstrapWithTask13(): Promise<{
+      deps: Task13Deps;
+      exportDeps: {
+        readonly db: unknown;
+        readonly vfs: unknown;
+        readonly fs: unknown;
+        readonly onProgress: (progress: unknown) => void;
+      };
+    }> {
+      bootstrapMain();
+      await flushReadyChain();
+      const deps = mocks.registerIpcHandlers.mock.calls[0]?.[0] as unknown as Task13Deps;
+      const exportDeps = mocks.createExportService.mock.calls[0]?.[0] as {
+        readonly db: unknown;
+        readonly vfs: unknown;
+        readonly fs: unknown;
+        readonly onProgress: (progress: unknown) => void;
+      };
+      if (exportDeps === undefined) {
+        throw new Error('导出服务未被装配');
+      }
+      return { deps, exportDeps };
+    }
+
+    it('导出服务按开库句柄/vfs/fs 装配：db 与 fs 注入（onProgress 遍历窗口 io:progress 广播）', async () => {
+      const { deps, exportDeps } = await bootstrapWithTask13();
+      expect(deps.export).toBe(mocks.exportServiceStub);
+      expect(exportDeps.db).toBe(mocks.openDatabase.mock.results[0]?.value);
+      expect(exportDeps.vfs).toBe(mocks.vfsStub);
+      expect(exportDeps.fs).toBe(mocks.nodeExportFsStub);
+      const sendA = vi.fn<(channel: string, payload: unknown) => void>();
+      mocks.getAllWindows.mockReturnValue([{ webContents: { send: sendA } }]);
+      const progress = { exportId: 1, phase: 'writing', done: 1, total: 1, currentPath: 'a' };
+      exportDeps.onProgress(progress);
+      expect(sendA).toHaveBeenCalledWith(IPC.ioProgress, progress);
+    });
+
+    it('pickDirectories 将对话框产出登记入白名单登记簿（Task 13 导出/openPath 校验事实来源）', async () => {
+      const { deps } = await bootstrapWithTask13();
+      expect(deps.dialogProducedDirs.size).toBe(0);
+      mocks.showOpenDialog.mockResolvedValue({ canceled: false, filePaths: ['D:/picked'] });
+      await deps.pickDirectories(false);
+      expect(deps.dialogProducedDirs.has('D:/picked')).toBe(true);
+      // 取消（空清单）不登记任何串
+      mocks.showOpenDialog.mockResolvedValue({ canceled: true, filePaths: [] });
+      await deps.pickDirectories(false);
+      expect(deps.dialogProducedDirs.size).toBe(1);
+    });
+
+    it('openDirectoryInShell 注入实现：shell.openPath 空串语义成功；错误描述串转异常上抛', async () => {
+      const { deps } = await bootstrapWithTask13();
+      mocks.shellOpenPath.mockResolvedValue('');
+      await expect(deps.openDirectoryInShell('D:/picked')).resolves.toBeUndefined();
+      mocks.shellOpenPath.mockResolvedValue('目录不存在');
+      await expect(deps.openDirectoryInShell('D:/picked')).rejects.toThrow('目录不存在');
     });
   });
 });

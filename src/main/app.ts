@@ -7,7 +7,7 @@
  */
 import path from 'node:path';
 import type Database from 'better-sqlite3';
-import { app, BrowserWindow, Menu, dialog, protocol } from 'electron';
+import { app, BrowserWindow, Menu, dialog, protocol, shell } from 'electron';
 import { handleAppResource } from './protocol/appProtocol';
 import { createVfsProtocolHandler } from './protocol/vfsProtocol';
 import { registerIpcHandlers } from './ipc';
@@ -19,9 +19,10 @@ import { createVfsService } from './vfs/vfsService';
 import { createSearchService } from './search/searchService';
 import { createSettingsService } from './settings/settingsService';
 import { createImportService, nodeFs } from './io/importService';
+import { createExportService, nodeExportFs } from './io/exportService';
 import { IPC } from '../shared/ipc';
 import type { VfsChangedBroadcast } from '../shared/vfs-contract';
-import type { ImportProgress } from '../shared/io-contract';
+import type { ExportProgress, ImportProgress } from '../shared/io-contract';
 import { attachWindowCloseGuard, installApplicationMenu } from './menu/menu';
 import { BackupService } from './backup/backupService';
 import { toLocalIsoDate } from '../shared/time';
@@ -198,6 +199,23 @@ export function bootstrapMain(): void {
           }
         },
       });
+      // 导出服务（M5 批次⑥ Task 13）：fs 走生产适配器（fs/promises 异步原语，写盘非事务
+      // 天然让出事件循环——A.5-4）；BLOB 读取复用 vfs.readFile 读路径；onProgress 即
+      // io:progress 广播（遍历全部窗口，与导入同一广播面）
+      const exportService = createExportService({
+        db,
+        vfs,
+        fs: nodeExportFs,
+        onProgress: (progress: ExportProgress) => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send(IPC.ioProgress, progress);
+          }
+        },
+      });
+      // 当次会话目录选择登记簿：pickDirectories 产出登记，io:export 的 targetDir 与
+      // shell:open-path 的 dir 只认登记簿内串——渲染层可伪造任意 IPC 载荷，用户可控串
+      // 直达磁盘写与 shell 的信任边界必须在主进程侧收敛（B.5-4 精神，安全审查裁决）
+      const dialogProducedDirs = new Set<string>();
       // 目录选择供给（io:pick-directory，Task 13 复用）：dialog.showOpenDialog 异步弹出
       // （不阻塞主进程事件循环），目录模式；multiple 区分导入多选与导出单选；取消返回空数组。
       // 不绑定主窗 owner：单窗应用下系统对话框恒前台，省去「窗未建/已关」分支（渲染端发起
@@ -210,7 +228,15 @@ export function bootstrapMain(): void {
         };
         const result = await dialog.showOpenDialog(options);
         if (result.canceled) return [];
+        // 产出目录登记入册（Task 13：导出目标与打开目录的白名单校验事实来源）
+        for (const dir of result.filePaths) dialogProducedDirs.add(dir);
         return result.filePaths;
+      };
+      // 系统文件管理器打开目录（shell:open-path 供给）：shell.openPath 空串语义成功，
+      // 非空返回值为错误描述串（Electron 契约），转异常上抛由 handler 收敛 E_STORE_INTERNAL
+      const openDirectoryInShell = async (dir: string): Promise<void> => {
+        const message = await shell.openPath(dir);
+        if (message !== '') throw new Error(`打开目录失败：${message}`);
       };
       /**
        * 还原编排（照 requestClose 先例的依赖注入，D11：服务不摸连接不摸生命周期）：
@@ -253,6 +279,10 @@ export function bootstrapMain(): void {
         // 导入域（M5 批次⑥）：导入服务与目录选择供给一并注入
         io,
         pickDirectories,
+        // 导出域（M5 批次⑥ Task 13）：导出服务、目录登记簿与打开目录供给一并注入
+        export: exportService,
+        dialogProducedDirs,
+        openDirectoryInShell,
       });
       winRef.current = createMainWindow(devServerUrl, allowed, allowClose);
       // 应用菜单装配（M4 spec §5.2）：窗口创建后一次（命令经 shell:command 下发渲染层）

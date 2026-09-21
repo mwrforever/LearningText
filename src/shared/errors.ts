@@ -28,3 +28,5 @@ export const E_BACKUP_CORRUPT = 'E_BACKUP_CORRUPT';
 // —— 以下为 M5 导入导出域实际使用的码（docs/03 §7.3 同步，禁预定义未使用码）——
 /** 导入源路径不存在或不可读（选择与发起之间源目录被移动/删除等） */
 export const E_IO_SOURCE_NOT_FOUND = 'E_IO_SOURCE_NOT_FOUND';
+/** 导出目标目录不可写或不存在（写探针预检失败，选择与发起之间目录被移动/权限收紧等） */
+export const E_IO_TARGET_UNWRITABLE = 'E_IO_TARGET_UNWRITABLE';

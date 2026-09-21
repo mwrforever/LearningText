@@ -1,8 +1,9 @@
 /**
- * 导入域 IPC 契约（宪法 A.7-5 单一来源，M5 批次⑥）：io:import / io:cancel /
- * io:pick-directory 三通道的请求与响应 DTO + zod schema，及 io:progress 广播载荷形态。
- * 校验失败由 handler 统一映射 E_IPC_BAD_PAYLOAD；业务错误码（E_IO_SOURCE_NOT_FOUND 等）
- * 见 src/shared/errors.ts 与 docs/03 §7.3。Task 13 导出复用进度广播与目录选择通道。
+ * 导入导出域 IPC 契约（宪法 A.7-5 单一来源，M5 批次⑥）：io:import / io:cancel /
+ * io:pick-directory / io:export 四通道的请求与响应 DTO + zod schema，及 io:progress
+ * 广播载荷形态（导入/导出可辨识联合，kind 判别字段）。校验失败由 handler 统一映射
+ * E_IPC_BAD_PAYLOAD；业务错误码（E_IO_SOURCE_NOT_FOUND 等）见 src/shared/errors.ts
+ * 与 docs/03 §7.3。
  */
 import { z } from 'zod';
 
@@ -25,8 +26,10 @@ export type ImportRequest = z.infer<typeof ImportRequestSchema>;
  * 导入进度广播载荷（io:progress，主→渲染）：批次间、事务提交后发（宪法 B.3-4，D16）。
  * phase=scanning 时 done/total 表达「已扫描源根数 / 源根总数」；writing 时为「已写入节点数 /
  * 计划节点总数」。currentPath 为扫描中的源路径或刚写完批次的末节点相对路径。
+ * kind 判别字段（宪法 A.1-4）：与导出进度共用 io:progress 通道的可辨识联合成员。
  */
 export interface ImportProgress {
+  readonly kind: 'import';
   readonly importId: number;
   readonly phase: 'scanning' | 'writing';
   readonly done: number;
@@ -51,3 +54,45 @@ export type IoCancelRequest = z.infer<typeof IoCancelRequestSchema>;
  */
 export const IoPickDirectoryRequestSchema = z.strictObject({ multiple: z.boolean() });
 export type IoPickDirectoryRequest = z.infer<typeof IoPickDirectoryRequestSchema>;
+
+/**
+ * io:export 请求：导出子树根节点 id + 目标磁盘目录（根节点以自身名字目录落入该目录之下）。
+ * targetDir 必须来自主进程目录选择对话框的当次会话产出（ipc 层按登记簿校验，渲染层
+ * 伪造串拒绝——shell.openPath 同一登记簿，防渲染层被攻破后任意路径写盘）。
+ */
+export const ExportRequestSchema = z.strictObject({
+  nodeId: z.number().int(),
+  targetDir: z.string().min(1),
+});
+export type ExportRequest = z.infer<typeof ExportRequestSchema>;
+
+/**
+ * 导出进度广播载荷（io:progress 复用，与 ImportProgress 形态对称）：
+ * phase=collecting 一次性发（done=0，total=计划条目数，currentPath=导出根虚拟路径）；
+ * writing 随批推进（done=已写盘条目数 / total=计划条目数）。currentPath 为写盘批的
+ * 末条目相对导出容器的路径。kind 判别字段同上（A.1-4）。导出无取消语义（FR-IO-02 未要求）。
+ */
+export interface ExportProgress {
+  readonly kind: 'export';
+  readonly exportId: number;
+  readonly phase: 'collecting' | 'writing';
+  readonly done: number;
+  readonly total: number;
+  readonly currentPath: string;
+}
+
+/**
+ * 导出结果计数（toast 汇总口径）：exported 成功写盘条目数（目录建目录 + 文件写文件）/
+ * rewritten html 内 vfs:// 引用改写数 / missing 越界引用 '#' 占位数 /
+ * skipped 名称不可写盘（磁盘合法性复检失败）跳过数 / failed 单条目失败数（不拖垮整单）。
+ */
+export interface ExportResult {
+  readonly exported: number;
+  readonly rewritten: number;
+  readonly missing: number;
+  readonly skipped: number;
+  readonly failed: number;
+}
+
+/** io:progress 广播载荷（导入/导出可辨识联合，kind 判别字段——宪法 A.1-4） */
+export type IoProgress = ImportProgress | ExportProgress;

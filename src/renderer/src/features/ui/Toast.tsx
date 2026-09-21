@@ -1,12 +1,20 @@
 /**
  * 最小单例 toast（M4 spec §5.5 D11）：右下角队列、同屏最多 3 条、3s 自动消退、
  * aria-live polite；模块级订阅器 + ToastHost 组件消费（避免每处操作传回调）。
+ * 动作钮（M5 批次⑥ Task 13）：可选 action 携带「打开目录」类后续动作，随条目同生命周期。
  */
 import { useEffect, useState } from 'react';
+
+/** 条目可选动作：label 为钮文案，onClick 为点击回调（如 openPath 打开导出目录） */
+export interface ToastAction {
+  readonly label: string;
+  readonly onClick: () => void;
+}
 
 interface ToastItem {
   readonly id: number;
   readonly text: string;
+  readonly action?: ToastAction;
 }
 type Listener = (items: readonly ToastItem[]) => void;
 const listeners = new Set<Listener>();
@@ -14,9 +22,9 @@ let queue: readonly ToastItem[] = [];
 let seq = 0;
 
 /** 业务侧唯一入口（模块级单例）：入队 3s 自动消退，同屏最多 3 条（挤出最旧） */
-export function showToast(text: string): void {
+export function showToast(text: string, action?: ToastAction): void {
   seq += 1;
-  const item: ToastItem = { id: seq, text };
+  const item: ToastItem = { id: seq, text, action };
   queue = [...queue.slice(-2), item];
   for (const listener of listeners) listener(queue);
   setTimeout(() => {
@@ -47,6 +55,15 @@ export function ToastHost(): React.JSX.Element {
           className="lt-toast pointer-events-auto rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2"
         >
           {item.text}
+          {item.action !== undefined ? (
+            <button
+              type="button"
+              className="ml-2 inline-flex h-5 items-center justify-center rounded-sm bg-primary px-2 font-medium text-primary-foreground transition-colors duration-100 hover:bg-primary/90"
+              onClick={item.action.onClick}
+            >
+              {item.action.label}
+            </button>
+          ) : null}
         </div>
       ))}
     </div>
