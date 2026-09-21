@@ -4,10 +4,9 @@
 //    重启 → 工作区恢复）；② 快速打开（菜单触发 cmdk 浮层、Enter 打开、空关键词最近打开）；
 // ③ 回收站（列表原路径/删除时间、还原、撞名还原失败、彻底删除 confirm）；④ 设置页（主题
 //    三态 + 字号滑块计算样式）；⑤ 备份还原（手动建份、列表名形、强确认、重启、数据回滚）；
-// ⑥ 滚动同步（200 段落长文档比例 ±5%、开关关闭不跟随——skip 留证：编辑器无高度约束致
-//    滚动面失效，产品缺陷）；⑦ 导入取消（600 文件、进度面板取消按钮「可见即点」触发、
-//    已写入保留 + toast）；⑧ 图片预览（img src=vfs URL、无新标签——skip 留证：主文档 CSP
-//    缺 img-src vfs:，产品缺陷）+ 恢复开关关闭后重启不恢复。
+// ⑥ 滚动同步（200 段落长文档比例 ±5%、开关关闭不跟随）；⑦ 导入取消（600 文件、进度面板
+//    取消按钮「可见即点」触发、已写入保留 + toast）；⑧ 图片预览（img src=vfs URL、无新
+//    标签）+ 恢复开关关闭后重启不恢复。
 // 用例隔离策略：主链路/快速打开共用一个会话（②消费①的最近打开与树数据），其余各组各自
 // 独立 userData 自播种——排除跨用例状态串扰（迭代实证：共享会话下前序用例的视图态/选中态
 // 与数据残留会让后续用例的断言面漂移，且失败难以归因）。
@@ -616,16 +615,6 @@ test.describe('M5 滚动同步（独立 userData）', () => {
   });
 
   test('滚动同步：编辑器滚动预览按比例跟随（±5%）、开关关闭不跟随', async () => {
-    // SDD BLOCKED 留证（产品缺陷，非驱动形态问题）：CM6 实例未约束高度（codemirror.ts 的
-    // theme 仅有外观 compartment，无 height），实测 .cm-scroller clientHeight=scrollHeight=3927
-    // （与内容同高），overflowY 虽为 auto 但无可滚动量——滚轮 2000px 后 scrollTop 恒 0、程序化
-    // 赋值同死（探针㉒a 实证），FR-RENDER-06 上行链路（scrollDOM scroll 事件）不可触发、下行
-    // （EditorView.scrollIntoView）无滚动容器同死。属编辑器布局缺陷（缺 height:100% 约束），
-    // 滚动同步 E2E 待产品修复后摘除本 skip 恢复；证据与测量数据见 task-16-report §五。
-    test.skip(
-      true,
-      '产品缺陷：编辑器无高度约束致 .cm-scroller 不可滚动，滚动同步双向链路不可触发（证据见 task-16-report）',
-    );
     // 200 段落长文档（桥 seed）：每段独立成行（编辑器滚动量需要多行——单行文档无纵向
     // 可滚动量，比例恒 0）；编辑器与预览均有足量可滚动高度
     const paragraphs = Array.from(
@@ -669,17 +658,6 @@ test.describe('M5 图片预览与恢复开关（独立 userData）', () => {
   });
 
   test('图片预览：树点选图片 → 预览面板 img 直载 vfs URL、不开新标签', async () => {
-    // SDD BLOCKED 留证（产品缺陷，非驱动形态问题）：主文档 CSP（index.html）为
-    // 「default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src vfs:; frame-src vfs:」
-    // ——无 img-src，回落 'self'（app://bundle），媒体分支 <img src="vfs://…"> 被 CSP 拦截
-    // → onError → 「文档不可用」占位（探针㉒b 实证：同 URL fetch 200 / 70 字节 / image/png
-    // （connect-src vfs: 放行），而 img 元素 error；字节为结构自检通过的合法 1x1 PNG）。
-    // 属 Task 14 缺陷（真实产品 CSP 下图片预览必然不可用，音频同族 media-src 缺失），
-    // 待产品补 img-src vfs:（含 media-src 评估）后摘除本 skip 恢复；证据见 task-16-report §五。
-    test.skip(
-      true,
-      '产品缺陷：主文档 CSP 无 img-src vfs:，图片预览 img 被 CSP 拦截必落「文档不可用」（证据见 task-16-report）',
-    );
     // 桥 seed 合法 PNG（createNode 按扩展名推导 image/png——previewableMime 命中的前提）；
     // 字节经 number 数组穿越桥，页内还原 Uint8Array（TextEncoder 会破坏二进制）
     const png = make1x1Png();
