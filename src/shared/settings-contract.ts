@@ -90,7 +90,7 @@ export const SettingsSchemaV2 = z.strictObject({
 });
 export type SettingsDataV2 = z.infer<typeof SettingsSchemaV2>;
 
-/** v1 遗留 schema（迁移入口专用；v1 校验失败不告警，交由 v2 尝试与迁移链） */
+/** v1 遗留 schema（迁移入口专用；装载链按 v3→v2→v1 顺序尝试，v1 为末级入口，仍不中即 warn 回退默认值） */
 export const SettingsSchemaV1 = z.strictObject({
   schemaVersion: z.literal(1),
   preview: z.strictObject({

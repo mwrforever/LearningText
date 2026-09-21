@@ -1,6 +1,7 @@
 /**
  * 行内重命名模态（M4 spec §6.2 D8）：受控 input 预填当前名；trim 后空名确认不回传；
- * inFlight 期间确认钮禁用（防重复提交）；取消回传 onCancel。Esc 取消（原生 dialog 语义简化为容器层）。
+ * inFlight 期间确认钮禁用（防重复提交）。关闭仅经「取消」钮回传 onCancel（无 Esc /
+ * 遮罩点击监听——M4 起即如此，关闭语义由 Workspace 持 renameTarget 态收口）。
  */
 import { useState } from 'react';
 

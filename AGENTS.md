@@ -205,7 +205,7 @@ Electron 桌面端 HTML 文档管理与实时预览工具：VFS + SQLite 单库�
 | 构建渲染层      | Vite                                                                            | 8.3.x                    |
 | 编辑器        | CodeMirror 6（curated 八包自组，版本见 package.json 精确锁定）                                | 6.0.x                    |
 | 样式与组件体系    | Tailwind CSS v4（@tailwindcss/vite，CSS-first @theme）+ shadcn/ui（CLI 按需 add 组件源码） | 4.3.x / CLI 4.21.x       |
-| 动画         | motion（React 声明式；自研动画仅限个性化定制且第三方无法满足并留论证）                                       | 13.4.x                   |
+| 动画         | CSS transition（Tailwind 过渡工具类）+ tw-animate-css（进出场微动效，零运行时引入）；motion 为预留升级项（未安装，引入须论证第三方必要性） | 1.4.x                    |
 | 编辑器主题      | @codemirror/theme-one-dark（暗色语法主题，随 UI 主题解析器联动）                                 | 实装日实查                    |
 | 存储         | better-sqlite3（WAL + FTS5 trigram）                                              | 13.0.x                   |
 | IPC / 参数校验 | zod                                                                             | 4.6.x                    |

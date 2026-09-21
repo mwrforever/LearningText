@@ -4,7 +4,8 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
 // shadcn components.json aliases 对齐的路径映射（与 tsconfig.renderer.json paths 双写，
-// 宪法 A.7-6/short：@components/@lib 指向渲染层 src，供 shadcn add 产码与业务 import 共用）
+// 事实理由：@components/@lib 指向渲染层 src，令 shadcn add 产码与业务 import 共用同一套别名
+// ——构建期与类型期两侧一致，无宪法条款出处）
 const rendererSrc = fileURLToPath(new URL('./src/renderer/src', import.meta.url));
 
 export default defineConfig({
