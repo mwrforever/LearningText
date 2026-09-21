@@ -9,6 +9,7 @@ import { DEFAULT_LAYOUT, DEFAULT_SETTINGS } from '../../../src/shared/settings-c
 import type { ShellCommand } from '../../../src/shared/shell-contract';
 import type { NodeMeta, VfsChangedBroadcast } from '../../../src/shared/vfs-contract';
 import { PreviewPanel } from '../../../src/renderer/src/features/preview/PreviewPanel';
+import { previewableMime } from '../../../src/renderer/src/features/preview/previewableMime';
 import { ToastHost } from '../../../src/renderer/src/features/ui/Toast';
 import { MAX_TABS } from '../../../src/renderer/src/features/workspace/tabModel';
 import { Workspace } from '../../../src/renderer/src/features/workspace/Workspace';
@@ -253,13 +254,15 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     vi.useRealTimers(); // toast 消退用例切假时钟，逐用例还原防泄漏到相邻用例
   });
 
+  // M5 批次⑦ 起 image/png 归媒体预览分流（Task 14），拒开夹具改用不可预览的 octet-stream；
+  // 拦截语义本体（非文本且非媒体 → toast 拒开）不变
   it('二进制文件前置拦截：toast 呈现拒开原因且 3s 自动消退，不读库不开标签', async () => {
     vi.useFakeTimers();
     const api = stubApi({
       listChildren: vi.fn(() =>
         Promise.resolve({
           ok: true,
-          value: [{ ...meta(3, 'pic.png'), mimeType: 'image/png' }],
+          value: [{ ...meta(3, 'data.bin'), mimeType: 'application/octet-stream' }],
         }),
       ),
     }) as unknown as { readFile: ReturnType<typeof vi.fn> };
@@ -275,7 +278,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     });
     await act(async () => {
       Array.from(container.querySelectorAll('button'))
-        .find((b) => b.textContent === 'pic.png')
+        .find((b) => b.textContent === 'data.bin')
         ?.click();
     });
     expect(api.readFile).not.toHaveBeenCalled(); // 前置拦截在读库之前
@@ -1529,5 +1532,255 @@ describe('Workspace 导入链路（M5 Task 12）', () => {
     act(() => {
       tree.unmount();
     });
+  });
+});
+
+// —— M5 批次⑦ Task 14（FR-EDIT-04，spec §8/D20）：图片/音频只读预览 ——
+// previewableMime 纯函数全分支 + openFile 媒体分流（不开标签不读库、双源状态机）+
+// 树弱选中 aria 语义 + PreviewPanel 媒体渲染分支
+
+/** 媒体文件 meta：默认顶层 pic.png（id=3），mime/名称可覆盖 */
+function mediaMeta(mimeType: string, name = 'pic.png'): NodeMeta {
+  return { ...meta(3, name), mimeType };
+}
+
+describe('previewableMime（M5 批次⑦ 全分支）', () => {
+  it('图片族 mime → image：png/jpg/jpeg/gif/webp/svg 全覆盖', () => {
+    expect(previewableMime('image/png')).toBe('image');
+    expect(previewableMime('image/jpeg')).toBe('image');
+    expect(previewableMime('image/gif')).toBe('image');
+    expect(previewableMime('image/webp')).toBe('image');
+    expect(previewableMime('image/svg+xml')).toBe('image');
+  });
+
+  it('音频族 mime → audio：mp3(mpeg)/wav/ogg 全覆盖', () => {
+    expect(previewableMime('audio/mpeg')).toBe('audio');
+    expect(previewableMime('audio/wav')).toBe('audio');
+    expect(previewableMime('audio/ogg')).toBe('audio');
+  });
+
+  it('其余 mime → null：octet-stream/文本/目录/视频一律不可预览', () => {
+    expect(previewableMime('application/octet-stream')).toBeNull();
+    expect(previewableMime('text/html')).toBeNull();
+    expect(previewableMime('application/pdf')).toBeNull();
+    expect(previewableMime('video/mp4')).toBeNull();
+    expect(previewableMime('x-directory')).toBeNull();
+  });
+});
+
+describe('Workspace 媒体只读预览分流（M5 批次⑦ Task 14）', () => {
+  /** 树点选指定名称的行钮（树/标签同名时取树栏内首个命中——顶层单层无重名） */
+  async function clickTreeRow(text: string): Promise<void> {
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === text)
+        ?.click();
+    });
+  }
+
+  it('image 节点树点选：预览切 <img src=vfsUrl>、不开标签不读库（保存管线零接触）', async () => {
+    const api = stubApi({
+      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [mediaMeta('image/png')] })),
+    }) as unknown as { readFile: ReturnType<typeof vi.fn> };
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await clickTreeRow('pic.png');
+    // 不读库：img 经 vfs:// 协议直载，openFile 分流在读库之前返回
+    expect(api.readFile).not.toHaveBeenCalled();
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(container.querySelector('img.lt-preview-media')?.getAttribute('src')).toBe(
+      'vfs://local/pic.png',
+    );
+    expect(container.querySelector('iframe')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('audio 节点树点选：<audio controls src=vfsUrl> 同款不开标签不读库', async () => {
+    const api = stubApi({
+      listChildren: vi.fn(() =>
+        Promise.resolve({ ok: true, value: [mediaMeta('audio/mpeg', 'song.mp3')] }),
+      ),
+    }) as unknown as { readFile: ReturnType<typeof vi.fn> };
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await clickTreeRow('song.mp3');
+    expect(api.readFile).not.toHaveBeenCalled();
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    const audio = container.querySelector('audio.lt-preview-media');
+    expect(audio?.hasAttribute('controls')).toBe(true);
+    expect(audio?.getAttribute('src')).toBe('vfs://local/song.mp3');
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('其余二进制维持拒开 toast：octet-stream 不读库不开标签、预览态不被牵动', async () => {
+    const api = stubApi({
+      listChildren: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: [mediaMeta('application/octet-stream', 'data.bin')],
+        }),
+      ),
+    }) as unknown as { readFile: ReturnType<typeof vi.fn> };
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(
+        <>
+          <Workspace />
+          <ToastHost />
+        </>,
+      );
+    });
+    await clickTreeRow('data.bin');
+    expect(api.readFile).not.toHaveBeenCalled();
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(container.textContent).toContain('二进制文件暂不支持编辑');
+    // 预览面板保持「未选中文件」占位：拒开路径不触碰双源状态机
+    expect(container.querySelector('img.lt-preview-media')).toBeNull();
+    expect(container.querySelector('audio.lt-preview-media')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('媒体点选与标签并存（D20 双源）：激活标签保留、切回标签预览回 iframe、弱选中随源进退', async () => {
+    stubApi({
+      listChildren: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: [mediaMeta('image/png'), meta(4, 'a.html')],
+        }),
+      ),
+      readFile: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: { content: new TextEncoder().encode('<p>正文</p>'), meta: meta(4, 'a.html') },
+        }),
+      ),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    // 开 a.html 标签（iframe 预览）→ 点 pic.png（媒体预览）
+    const aRow = (): HTMLButtonElement | null =>
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>('nav[aria-label="资源树"] button'),
+      ).find((b) => b.textContent === 'a.html') ?? null;
+    const picRow = (): HTMLButtonElement | null =>
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>('nav[aria-label="资源树"] button'),
+      ).find((b) => b.textContent === 'pic.png') ?? null;
+    await clickTreeRow('a.html');
+    expect(container.querySelector('iframe')).not.toBeNull();
+    await clickTreeRow('pic.png');
+    // 预览切图片；激活标签保留在 TabBar 且强选中语义原样
+    expect(container.querySelector('img.lt-preview-media')).not.toBeNull();
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(
+      Array.from(container.querySelectorAll('[role="tab"]')).find(
+        (b) => b.getAttribute('aria-current') === 'true',
+      )?.textContent,
+    ).toBe('a.html');
+    // 树弱选中 aria 语义并存：强选中行 aria-current=true 原样；媒体行 data-preview-selected
+    // 标记 + 可访问名带「（预览中）」说明（强选中恒无弱标记，同一行不双标）
+    expect(aRow()?.getAttribute('aria-current')).toBe('true');
+    expect(aRow()?.getAttribute('data-preview-selected')).toBeNull();
+    expect(picRow()?.getAttribute('data-preview-selected')).toBe('true');
+    expect(picRow()?.getAttribute('aria-label')).toBe('pic.png（预览中）');
+    // 切回标签（TabBar 点选）：预览回 iframe，弱选中随源退场（previewNode 保留不展示）
+    await act(async () => {
+      Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+        .find((b) => b.textContent === 'a.html')
+        ?.click();
+    });
+    expect(container.querySelector('iframe')).not.toBeNull();
+    expect(container.querySelector('img.lt-preview-media')).toBeNull();
+    expect(picRow()?.getAttribute('data-preview-selected')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('全关标签不连带清媒体预览（源=image 不被「关空标签」收回）；文本重开即收回', async () => {
+    stubApi({
+      listChildren: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: [mediaMeta('image/png'), meta(4, 'a.html')],
+        }),
+      ),
+      readFile: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: { content: new TextEncoder().encode('<p>正文</p>'), meta: meta(4, 'a.html') },
+        }),
+      ),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await clickTreeRow('a.html');
+    await clickTreeRow('pic.png');
+    expect(container.querySelector('img.lt-preview-media')).not.toBeNull();
+    // 关闭最后一个标签（activeId→null，无标签可激活）：媒体预览保持——关闭标签不表达
+    // 「看标签」意图，源=image 原样
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="关闭标签 a.html"]')?.click();
+    });
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(container.querySelector('img.lt-preview-media')).not.toBeNull();
+    // 重开文本文件：打开成功即收回预览源到标签（含 activeId 不变的重开路径，effect 不触发须显式）
+    await clickTreeRow('a.html');
+    expect(container.querySelector('iframe')).not.toBeNull();
+    expect(container.querySelector('img.lt-preview-media')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+});
+
+describe('PreviewPanel 媒体分支（M5 批次⑦ Task 14）', () => {
+  it('image meta 渲染 <img>（无滚动同步条、无 iframe）；onError 落「文档不可用」占位', () => {
+    stubApi();
+    const tree = createRoot(container);
+    act(() => {
+      tree.render(<PreviewPanel node={mediaMeta('image/png')} />);
+    });
+    const img = container.querySelector('img.lt-preview-media');
+    expect(img?.getAttribute('src')).toBe('vfs://local/pic.png');
+    expect(img?.getAttribute('alt')).toBe('pic.png');
+    expect(container.querySelector('iframe')).toBeNull();
+    // 媒体态无滚动同步语义（无 iframe 可同步），开关条不呈现（Task 11 html 分支不受影响）
+    expect(container.querySelector('button[aria-label="滚动同步"]')).toBeNull();
+    // 加载失败态沿用既有占位语义：onError → 「文档不可用」占位（媒体元素接管 unavailable 通道）
+    act(() => {
+      img?.dispatchEvent(new Event('error'));
+    });
+    expect(container.querySelector('img.lt-preview-media')).toBeNull();
+    expect(container.textContent).toContain('文档不可用');
+    tree.unmount();
+  });
+
+  it('audio meta 渲染 <audio controls>（同款无开关条、无 iframe）', () => {
+    stubApi();
+    const tree = createRoot(container);
+    act(() => {
+      tree.render(<PreviewPanel node={mediaMeta('audio/mpeg', 'song.mp3')} />);
+    });
+    const audio = container.querySelector('audio.lt-preview-media');
+    expect(audio?.hasAttribute('controls')).toBe(true);
+    expect(audio?.getAttribute('src')).toBe('vfs://local/song.mp3');
+    expect(container.querySelector('iframe')).toBeNull();
+    expect(container.querySelector('button[aria-label="滚动同步"]')).toBeNull();
+    tree.unmount();
   });
 });

@@ -50,6 +50,12 @@
  * → io:export 发起；io:progress 为导入/导出可辨识联合（kind 判别字段）按 kind 分流面板；
  * invoke 结果即终态收口：计数 toast 携带「打开目录」动作钮（openPath 回传对话框产出的目录串，
  * 主进程按当次会话登记簿校验——渲染层可伪造串的信任边界在主进程收敛）。
+ * 图片/音频只读预览（M5 批次⑦ Task 14，FR-EDIT-04 + spec §8/D20 双源裁决）：openFile 前置
+ * 分流——previewableMime 命中 image/audio 直接切预览展示源（不开编辑标签、不读库、保存管线
+ * 零接触），其余二进制维持拒开 toast。展示源 = 最近操作源：previewNode（最近点选媒体节点）
+ * 与 previewSource（'image'=媒体点选驱动 / 'tab'=标签驱动）双态合成，互不销毁对方——媒体
+ * 点选不清激活标签（保留在 TabBar），标签激活/文本打开成功收回源到标签；「关空标签」
+ * （activeId→null）无标签可激活，源保持（媒体预览不被连带清掉）。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -91,6 +97,7 @@ import { EditorPanel } from '../editor/EditorPanel';
 import { SaveController } from '../editor/saveController';
 import { TabSessions } from '../editor/tabSessions';
 import { PreviewPanel } from '../preview/PreviewPanel';
+import { previewableMime } from '../preview/previewableMime';
 import {
   applyBroadcast,
   collectStaleExpanded,
@@ -151,6 +158,13 @@ export function Workspace({
   // selected 即 activeTab，reveal 不开标签但需树内高亮——以覆盖值临时接管 TreePanel 的
   // selectedId；activeId 一变（开标签/切签/关签补位）即回落，用户焦点变化优先于 reveal 残留
   const [revealSelectionId, setRevealSelectionId] = useState<number | null>(null);
+  // 媒体只读预览双源态（M5 批次⑦ Task 14，FR-EDIT-04 + spec §8/D20）：previewNode =
+  // 最近点选的媒体节点（唯一写入口 openFile 的 previewableMime 分流）；previewSource =
+  // 最近操作源——'image'=媒体点选驱动、'tab'=标签驱动。预览面板展示源由二者合成：源='image'
+  // 呈现 previewNode（激活标签原样保留在 TabBar 不关闭），源='tab' 呈现激活标签 meta——
+  // 点图片看图、切回标签看标签，互不销毁对方状态（切回标签后 previewNode 保留，再次点图即回）
+  const [previewNode, setPreviewNode] = useState<NodeMeta | null>(null);
+  const [previewSource, setPreviewSource] = useState<'image' | 'tab'>('tab');
   // 快速打开浮层开关（M5 批次① Task 6）：唯一写入口是 shell:command dispatch（菜单
   // Ctrl+P），点选/取消由浮层经 onOpenChange 回传收口
   const [quickOpen, setQuickOpen] = useState(false);
@@ -222,6 +236,13 @@ export function Workspace({
   //（初始挂载同样触发一次，值为 null 无副作用）
   useEffect(() => {
     setRevealSelectionId(null);
+  }, [tabsOp.activeId]);
+  // 预览源收回（M5 批次⑦，D20）：activeId 变化到非 null 即「有标签被激活」——覆盖关激活
+  // 标签后的补位激活（唯一不经显式动作的标签激活路径）。全关（activeId→null）无标签可呈现，
+  // 源保持：媒体预览不被「关空标签」连带清掉（标签重点/文本重开的同 id 路径 activeId 不变，
+  // effect 不触发，由 activateTab/openFile 成功分支显式收回）
+  useEffect(() => {
+    if (tabsOp.activeId !== null) setPreviewSource('tab');
   }, [tabsOp.activeId]);
   // —— 最近打开 / 工作区会话持久化（M5 批次②，settings recent/workspace 域）——
   // 设置写串行链：recent/workspace 域全部写经「get→merge→set」promise 链逐笔串行——启动
@@ -959,18 +980,28 @@ export function Workspace({
   }, [view]);
 
   /**
-   * 打开文件为标签（树点选/新建文件/启动恢复统一入口）：非文本前置拦截（FR-EDIT-04 归后续
-   * 批次，不读库不开标签）→ 大小三分支前置判定（spec §2.4 裁决 D7：渲染层以 meta.size 前置
-   * 判定，不发起 readFile）→ readFile 成功才建会话与标签（失败 toast；续体内 MAX_TABS 判满
-   * 防孤儿会话）→ 同文件唯一实例仅聚焦。两成功分支（聚焦/新建）都记录 recent 域并尾沿写
-   * workspace 域。opts.restore（M5 批次② D7 恢复豁免）：启动恢复路径跳过 5–50MB 征询
-   * （会话重建不得卡在启动模态），>50MB 拒开与 MAX_TABS 护栏照常生效。await 化使启动恢复
-   * 可顺序驱动（标签序 = 会话序）。
+   * 打开文件为标签（树点选/新建文件/启动恢复统一入口）：媒体节点分流（M5 批次⑦ Task 14，
+   * image/audio 切预览展示源即返，见上）→ 非文本前置拦截（不读库不开标签）→ 大小三分支
+   * 前置判定（spec §2.4 裁决 D7：渲染层以 meta.size 前置判定，不发起 readFile）→ readFile
+   * 成功才建会话与标签（失败 toast；续体内 MAX_TABS 判满防孤儿会话）→ 同文件唯一实例仅聚焦。
+   * 两成功分支（聚焦/新建）都记录 recent 域、尾沿写 workspace 域、预览源收回标签（同 id
+   * 重开时 activeId 不变、收回 effect 不触发，必须显式置 'tab'——点已激活标签/树行重开即
+   * 「切回标签看标签」的用户意图，D20）。opts.restore（M5 批次② D7 恢复豁免）：启动恢复
+   * 路径跳过 5–50MB 征询（会话重建不得卡在启动模态），>50MB 拒开与 MAX_TABS 护栏照常生效。
+   * await 化使启动恢复可顺序驱动（标签序 = 会话序）。
    * @param node 目标文件节点 meta（树数据/恢复验活反查所得）
    * @param opts.restore 是否为启动恢复式打开（true 时豁免软阈值 confirm；缺省 false）
    * @returns 打开流程完成信号（拒绝/失败亦正常返回；恢复链据此串行推进）
    */
   async function openFile(node: NodeMeta, opts?: { readonly restore?: boolean }): Promise<void> {
+    // 媒体节点分流（M5 批次⑦，FR-EDIT-04 + spec §8/D20）：image/audio 不开编辑标签、不进
+    // TabBar 与保存管线，直接把预览展示源切到该节点（最近操作源='image'）；激活标签原样
+    // 保留在 TabBar。不读库：img/audio 经 vfs:// 协议直载（同树懒加载，无会话可建）
+    if (node.mimeType !== null && previewableMime(node.mimeType) !== null) {
+      setPreviewNode(node);
+      setPreviewSource('image');
+      return;
+    }
     if (node.mimeType === null || !isTextLike(node.mimeType)) {
       showToast('二进制文件暂不支持编辑（FR-EDIT-04 归后续批次）');
       return;
@@ -998,10 +1029,11 @@ export function Workspace({
       return;
     }
     // 同文件唯一实例（tabModel openTab 幂等语义）：会话已在，聚焦既有标签即可；聚焦同样是
-    // 「最近使用」，与新建分支一样记录 recent + 尾沿写 workspace 激活态
+    // 「最近使用」，与新建分支一样记录 recent + 尾沿写 workspace 激活态 + 预览源收回标签
     if (sessions.has(node.id)) {
       recordRecentOpen(node);
       setTabsOp((prev) => openTab(prev, node));
+      setPreviewSource('tab');
       tabWriteThrottleRef.current?.call();
       return;
     }
@@ -1032,6 +1064,9 @@ export function Workspace({
     );
     recordRecentOpen(node);
     setTabsOp((prev) => openTab(prev, node));
+    // 新建标签分支同款收回预览源（activeId 必变，收回 effect 亦会到达——显式置为意图直达，
+    // 不依赖 effect 时序；同 id 已激活路径仅此处能收回）
+    setPreviewSource('tab');
     tabWriteThrottleRef.current?.call();
   }
 
@@ -1048,9 +1083,14 @@ export function Workspace({
     tabWriteThrottleRef.current?.call(); // 标签集/激活态变更 → workspace 域尾沿写（D8）
   }
 
-  /** 激活标签（TabBar 点选统一入口）：仅改 activeId（tabs 不动），workspace 域随尾沿写 */
+  /**
+   * 激活标签（TabBar 点选统一入口）：仅改 activeId（tabs 不动），workspace 域随尾沿写；
+   * 预览源显式收回标签（D20）——点选已激活标签时 activeId 不变、收回 effect 不触发，
+   * 「切回标签看标签」的用户意图必须在此直达
+   */
   function activateTab(id: number): void {
     setTabsOp((prev) => ({ ...prev, activeId: id }));
+    setPreviewSource('tab');
     tabWriteThrottleRef.current?.call();
   }
 
@@ -1185,6 +1225,15 @@ export function Workspace({
   }, []);
 
   // —— 渲染段：grid 模板列内联（M4 spec §5.1 D5）——
+  // 预览面板展示源合成（M5 批次⑦，D20 双源）：媒体驱动呈现 previewNode，标签驱动呈现激活
+  // 标签；源='image' 而 previewNode 为空的组合构造上不可达，回落激活标签仅为契约收尾
+  const previewDisplayNode =
+    previewSource === 'image'
+      ? (previewNode ?? activeTab?.meta ?? null)
+      : (activeTab?.meta ?? null);
+  // 树弱选中（D20 附则）：仅媒体驱动期间以 previewOnlyNodeId 呈现；源回标签即退场
+  //（previewNode 值保留，仅不再驱动树高亮）
+  const previewOnlyNodeId = previewSource === 'image' ? (previewNode?.id ?? null) : null;
   // 列序：树 | 树分隔条 | 编辑器前分隔条（固定宽）| 编辑器（1fr 自适应占余）| 预览分隔条 | 预览；
   // 折叠栏收窄条（8px，仅展开钮可视），编辑器折叠收 0px（容器 display:none 保持挂载，保存管线照常）
   const gridColumns = [
@@ -1229,6 +1278,7 @@ export function Workspace({
                 <TreePanel
                   roots={roots}
                   selectedId={revealSelectionId ?? tabsOp.activeId}
+                  previewOnlyNodeId={previewOnlyNodeId}
                   moveMode={moveMode !== null}
                   moveTargetId={moveTargetId}
                   onToggle={onToggle}
@@ -1405,7 +1455,7 @@ export function Workspace({
               </button>
             </div>
             <PreviewPanel
-              node={activeTab?.meta ?? null}
+              node={previewDisplayNode}
               // 滚动同步接线（M5 Task 11）：投递槽交面板登记；锚点 report 中转至编辑器命令槽
               scrollPostRef={previewScrollPostRef}
               onScrollReport={(anchorText) => editorAnchorScrollRef.current?.(anchorText)}

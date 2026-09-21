@@ -11,9 +11,14 @@
  * 静默不投递），卸载摘除成对；上行：window message 监听（挂载期一次）经 parseScrollReport
  * 收窄后、开关开启才回调 onScrollReport（Workspace 中转至编辑器锚点滚动），来源精确比对
  * 本 iframe 防串扰。开关钮为会话级偏好（D14，不进 settings），默认开启。
+ * 媒体只读分支（M5 批次⑦ Task 14，FR-EDIT-04）：image 走 <img>、audio 走 <audio controls>
+ * 直载 vfs:// 资源（浏览器原生能力，保真）；加载失败经 onError 复用既有「文档不可用」占位
+ * 通道（unavailable 态，切节点复位）。媒体态无 iframe 即无滚动同步语义：开关条不渲染（Task 11
+ * html 分支原样），投递/接收 effect 不感知（iframeRef 空引用经可选链天然 no-op）。
  */
 import { useEffect, useRef, useState } from 'react';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
+import { previewableMime } from './previewableMime';
 import {
   initialRevState,
   onBroadcast,
@@ -182,6 +187,39 @@ export function PreviewPanel({
         未选中文件
       </div>
     );
+  }
+  // 媒体只读分支（M5 批次⑦，FR-EDIT-04）：img/audio 经原生组件直载 vfs:// 资源；key=url
+  // 与 iframe 同款「路径变化全新重挂」语义；加载失败复用 unavailable 通道落「文档不可用」
+  // 占位（切节点由既有 node effect 复位）。媒体态不渲染滚动同步开关条（无 iframe 可同步，
+  // 开关无操作对象；登记/接收 effect 不感知——iframeRef 为空时可选链天然 no-op）
+  if (node !== null && node.mimeType !== null) {
+    const mediaKind = previewableMime(node.mimeType);
+    if (mediaKind === 'image') {
+      return (
+        <div className="lt-preview flex min-h-0 flex-1 flex-col">
+          <img
+            key={url}
+            src={url}
+            alt={node.name}
+            className="lt-preview-media min-h-0 min-w-0 flex-1 object-contain p-2"
+            onError={() => setUnavailable(true)}
+          />
+        </div>
+      );
+    }
+    if (mediaKind === 'audio') {
+      return (
+        <div className="lt-preview flex min-h-0 flex-1 flex-col items-center justify-center p-4">
+          <audio
+            key={url}
+            controls
+            src={url}
+            className="lt-preview-media w-full max-w-md"
+            onError={() => setUnavailable(true)}
+          />
+        </div>
+      );
+    }
   }
   return (
     <div className="lt-preview flex min-h-0 flex-1 flex-col">
