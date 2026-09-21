@@ -179,6 +179,8 @@ export function Workspace({
   // 备份域（M5 批次③ Task 9）：每日自动备份开关显示值 + 备份条目列表（设置页打开期间
   // 拉取与 backup:done 广播刷新，见下方 effect；Workspace 只做数据提升，页面纯受控）
   const [backupAutoEnabled, setBackupAutoEnabled] = useState(true);
+  // 启动恢复工作区开关显示值（workspace.restoreOnStart，spec §3.2 默认开；settingsGet 装载回灌）
+  const [restoreOnStart, setRestoreOnStart] = useState(true);
   const [backups, setBackups] = useState<readonly BackupEntry[]>([]);
   // 导入域（M5 批次⑥ Task 12）：待确认导入草稿（源路径/目标父/策略——确认弹层受控态，
   // null=关闭）与进行中进度（io:progress 广播驱动；invoke 返回即收口置 null）
@@ -288,6 +290,8 @@ export function Workspace({
         setEditorFontSize(result.value.appearance.editorFontSize);
         // 备份域装载（M5 Task 9）：每日自动备份开关显示值
         setBackupAutoEnabled(result.value.backup.autoEnabled);
+        // 启动恢复开关装载（spec §3.2）：开关显示值进 state（恢复执行仍在下方按装载值判定）
+        setRestoreOnStart(result.value.workspace.restoreOnStart);
         // 布局记忆恢复（FR-SHELL-01）：ref 同步记账（后续拖拽持久化以恢复值为基准）
         layoutRef.current = result.value.shell.layout;
         setLayout(result.value.shell.layout);
@@ -664,6 +668,22 @@ export function Workspace({
       if (!ok) {
         showToast('设置保存失败，已恢复原值');
         setBackupAutoEnabled(previous);
+      }
+    });
+  }
+
+  /** 启动恢复工作区开关变更（workspace 域即改即存）：同备份域失败 toast 回滚口径；
+      workspace 域合并保留 tabNodeIds/activeTabNodeId（域整体替换会清空会话记录） */
+  function changeRestoreOnStart(enabled: boolean): void {
+    const previous = restoreOnStart;
+    setRestoreOnStart(enabled);
+    void enqueueSettingsWrite((settings) => ({
+      ...settings,
+      workspace: { ...settings.workspace, restoreOnStart: enabled },
+    })).then((ok) => {
+      if (!ok) {
+        showToast('设置保存失败，已恢复原值');
+        setRestoreOnStart(previous);
       }
     });
   }
@@ -1604,6 +1624,8 @@ export function Workspace({
           backups={backups}
           backupAutoEnabled={backupAutoEnabled}
           onBackupAutoEnabledChange={changeBackupAutoEnabled}
+          restoreOnStart={restoreOnStart}
+          onRestoreOnStartChange={changeRestoreOnStart}
           onCreateBackup={createBackupNow}
           onRestoreBackup={restoreBackupNow}
           onThemeChange={changeThemeIntent}

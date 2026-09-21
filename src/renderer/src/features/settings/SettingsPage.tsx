@@ -5,7 +5,8 @@
  * （外观/编辑器/备份/维护四区）+ 右侧表单区；表单即改即存：控件受控于 Workspace 提升的
  * 设置态，变更经钳制纯函数后上抛回调（写链 get→merge→set 与失败 toast 回滚由 Workspace
  * 收口，本组件零持久化副作用）。备份区还原经 alert-dialog 强确认（将覆盖当前全部数据并
- * 重启应用）；维护区「重建搜索索引」为 disabled 占位（接线归后续批次，登记 TASK.md）。
+ * 重启应用）；维护区「启动时恢复工作区」开关（spec §3.2，workspace.restoreOnStart 默认开）
+ * + 「重建搜索索引」disabled 占位（接线归后续批次，登记 TASK.md）。
  * 顶部「← 返回」为唯一关闭通道（D9：Esc 不关闭，防误触）。
  */
 import { useState } from 'react';
@@ -45,6 +46,10 @@ export interface SettingsPageProps {
   readonly backupAutoEnabled: boolean;
   /** 每日自动备份开关回调（持久化与失败回滚归 Workspace） */
   readonly onBackupAutoEnabledChange: (enabled: boolean) => void;
+  /** 启动恢复工作区开关显示值（workspace.restoreOnStart，spec §3.2，默认开） */
+  readonly restoreOnStart: boolean;
+  /** 启动恢复工作区开关回调（持久化与失败回滚归 Workspace） */
+  readonly onRestoreOnStartChange: (enabled: boolean) => void;
   /** 立即备份回调（建份与 backup:done 刷新链归 Workspace/主进程） */
   readonly onCreateBackup: () => void;
   /** 还原到指定备份回调（已经 alert-dialog 强确认；重启由主进程收场） */
@@ -91,6 +96,8 @@ export function SettingsPage({
   backups,
   backupAutoEnabled,
   onBackupAutoEnabledChange,
+  restoreOnStart,
+  onRestoreOnStartChange,
   onCreateBackup,
   onRestoreBackup,
   onThemeChange,
@@ -358,6 +365,22 @@ export function SettingsPage({
             </>
           ) : (
             <>
+              <div className="mb-4">
+                <p className="m-0 mb-1 text-sm font-medium">启动时恢复工作区</p>
+                {/* 原生 checkbox（备份区自动开关同款原生控件纪律）：受控 + 即改即存回调上抛 */}
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    aria-label="启动时恢复工作区"
+                    checked={restoreOnStart}
+                    className="accent-primary"
+                    onChange={(event) => {
+                      onRestoreOnStartChange(event.currentTarget.checked);
+                    }}
+                  />
+                  启动时按上次关闭前的标签集自动恢复工作区
+                </label>
+              </div>
               <div className="mb-4">
                 <p className="m-0 mb-1 text-sm font-medium">重建搜索索引</p>
                 <p className="m-0 mb-2 text-xs text-muted-foreground">

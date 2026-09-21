@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-// 设置页（M5 批次③ Task 8/9）冒烟：SettingsPage 表单交互（四区导航/主题三选/字号与去抖、
-// 自动保存滑块钳制/备份区自动开关与立即备份/还原强确认/维护区占位/返回钮）+ Workspace 设置
-// 态接线（状态栏与菜单 open-settings 双入口、写链 get→merge→set 全量、.dark 类切换与
-// matchMedia system 态监听、字号 props 透传、保存失败 toast 回滚、备份列表拉取与广播重拉、
-// 还原失败 toast）。
+// 设置页（M5 批次③ Task 8/9 + Task 16 补「启动时恢复工作区」开关）冒烟：SettingsPage 表单
+// 交互（四区导航/主题三选/字号与去抖、自动保存滑块钳制/备份区自动开关与立即备份/还原强确认/
+// 维护区恢复开关与占位/返回钮）+ Workspace 设置态接线（状态栏与菜单 open-settings 双入口、
+// 写链 get→merge→set 全量、.dark 类切换与 matchMedia system 态监听、字号 props 透传、
+// 保存失败 toast 回滚、备份列表拉取与广播重拉、还原失败 toast）。
 // 断言以 role/aria 语义为主；radix Select 沿 search-panel 键盘驱动先例（Enter 开启 →
 // ArrowDown 高亮 → 目标项 Enter 选中）；jsdom 无 matchMedia（setup.ts 空桩兜底既有用例），
 // system 态监听断言以可编程桩替换并翻转 matches 派发 change。
@@ -183,6 +183,12 @@ beforeEach(() => {
     backupAutoEnabled = enabled;
     renderPage();
   });
+  // 启动恢复开关（Task 16）：受控值与回调桩（开关桩同步受控值并重渲染，checkbox 同备份开关先例）
+  restoreOnStart = true;
+  onRestoreOnStartChange = vi.fn((enabled: boolean) => {
+    restoreOnStart = enabled;
+    renderPage();
+  });
   onCreateBackup = vi.fn();
   onRestoreBackup = vi.fn();
 });
@@ -211,10 +217,13 @@ let onBack: Mock<() => void>;
 let currentBackups: BackupEntry[];
 let backupAutoEnabled: boolean;
 let onBackupAutoEnabledChange: Mock<(enabled: boolean) => void>;
+// 启动恢复开关受控值与回调桩（Task 16）
+let restoreOnStart: boolean;
+let onRestoreOnStartChange: Mock<(enabled: boolean) => void>;
 let onCreateBackup: Mock<() => void>;
 let onRestoreBackup: Mock<(fileName: string) => void>;
 
-/** 以受控 props 渲染设置页（默认外观区；主题/备份显示值随各桩联动） */
+/** 以受控 props 渲染设置页（默认外观区；主题/备份/恢复开关显示值随各桩联动） */
 function renderPage(): void {
   act(() => {
     tree.render(
@@ -226,6 +235,8 @@ function renderPage(): void {
         backups={currentBackups}
         backupAutoEnabled={backupAutoEnabled}
         onBackupAutoEnabledChange={onBackupAutoEnabledChange}
+        restoreOnStart={restoreOnStart}
+        onRestoreOnStartChange={onRestoreOnStartChange}
         onCreateBackup={onCreateBackup}
         onRestoreBackup={onRestoreBackup}
         onThemeChange={onThemeChange}
@@ -312,7 +323,7 @@ describe('SettingsPage 设置页表单', () => {
     expect(themeTrigger()).not.toBeNull();
   });
 
-  it('备份/维护导航项启用：备份区渲染自动开关与立即备份钮，维护区渲染禁用占位钮', () => {
+  it('备份/维护导航项启用：备份区渲染自动开关与立即备份钮，维护区渲染恢复开关与禁用占位钮', () => {
     renderPage();
     act(() => {
       navButton('备份')?.click();
@@ -322,6 +333,8 @@ describe('SettingsPage 设置页表单', () => {
     act(() => {
       navButton('维护')?.click();
     });
+    // 启动恢复工作区开关（Task 16，spec §3.2）：默认开启（出厂值 restoreOnStart=true）
+    expect(checkbox('启动时恢复工作区')?.checked).toBe(true);
     // 重建搜索索引归后续批次（M2 §7.1 例程接线降级，登记 TASK.md）：disabled 占位
     const rebuild = container.querySelector<HTMLButtonElement>('button[aria-label="重建搜索索引"]');
     expect(rebuild).not.toBeNull();
@@ -379,6 +392,25 @@ describe('SettingsPage 设置页表单', () => {
       checkbox('每日自动备份')?.click();
     });
     expect(onBackupAutoEnabledChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it('启动恢复工作区开关切换回调 onRestoreOnStartChange（true→false→true）', () => {
+    renderPage();
+    act(() => {
+      navButton('维护')?.click();
+    });
+    const toggle = checkbox('启动时恢复工作区');
+    if (!toggle) throw new Error('无启动恢复开关');
+    act(() => {
+      toggle.click();
+    });
+    expect(onRestoreOnStartChange).toHaveBeenCalledWith(false);
+    expect(checkbox('启动时恢复工作区')?.checked).toBe(false); // 受控值回灌驱动视觉态
+    act(() => {
+      checkbox('启动时恢复工作区')?.click();
+    });
+    expect(onRestoreOnStartChange).toHaveBeenLastCalledWith(true);
+    expect(checkbox('启动时恢复工作区')?.checked).toBe(true);
   });
 
   it('还原强确认：描述含「将覆盖当前全部数据并重启应用」；取消不还原，确认才回调 onRestoreBackup', () => {
@@ -635,6 +667,29 @@ describe('Workspace 设置态接线', () => {
     expect(settingsSet).toHaveBeenCalledWith({
       ...DEFAULT_SETTINGS,
       backup: { autoEnabled: false },
+    });
+  });
+
+  it('启动恢复开关切换写入 workspace 域（get→merge→set 全量写，会话字段保留）', async () => {
+    const { settingsSet } = renderWorkspace();
+    await flushMicrotasks();
+    act(() => {
+      statusSettingsButton()?.click();
+    });
+    await flushMicrotasks();
+    act(() => {
+      navButton('维护')?.click();
+    });
+    const toggle = checkbox('启动时恢复工作区');
+    if (!toggle) throw new Error('无启动恢复开关');
+    act(() => {
+      toggle.click();
+    });
+    await flushMicrotasks();
+    // 全量写断言：workspace 域合并写（tabNodeIds/activeTabNodeId 原样保留，仅开关翻转）
+    expect(settingsSet).toHaveBeenCalledWith({
+      ...DEFAULT_SETTINGS,
+      workspace: { tabNodeIds: [], activeTabNodeId: null, restoreOnStart: false },
     });
   });
 
