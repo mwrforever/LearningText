@@ -283,6 +283,30 @@ describe('exportService 注入 fs 抽象（单元）', () => {
     expect(progress.at(-1)).toMatchObject({ done: 200, total: 200 });
   });
 
+  it('move 过的子树（子行 rowid 先于父行）：结构深度排序保父目录先建，导出结构完整', async () => {
+    // 构造评审实验形态：a(id=2) 及其子先于 b(id=4) 创建，move 后结构为 b/a/inner——
+    // CTE IN 扫描实测按 id 升序（创建序）输出 [a, inner, b]，导出根 b 排末位，
+    // 「行序父先于子」假设被证伪：非递归 mkdir 依赖结构深度序而非 CTE 行序
+    const a = vfs.createNode({ parentId: 1, name: 'a', nodeType: 'dir' });
+    vfs.createNode({
+      parentId: a.id,
+      name: 'inner.txt',
+      nodeType: 'file',
+      content: new TextEncoder().encode('x'),
+    });
+    const b = vfs.createNode({ parentId: 1, name: 'b', nodeType: 'dir' });
+    vfs.moveNode({ nodeId: a.id, targetDirId: b.id });
+    const fs = makeFakeFs(TARGET);
+    const service = makeService(fs, []);
+
+    const result = await service.exportNodes({ nodeId: b.id, targetDir: TARGET });
+
+    // 修复前：mkdir(target/b/a) 先于 mkdir(target/b) 触发 ENOENT → 只落空壳 b（exported=1/failed=2）
+    expect(result).toEqual({ exported: 3, rewritten: 0, missing: 0, skipped: 0, failed: 0 });
+    expect(fs.mkdirCalls).toEqual([path.join(TARGET, 'b'), path.join(TARGET, 'b', 'a')]);
+    expect(fs.writeCalls.map((w) => w.file)).toContain(path.join(TARGET, 'b', 'a', 'inner.txt'));
+  });
+
   it('进度回调序列：collecting 先行（total=计划数）、writing 随 200 节点批推进、exportId 单调', async () => {
     const notes = vfs.createNode({ parentId: 1, name: 'notes', nodeType: 'dir' });
     for (let i = 1; i <= 250; i += 1) {

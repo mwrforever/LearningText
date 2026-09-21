@@ -214,7 +214,9 @@ export function bootstrapMain(): void {
       });
       // 当次会话目录选择登记簿：pickDirectories 产出登记，io:export 的 targetDir 与
       // shell:open-path 的 dir 只认登记簿内串——渲染层可伪造任意 IPC 载荷，用户可控串
-      // 直达磁盘写与 shell 的信任边界必须在主进程侧收敛（B.5-4 精神，安全审查裁决）
+      // 直达磁盘写与 shell 的信任边界必须在主进程侧收敛（B.5-4 精神，安全审查裁决）。
+      // 生命周期：会话级、不清理——增长以用户目录选择操作次数为界；残留授权语义 =
+      // 本会话选过的目录持续可写/可打开，属用户当次会话的显式意愿，可接受。
       const dialogProducedDirs = new Set<string>();
       // 目录选择供给（io:pick-directory，Task 13 复用）：dialog.showOpenDialog 异步弹出
       // （不阻塞主进程事件循环），目录模式；multiple 区分导入多选与导出单选；取消返回空数组。

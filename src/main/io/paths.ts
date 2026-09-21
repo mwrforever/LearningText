@@ -38,7 +38,9 @@ export function relativeFromCommonRoot(fromVPath: string, toVPath: string): stri
 }
 
 /** vfs:// 引用字面形态（固定 host `local`，shared VFS_URL_HOST 约定）：捕获路径段，
- *  终止于引号/空白/尖括号/圆括号（attr 引值、CSS url(...) 与未加引号属性三类产出形态） */
+ *  终止于引号/空白/尖括号/圆括号（attr 引值、CSS url(...) 与未加引号属性三类产出形态）。
+ *  已知边界（fail-safe 定档）：prose 形态引用的全角标点（如「见 vfs://local/notes/a.html。」）
+ *  不在终止符集，尾随标点被捕入路径 → 查表不中 → 落 `#` 占位——不破坏 html 结构，可接受。 */
 const VFS_REF_PATTERN = /vfs:\/\/local\/([^"'\s<>)]+)/g;
 
 /**

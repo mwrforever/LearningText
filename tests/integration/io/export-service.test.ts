@@ -131,9 +131,10 @@ describe('导出服务集成（真实临时目录）', () => {
     await expect(
       makeService().exportNodes({ nodeId: notes.id, targetDir: occupied }),
     ).rejects.toMatchObject({ code: E_IO_TARGET_UNWRITABLE } satisfies Partial<AppError>);
-    // 目标处零写入：占位文件内容未被触碰，也未产生探针残留
+    // 目标处零写入：占位文件内容未被触碰（主断言）；探针亦未在任何实际目录残留——
+    // 对目标父目录（真实目录）断言（原 path.join(occupied,…) 位于文件内恒不存在，属空断言）
     expect(readFileSync(occupied, 'utf8')).toBe('占位');
-    expect(existsSync(path.join(occupied, '.lt-export-probe'))).toBe(false);
+    expect(existsSync(path.join(root, '.lt-export-probe'))).toBe(false);
   });
 
   it('Windows 非法名（SQL 直插）跳过计数且不落盘，合法项照常导出', async () => {

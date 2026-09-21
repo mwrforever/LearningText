@@ -1,12 +1,13 @@
 // 导出服务（M5 批次⑥ Task 13，FR-IO-02 / spec §7.1）：子树收集（parent_id 递归 CTE，
-// 与导入/删除同一身份来源——createSubtreeStatements 工厂）→ 目标预检（写探针文件，
-// 失败 E_IO_TARGET_UNWRITABLE 整单失败零写盘）→ 逐节点写盘（fs/promises 异步原语，
-// 写盘非事务、天然让出事件循环——A.5-4 预算外路径；每 200 条目批间 setImmediate +
-// 进度广播，与导入批次粒度对称）→ text/html 节点读出经 rewriteVfsRefs 改写 vfs://
-// 引用后写回，其余字节原样落盘。磁盘名以 validateNodeName 复检防御（库内三个写路径
-// 均已校验，此处兜底：复检失败计 skipped 不写盘，绝不改写名字落盘——改写会静默合并
-// 两个不同节点到同一磁盘名）。真实 fs 经 ExportFs 抽象注入：单元测试以内存记录桩驱动，
-// 生产装配 nodeExportFs 适配器。
+// 与导入/删除同一身份来源——createSubtreeStatements 工厂；行序按查询计划输出而非结构
+// 序，写盘前按虚拟路径段数=结构深度稳定排序）→ 目标预检（写探针文件，失败
+// E_IO_TARGET_UNWRITABLE 整单失败零写盘）→ 逐节点写盘（fs/promises 异步原语，写盘非
+// 事务、天然让出事件循环——A.5-4 预算外路径；每 200 条目批间 setImmediate + 进度广播，
+// 与导入批次粒度对称）→ text/html 节点读出经 rewriteVfsRefs 改写 vfs:// 引用后写回，
+// 其余字节原样落盘。磁盘名以 validateNodeName 复检防御（库内三个写路径均已校验，此处
+// 兜底：复检失败计 skipped 不写盘，绝不改写名字落盘——改写会静默合并两个不同节点到
+// 同一磁盘名）。真实 fs 经 ExportFs 抽象注入：单元测试以内存记录桩驱动，生产装配
+// nodeExportFs 适配器。
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
@@ -23,7 +24,10 @@ const BATCH_MAX_NODES = 200;
 
 /** 导出写盘 fs 抽象（service 注入，单元测试零真实磁盘 IO；ImportFs 同款先例） */
 export interface ExportFs {
-  /** 建单层目录（非递归：CTE 行序父恒先于子，父目录已建是该序的硬依赖） */
+  /**
+   * 建单层目录（非递归：写盘序经结构深度稳定排序，父目录恒先于子建目录——
+   * 该不变式是本非递归实现的硬依赖，CTE 行序本身不作任何顺序假设）
+   */
   mkdir(dir: string): Promise<void>;
   /** 写文件全文 */
   writeFile(file: string, content: Buffer): Promise<void>;
@@ -96,7 +100,8 @@ export function createExportService(deps: {
      * 执行导出（io:export 长任务）：
      * 1. 导出根校验：须存在且未删除（回收站节点拒绝）；根节点不可导出（rename/trash 同款
      *    根拒绝先例——根无父容器，磁盘布局模型无法表达）；
-     * 2. 子树收集：CTE 取全子树元数据（父先于子），换算磁盘路径与容器相对路径映射；
+     * 2. 子树收集：CTE 取全子树元数据（行序无结构保证，按虚拟路径段数=结构深度稳定
+     *    排序后父恒先于子），换算磁盘路径与容器相对路径映射；
      * 3. 目标预检：写探针文件验证可写，失败 E_IO_TARGET_UNWRITABLE 整单失败零写盘；
      * 4. 写盘阶段：目录 mkdir、文件 readFile 后写盘（text/html 先经 rewriteVfsRefs 改写
      *    vfs:// 引用为相对路径），每 200 条目批间让出事件循环并发 writing 进度；
@@ -139,6 +144,13 @@ export function createExportService(deps: {
         });
         relByVPath.set(row.virtual_path, relPath);
       }
+      // 结构深度升序稳定排序（评审 Important 修复）：CTE 的 IN 扫描实测按查询计划输出
+      // 行序（id 升序=创建序）而非结构序——「move 过的子树」子行 rowid 小于父行时先于
+      // 父行输出，非递归 mkdir 会先触碰子目录 ENOENT（整批 failed 只落空壳根）。虚拟路径
+      // 段数 = 结构深度不变式保证排序后父恒先于子；稳定排序保持同深度 CTE 原序（写盘序
+      // 确定性）。评审两案中取本案（一行排序）而非两阶段递归 mkdir：改动面最小、零额外
+      // 磁盘往返，且进度 currentPath 推进序与结构一致。
+      entries.sort((x, y) => x.relPath.split('/').length - y.relPath.split('/').length);
       // —— 目标预检（Task 9 临时文件纪律）：失败整单上抛，此刻零写盘 ——
       try {
         await fs.probeWrite(request.targetDir);
