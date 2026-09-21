@@ -378,12 +378,17 @@ describe('主进程装配 bootstrapMain', () => {
         nodeIntegration: false,
       },
     });
-    // 自绘标题栏（M6 spec §2.2）：hidden 形态恒启用；非 darwin 平台（测试进程 win32）
-    // 附加 overlay，初始配色由设置意图经 nativeTheme 解析（system + 亮色 → light 套色）
-    expect(options).toMatchObject({
-      titleBarStyle: 'hidden',
-      titleBarOverlay: { color: '#f1f5f9', symbolColor: '#0f172a', height: 40 },
-    });
+    // 自绘标题栏（M6 spec §2.2）：hidden 形态恒启用；overlay 仅非 darwin 平台设置（窗口
+    // 控制钮归 overlay，mac 归系统红绿灯）——断言按测试进程平台条件化（CI 三平台矩阵都跑）
+    expect(options).toMatchObject({ titleBarStyle: 'hidden' });
+    if (process.platform !== 'darwin') {
+      // 初始配色由设置意图经 nativeTheme 解析（system + 亮色 → light 套色）
+      expect(options).toMatchObject({
+        titleBarOverlay: { color: '#f1f5f9', symbolColor: '#0f172a', height: 40 },
+      });
+    } else {
+      expect(options).not.toHaveProperty('titleBarOverlay');
+    }
     expect(mocks.loadURL).toHaveBeenCalledWith('app://bundle/index.html');
     // 应用菜单装配一次（M4 spec §5.2：模板构建与菜单设置各一次，命令经 shell:command 下发）
     expect(mocks.menuSetApplicationMenu).toHaveBeenCalledTimes(1);
@@ -511,10 +516,13 @@ describe('主进程装配 bootstrapMain', () => {
     bootstrapMain();
     await flushReadyChain();
     const options = mocks.BrowserWindow.mock.calls[0]?.[0];
-    expect(options).toMatchObject({
-      titleBarStyle: 'hidden',
-      titleBarOverlay: { color: '#1e293b', symbolColor: '#f8fafc', height: 40 },
-    });
+    expect(options).toMatchObject({ titleBarStyle: 'hidden' });
+    // overlay 断言仅非 darwin 平台（mac 无 overlay，darwin 专项语义由下条用例承载）
+    if (process.platform !== 'darwin') {
+      expect(options).toMatchObject({
+        titleBarOverlay: { color: '#1e293b', symbolColor: '#f8fafc', height: 40 },
+      });
+    }
   });
 
   it('自绘标题栏：darwin 平台不设 titleBarOverlay（窗口控制钮归系统红绿灯）', async () => {
