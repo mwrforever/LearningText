@@ -43,7 +43,8 @@
  * 多选，取消静默）→ 确认弹层（目标父目录=树选中上下文默认根的最小推导 + 重名策略三选，
  * alert-dialog + radio 组）→ io:import 发起；onIoProgress 订阅（挂载常驻、退订成对）驱动
  * 进度面板（批次粒度，取消按 importId 寻址），invoke 结果即终态收口：D17 计数 toast +
- * 整树标记 stale（已展开目录经既有 stale 重取效应刷新导入结果）。
+ * 树刷新双通道（整树标记 stale 供展开目录重取 + 目标父目录子级直调回写——根不在 expanded
+ * 集与已折叠目录两个盲区由直调补口，评审 Important fix）。
  * 壳插槽（toolbar/statusBar）props 预留不动（评审 D5）。
  */
 import { useEffect, useRef, useState } from 'react';
@@ -679,8 +680,11 @@ export function Workspace({
 
   /**
    * 确认导入：发起 io:import（长任务，invoke 结果即终态收口）——清弹层；结果到达后
-   * 清进度面板、D17 计数 toast、树整树标记 stale（已展开目录经既有 stale 重取效应刷新，
-   * 折叠目录随展开重取——导入批量写入无逐节点广播，树刷新统一在结果收口）。
+   * 清进度面板、D17 计数 toast、树刷新双通道：① 整树标记 stale（已展开目录经既有
+   * stale 重取效应刷新）；② 目标父目录子级直接 listChildren 回写（评审 Important：
+   * 合成根永不在 expanded 集、已装载已折叠目录不进 stale 收集——两盲区由直调补口，
+   * 与 ① 并存互不依赖，导入默认落点=根由此保证顶层新项立即可见）。批量导入无逐节点
+   * 广播，树刷新统一在结果收口（无逐节点 VfsChanged）。
    */
   function confirmImport(): void {
     if (importDraft === null) return;
@@ -699,6 +703,20 @@ export function Workspace({
           const { imported, skipped, failed } = result.value;
           showToast(`导入完成：新增 ${imported}、跳过 ${skipped}、失败 ${failed}`);
           setRoots((prev) => markAllStale(prev));
+          // 盲区补口：目标父目录子级直调回写（onToggle 同款 withChildren 形态；
+          // withChildren 置 stale=false，本节点退出 stale 重取，避免二次冗余拉取）
+          void window.api.listChildren({ parentId: draft.targetParentId }).then((children) => {
+            if (children.ok) {
+              setRoots((prev) =>
+                replaceNode(prev, draft.targetParentId, (node) =>
+                  withChildren(
+                    node,
+                    children.value.map((meta) => makeTreeRoot(meta)),
+                  ),
+                ),
+              );
+            }
+          });
         } else {
           showToast(`导入失败：${result.error.message}`);
         }

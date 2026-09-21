@@ -1342,6 +1342,48 @@ describe('Workspace 导入链路（M5 Task 12）', () => {
     });
   });
 
+  it('导入成功后目标父目录子级直调回写：默认落点=根时顶层新项立即可见（评审 Important 盲区补口）', async () => {
+    const capture = captureImport({
+      // 首拉（挂载装配）与导入后直调共用同一桩：导入后返回含新增顶层项的子级清单
+      listChildren: vi.fn((request: { parentId: number }) => {
+        if (request.parentId === 1) {
+          return Promise.resolve({
+            ok: true,
+            value: [meta(2, '笔记', 'dir'), meta(9, '导入的新文件.html')],
+          });
+        }
+        return Promise.resolve({ ok: true, value: [] });
+      }),
+    });
+    const tree = await renderWorkspace();
+    // 挂载期首拉已调用一次根子级（Record 索引类型为可 undefined，按既有先例收窄）
+    const listChildren = capture.api.listChildren as ReturnType<typeof vi.fn>;
+    const rootPullsOf = (): number =>
+      listChildren.mock.calls.filter(
+        (call: unknown[]) => (call[0] as { parentId: number }).parentId === 1,
+      ).length;
+    expect(rootPullsOf()).toBe(1);
+
+    await openImportDialog(capture);
+    await act(async () => {
+      (document.querySelector('[aria-label="确认导入"]') as HTMLElement).click();
+    });
+
+    // 评审 Important：默认目标=根（无树选中回落 ROOT_ID）——根永不在 expanded 集、
+    // stale 重取效应收集为空的盲区由「目标父目录子级直调回写」补口，导入完成即重调
+    expect(listChildren).toHaveBeenCalledWith({ parentId: 1 });
+    expect(rootPullsOf()).toBe(2);
+    // 直调结果回写树状态：新增顶层项在无任何手点/重启的前提下直接呈现
+    expect(
+      Array.from(container.querySelectorAll('nav button')).some(
+        (b) => b.textContent === '导入的新文件.html',
+      ),
+    ).toBe(true);
+    act(() => {
+      tree.unmount();
+    });
+  });
+
   it('io:progress 广播驱动进度面板（scanning/writing 文案），取消钮按 importId 寻址', async () => {
     const capture = captureImport({
       importNodes: vi.fn(

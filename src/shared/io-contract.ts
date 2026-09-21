@@ -11,7 +11,8 @@ export type ImportConflict = 'skip' | 'rename' | 'overwrite';
 
 /**
  * io:import 请求：源磁盘路径清单（目录，多选）+ 目标父节点 id + 重名策略。
- * 源目录内容合并导入目标父目录之下（源根目录本身不物化为节点，spec §7.1 批量语义）。
+ * 源目录内容合并导入目标父目录之下（源根目录本身不物化为节点——实现读法经设计文档
+ * §7.1 澄清注钉死，属既有合并语义的自然延伸）。
  */
 export const ImportRequestSchema = z.strictObject({
   sourcePaths: z.array(z.string().min(1)).min(1),
