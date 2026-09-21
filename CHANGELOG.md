@@ -4,6 +4,13 @@
 
 ## 2026-09-22
 
+- **M6「产品化重构」里程碑出口达标（同日定稿、实施、验收）**：五提交落地（4da1246 基线 / dca5bf6 壳层 / 26aaed0 批次②③ / 1b5c9ed E2E 收敛与缺陷修复 / 09584b6 琢段打磨）。出口证据（Windows 本机实测，台账 `docs/progress/2026-09-22-M6产品化重构-进度台账.md`）：`npm test` 全绿（unit 505 / integration 133 / E2E 26）、coverage 过阈值（三域 100%）、typecheck/lint 零告警、`package:dir` 冒烟通过、NSIS 安装位置可选配置落地、`start.bat`/`start.sh` 实跑/语法验证通过。过程要点：
+  - **三平台探针先行纪律再证**：标题栏探针（hidden 形态原生菜单栏不渲染 + overlay env 可读）回填 spec §2.2 后才动窗口创建；
+  - **两处产品缺陷由 E2E 实跑捕获并修复**：侧栏分隔条 0px 命中区（flex 无宽度类 hit-test 永不命中）；注入桥 iframe 内 setTimeout 可被渲染器搁置致上报尾部丢失——改逐输入即时上报；
+  - **start.bat ASCII 偏差留证**：zh-CN cmd 下 chcp 65001 + UTF-8 批处理解析失步（echo 文本被执行为命令，实跑实证），功能正确性优先消息 ASCII 化，中文说明保留在 start.sh/README；
+  - 琢段按宪法 C.7 执行（subagent 加载 @ui-ux-pro-max 与 @taste-skill），十项纯呈现打磨 + 设计系统文档 §九同步，锚点红线（E2E）全绿背书；
+  - 原 M6「三平台安装包安装后主链路手测」与 fuses/release 工作流仍属 M6 发布批次（TASK.md docs/09 行已更新覆盖范围）。
+
 - **M6「产品化重构」里程碑启动（用户需求驱动，需求基线与宪法先行修订）**：UI 全量重构为 VS Code 式布局（自绘集成标题栏 + 活动栏 + 侧栏 + 编辑区标签 + 状态栏 + 欢迎页，功能按钮全面图标化 lucide-react）；HTML 编辑改为 Typora 式所见即所得（渲染面即编辑面，经用户确认不提供源码视图；CSS/JS 等非 HTML 文本保留 CodeMirror 源码编辑）；数据保存位置用户可选 + 迁移能力；NSIS 安装位置可选（`oneClick: false` + `allowToChangeInstallationDirectory`）；仓库根补 `start.sh` / `start.bat` 启动脚本。三项形态决策（自绘标题栏 / 纯所见即所得 / 设置标签页）经用户决策门确认，其余推演裁决见 spec `docs/superpowers/specs/2026-09-22-产品化UI重构-design.md`。
 - **宪法修订（先记后改）**：
   - **A.2-1**：「用户设置与用户数据统一写 `app.getPath('userData')` 下应用专属子目录」修订为「**默认**写 userData 下应用专属子目录，允许用户在设置中更改数据根目录并迁移（数据根由 userData 直下唯一例外指针文件 `data-dir.json` 记录）；userData 禁放大文件不变」——支撑数据目录用户可选需求；
