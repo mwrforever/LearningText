@@ -105,8 +105,9 @@ export interface IpcHandlerDeps {
   readonly export: ExportService;
   /**
    * 当次会话目录选择登记簿（app.ts 持有，pickDirectories 产出时登记）：io:export 的
-   * targetDir 与 shell:open-path 的 dir 只接受登记簿内的串——渲染层可伪造任意 IPC 载荷，
-   * 用户可控串直达磁盘写与 shell 的信任边界必须在主进程侧收敛（B.5-4 精神）。
+   * targetDir、shell:open-path 的 dir 与 io:import 的 sourcePaths 只接受登记簿内的串
+   * ——渲染层可伪造任意 IPC 载荷，用户可控串直达磁盘写与 shell 的信任边界必须在主进程
+   * 侧收敛（B.5-4 精神）。
    */
   readonly dialogProducedDirs: ReadonlySet<string>;
   /**
@@ -350,10 +351,17 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   );
 
   // —— 导入域（M5 批次⑥）：导入为分批长任务（批次间让出事件循环，io:cancel 可插队），
-  //    树刷新由渲染层在 invoke 结果到达后统一收口；进度经 io:progress 广播（服务侧 B.3-4）——
+  //    树刷新由渲染层在 invoke 结果到达后统一收口；进度经 io:progress 广播（服务侧 B.3-4）；
+  //    源路径只接受登记簿内串（与 io:export / shell:open-path 同一信任边界，见 deps 注：
+  //    源经 io:pick-directory 目录模式产出、登记形态即目录绝对路径，语义一致）——
   ipcMain.handle(
     IPC.ioImport,
     handleWithAsync(deps, ImportRequestSchema, async (q: ImportRequest) => {
+      for (const sourcePath of q.sourcePaths) {
+        if (!deps.dialogProducedDirs.has(sourcePath)) {
+          throw new AppError(E_IPC_BAD_PAYLOAD, '导入源路径必须来自目录选择对话框');
+        }
+      }
       const result: ImportResult = await deps.io.importNodes(q);
       return result;
     }),

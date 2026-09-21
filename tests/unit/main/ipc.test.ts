@@ -924,13 +924,13 @@ describe('io 通道接线', () => {
   it('io:import 合法载荷 await 服务结果 → ok(ImportResult)；非法载荷 E_IPC_BAD_PAYLOAD；不广播', async () => {
     const deps = registerWith();
     const ok = (await handlers.get(IPC.ioImport)?.(fakeEvent('app://bundle'), {
-      sourcePaths: ['D:/notes'],
+      sourcePaths: ['D:/picked'],
       targetParentId: 1,
       conflict: 'skip',
     })) as { ok: boolean; value: { imported: number } };
     expect(ok).toEqual({ ok: true, value: { imported: 1, skipped: 0, failed: 0 } });
     expect(deps.io.importNodes).toHaveBeenCalledWith({
-      sourcePaths: ['D:/notes'],
+      sourcePaths: ['D:/picked'],
       targetParentId: 1,
       conflict: 'skip',
     });
@@ -941,6 +941,42 @@ describe('io 通道接线', () => {
     expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
   });
 
+  it('io:import 登记簿内的源路径放行服务；登记外的串伪造拒绝（E_IPC_BAD_PAYLOAD）且服务不被调用', async () => {
+    const deps = registerWith();
+    const ok = (await handlers.get(IPC.ioImport)?.(fakeEvent('app://bundle'), {
+      sourcePaths: ['D:/picked'],
+      targetParentId: 1,
+      conflict: 'skip',
+    })) as { ok: boolean; value: { imported: number } };
+    expect(ok).toEqual({ ok: true, value: { imported: 1, skipped: 0, failed: 0 } });
+    expect(deps.io.importNodes).toHaveBeenCalledWith({
+      sourcePaths: ['D:/picked'],
+      targetParentId: 1,
+      conflict: 'skip',
+    });
+
+    // 伪造串（未登记）拒绝：与 io:export / shell:open-path 同形态统一错误
+    const forged = (await handlers.get(IPC.ioImport)?.(fakeEvent('app://bundle'), {
+      sourcePaths: ['C:/Windows/System32'],
+      targetParentId: 1,
+      conflict: 'skip',
+    })) as { ok: boolean; error: { code: string; message: string } };
+    expect(forged.ok).toBe(false);
+    expect(forged.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    expect(forged.error.message).toBe('导入源路径必须来自目录选择对话框');
+    expect(deps.io.importNodes).toHaveBeenCalledTimes(1);
+
+    // 多源清单混入单个未登记串：整单拒绝，服务不发起（登记校验针对每个 sourcePath）
+    const mixed = (await handlers.get(IPC.ioImport)?.(fakeEvent('app://bundle'), {
+      sourcePaths: ['D:/picked', 'D:/forged'],
+      targetParentId: 1,
+      conflict: 'skip',
+    })) as { ok: boolean; error: { code: string } };
+    expect(mixed.ok).toBe(false);
+    expect(mixed.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    expect(deps.io.importNodes).toHaveBeenCalledTimes(1);
+  });
+
   it('io:import 业务错误保真（E_IO_SOURCE_NOT_FOUND）；意外异常收敛 E_STORE_INTERNAL', async () => {
     const missingIo = makeIoStub();
     (missingIo.importNodes as ReturnType<typeof vi.fn>).mockImplementation(() =>
@@ -948,7 +984,7 @@ describe('io 通道接线', () => {
     );
     registerWith({ io: missingIo });
     const missing = (await handlers.get(IPC.ioImport)?.(fakeEvent('app://bundle'), {
-      sourcePaths: ['D:/gone'],
+      sourcePaths: ['D:/picked'],
       targetParentId: 1,
       conflict: 'skip',
     })) as { ok: boolean; error: { code: string; message: string } };
@@ -963,7 +999,7 @@ describe('io 通道接线', () => {
     );
     registerWith({ io: crashIo });
     const unknown = (await handlers.get(IPC.ioImport)?.(fakeEvent('app://bundle'), {
-      sourcePaths: ['D:/x'],
+      sourcePaths: ['D:/picked'],
       targetParentId: 1,
       conflict: 'skip',
     })) as { ok: boolean; error: { code: string } };
@@ -974,7 +1010,7 @@ describe('io 通道接线', () => {
   it('io:import 非白名单 origin 拒绝（异步包装与同步包装同两道校验，B.3-2）；服务不被调用', async () => {
     const deps = registerWith();
     const forbidden = (await handlers.get(IPC.ioImport)?.(fakeEvent('http://evil'), {
-      sourcePaths: ['D:/x'],
+      sourcePaths: ['D:/picked'],
       targetParentId: 1,
       conflict: 'skip',
     })) as { ok: boolean; error: { code: string } };

@@ -13,7 +13,9 @@ export type ImportConflict = 'skip' | 'rename' | 'overwrite';
 /**
  * io:import 请求：源磁盘路径清单（目录，多选）+ 目标父节点 id + 重名策略。
  * 源目录内容合并导入目标父目录之下（源根目录本身不物化为节点——实现读法经设计文档
- * §7.1 澄清注钉死，属既有合并语义的自然延伸）。
+ * §7.1 澄清注钉死，属既有合并语义的自然延伸）。sourcePaths 必须来自主进程目录选择
+ * 对话框的当次会话产出（ipc 层按登记簿校验，渲染层伪造串拒绝——io:export / shell:open-path
+ * 同一登记簿，防渲染层被攻破后任意路径读盘）。
  */
 export const ImportRequestSchema = z.strictObject({
   sourcePaths: z.array(z.string().min(1)).min(1),
