@@ -6,6 +6,12 @@
  * 二选一 + 根节点字号），经外观 compartment 承载——主题/字号变更由视图 dispatch reconfigure
  * effect 同 state 重配，doc/undo/光标/滚动全保留（spec §4.3 D10 两半：重建生效 + 保 doc/undo；
  * Task 8 评审 Important fix round 1：原 EditorState.create 整体重建路径丢失撤销历史，弃用）。
+ * M5 Task 16 缺陷修复：补编辑器高度约束（静态 theme）——CM6 根节点默认高度 auto（随内容
+ * 生长），容器链（h-screen → flex/grid 全程 min-h-0）虽已给出确定高度的宿主，但根节点不限高
+ * 时 .cm-scroller 与内容同高、纵向永无可滚动量，FR-RENDER-06 滚动同步双向链路与 M4 会话
+ * 滚动记忆在真实布局下均不可触发（长文档视口外内容不可达）。依 CM6 官方定高习语以
+ * height:100% 撑满宿主形成独立滚动区；该约束是布局语义非外观主题，不入外观 compartment
+ * （避免主题/字号重配时被连带替换），随静态扩展集一次装配。
  */
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import {
@@ -58,6 +64,19 @@ export interface EditorStateSpec {
  */
 const appearanceCompartment = new Compartment();
 
+/**
+ * 编辑器高度约束主题（模块级静态单例）：根节点 height:100% 撑满宿主（宿主链由工作台布局
+ * 给出确定高度），使 .cm-scroller 成为独立纵向滚动区——M5 E2E 验收缺陷一的修复落点（缺此
+ * 约束时根节点随内容生长，滚动同步与滚动记忆链路在真实布局下不可触发）。overflow:auto 与
+ * 官方定高习语成对：显式声明纵向滚动语义（基线主题只含 overflow-x:auto，纵向靠 CSS
+ * 「visible 遇非 visible 配对转 auto」的隐式规则，显式化以免依赖隐式行为）。静态扩展依赖
+ * 去重：所有会话 state 共享同一 theme 实例。
+ */
+const heightConstraintTheme = EditorView.theme({
+  '&': { height: '100%' },
+  '.cm-scroller': { overflow: 'auto' },
+});
+
 /** 外观相关扩展集：语法主题二选一（dark → one-dark 含语法高亮与环境色一体；light → 照旧
  * defaultHighlightStyle）+ 根节点字号动态主题——整体由 appearanceCompartment 承载 */
 function appearanceExtension(appearance: EditorAppearance): Extension {
@@ -80,6 +99,9 @@ export function editorExtensions(
 ): Extension[] {
   const language = languageFor(mimeType);
   return [
+    // 高度约束（静态，M5 Task 16 缺陷修复）：根节点撑满宿主 + scroller 独立滚动区，
+    // 布局语义不入外观 compartment（与主题/字号重配解耦，见 heightConstraintTheme 注释）
+    heightConstraintTheme,
     lineNumbers(),
     history(),
     drawSelection(),

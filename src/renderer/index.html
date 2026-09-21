@@ -2,11 +2,15 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <!-- 主文档 CSP：connect-src vfs: 放行主页面 fetch('vfs://…')（E2E 用 404/200 状态断言与
-         后续热替换 fetch 依赖；缺省时 default-src 'self' 回落拦截——Task 8 探针实证）； -->
+    <!-- 主文档 CSP（受限基线 default-src 'self' 不变，仅按域放行）：connect-src vfs: 放行
+         主页面 fetch('vfs://…')（E2E 用 404/200 状态断言与后续热替换 fetch 依赖，缺省时回落
+         'self' 拦截——Task 8 探针实证）；frame-src vfs: 放行预览 iframe 沙箱文档；img-src /
+         media-src 增补 'self' vfs:——媒体只读预览（FR-EDIT-04）的 <img>/<audio> 直载
+         vfs:// 资源，缺省时回落 'self' 被拦必落「文档不可用」占位（M5 E2E 验收缺陷二
+         实证：同 URL fetch 200 而 img 元素 error），只放行 vfs: 协议不放开外链面 -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src vfs:; frame-src vfs:"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src vfs:; frame-src vfs:; img-src 'self' vfs:; media-src 'self' vfs:"
     />
     <title>LearningText</title>
   </head>
