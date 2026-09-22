@@ -3,7 +3,7 @@
  * 空态呈现——产品定位一句话 + 主操作三钮 + 最近打开列表 + 快捷键提示。纯呈现组件，
  * 数据经 props 注入（最近打开取 settings.recent 前 10 条，Workspace 装配）。
  */
-import { FilePlus, FolderOpen, Search } from 'lucide-react';
+import { FileUp, FolderOpen, Search } from 'lucide-react';
 
 /** 最近打开条目（欢迎页展示所需最小字段，由 Workspace 从 settings.recent 裁剪注入） */
 export interface WelcomeRecentItem {
@@ -16,8 +16,8 @@ export interface WelcomePageProps {
   /** 最近打开条目（新→旧，≤10 条） */
   readonly recent: readonly WelcomeRecentItem[];
   onOpenRecent(nodeId: number): void;
-  /** 新建文件（根目录，与菜单命令同语义） */
-  onNewFile(): void;
+  /** 导入 HTML 文件（M7，原「新建文件」语义升级；与菜单命令同链路） */
+  onImportHtml(): void;
   /** 打开导入链路（目录选择 → 策略确认） */
   onImport(): void;
   /** 打开快速打开浮层 */
@@ -31,7 +31,7 @@ const ACTION_BUTTON_CLASS =
 export function WelcomePage({
   recent,
   onOpenRecent,
-  onNewFile,
+  onImportHtml,
   onImport,
   onQuickOpen,
 }: WelcomePageProps): React.JSX.Element {
@@ -50,9 +50,9 @@ export function WelcomePage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" className={ACTION_BUTTON_CLASS} onClick={onNewFile}>
-            <FilePlus aria-hidden="true" className="size-4" />
-            新建文件
+          <button type="button" className={ACTION_BUTTON_CLASS} onClick={onImportHtml}>
+            <FileUp aria-hidden="true" className="size-4" />
+            导入 HTML
           </button>
           <button type="button" className={ACTION_BUTTON_CLASS} onClick={onImport}>
             <FolderOpen aria-hidden="true" className="size-4" />

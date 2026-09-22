@@ -117,7 +117,7 @@ const mocks = vi.hoisted(() => {
           readonly requestRelaunch: () => void;
           readonly io: unknown;
           readonly export: unknown;
-          readonly dialogProducedDirs: ReadonlySet<string>;
+          readonly dialogProducedPaths: ReadonlySet<string>;
           readonly openDirectoryInShell: (dir: string) => Promise<void>;
           readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
           readonly getStorageInfo: () => unknown;
@@ -792,7 +792,7 @@ describe('主进程装配 bootstrapMain', () => {
   describe('导出服务装配与打开目录供给', () => {
     interface Task13Deps {
       readonly export: unknown;
-      readonly dialogProducedDirs: ReadonlySet<string>;
+      readonly dialogProducedPaths: ReadonlySet<string>;
       readonly openDirectoryInShell: (dir: string) => Promise<void>;
       readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
     }
@@ -839,15 +839,15 @@ describe('主进程装配 bootstrapMain', () => {
       // 启动期登记（M6 spec §4）：当前数据根（<userData>/LearningText）先行入册——
       // 设置页「打开数据目录」的 openPath 登记簿校验由此直达
       const dataRoot = path.join(mocks.getPath.mock.results[0]?.value ?? '', 'LearningText');
-      expect(deps.dialogProducedDirs.size).toBe(1);
-      expect(deps.dialogProducedDirs.has(dataRoot)).toBe(true);
+      expect(deps.dialogProducedPaths.size).toBe(1);
+      expect(deps.dialogProducedPaths.has(dataRoot)).toBe(true);
       mocks.showOpenDialog.mockResolvedValue({ canceled: false, filePaths: ['D:/picked'] });
       await deps.pickDirectories(false);
-      expect(deps.dialogProducedDirs.has('D:/picked')).toBe(true);
+      expect(deps.dialogProducedPaths.has('D:/picked')).toBe(true);
       // 取消（空清单）不登记任何串
       mocks.showOpenDialog.mockResolvedValue({ canceled: true, filePaths: [] });
       await deps.pickDirectories(false);
-      expect(deps.dialogProducedDirs.size).toBe(2);
+      expect(deps.dialogProducedPaths.size).toBe(2);
     });
 
     it('openDirectoryInShell 注入实现：shell.openPath 空串语义成功；错误描述串转异常上抛', async () => {

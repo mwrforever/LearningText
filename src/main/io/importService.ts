@@ -32,6 +32,8 @@ export interface ImportFs {
   statSize(file: string): number;
   /** 读文件全文（写入 BLOB；超限文件不会被调用） */
   readFile(file: string): Buffer;
+  /** 路径是否为目录（导入源形态判别：目录递归导入 / 文件单节点导入，FR-IO-01 双形态） */
+  isDirectory(path: string): boolean;
 }
 
 /** 生产 fs 适配器：node:fs 同步原语（扫描/读取均为 A.5-4 预算外的分批路径承载） */
@@ -43,6 +45,7 @@ export const nodeFs: ImportFs = {
     })),
   statSize: (file) => statSync(file).size,
   readFile: (file) => readFileSync(file),
+  isDirectory: (path) => statSync(path).isDirectory(),
 };
 
 /** 写入期目录运行态：既有子项名集合（重名判定事实来源）与 id 映射（覆盖 trash 定位） */
@@ -69,6 +72,8 @@ interface WriteContext {
   readonly dirVPaths: Map<string, string>;
   readonly dirStates: Map<string, DirState>;
   readonly failures: string[];
+  /** imported 命中的新节点 id 累积（ImportResult.importedNodeIds 事实来源，与计数同序） */
+  readonly importedNodeIds: number[];
 }
 
 export function createImportService(deps: {
@@ -213,6 +218,8 @@ export function createImportService(deps: {
       const newId = Number(info.lastInsertRowid);
       // 业务行与 FTS 索引行同事务写入（宪法 A.4-4）
       stmtInsertFts.run({ id: newId, name, body });
+      // imported 命中：新节点 id 归集（单文件导入「导入后即打开」的寻址依据）
+      ctx.importedNodeIds.push(newId);
       // 目录运行态同步（后续兄弟/子级重名判定的事实来源）
       state.names.add(name);
       state.byName.set(name, { id: newId, isDir: entry.node.isDir });
@@ -258,17 +265,11 @@ export function createImportService(deps: {
         `[io] 导入开始 importId=${importId} 源根=${request.sourcePaths.length} 个 目标节点=${request.targetParentId} 策略=${request.conflict}`,
       );
       try {
-        // —— 扫描阶段（纯读磁盘）：广度遍历产出全量写入计划 ——
+        // —— 扫描阶段（纯读磁盘）：逐源根判别形态（目录递归 / 文件单节点，FR-IO-01 双形态），
+        // 广度遍历产出全量写入计划 ——
         const planned: PlannedEntry[] = [];
         const scanQueue: Array<{ absDir: string; relDir: string }> = [];
         for (const [index, sourcePath] of request.sourcePaths.entries()) {
-          let rootEntries: readonly { name: string; isDir: boolean }[];
-          try {
-            rootEntries = fs.readDir(sourcePath);
-          } catch {
-            // 源根失效（选择与发起之间被移动/删除）：整单失败，零写入（E_IO_SOURCE_NOT_FOUND）
-            throw new AppError(E_IO_SOURCE_NOT_FOUND, '导入源路径不存在或不可读');
-          }
           onProgress({
             kind: 'import',
             importId,
@@ -277,6 +278,37 @@ export function createImportService(deps: {
             total: request.sourcePaths.length,
             currentPath: sourcePath,
           });
+          // 源形态判别：stat 失败（选择与发起之间被移动/删除）整单失败，零写入
+          let sourceIsDir: boolean;
+          try {
+            sourceIsDir = fs.isDirectory(sourcePath);
+          } catch {
+            throw new AppError(E_IO_SOURCE_NOT_FOUND, '导入源路径不存在或不可读');
+          }
+          if (!sourceIsDir) {
+            // 文件源：单节点物化为目标父的直接子项。落点名取渲染端传入（sourceName，
+            // 导入即重命名——M7 确认浮层名称输入），未传/空白回退磁盘 basename；
+            // 名称合法性与重名策略由写入期 validateNodeName / resolveConflict 兜底
+            const fallbackName = path.basename(sourcePath);
+            planned.push({
+              node: {
+                relPath: fallbackName,
+                name: request.sourceName?.trim() || fallbackName,
+                isDir: false,
+                sizeBytes: safeStatSize(sourcePath),
+              },
+              absPath: sourcePath,
+              parentRel: '',
+            });
+            continue;
+          }
+          let rootEntries: readonly { name: string; isDir: boolean }[];
+          try {
+            rootEntries = fs.readDir(sourcePath);
+          } catch {
+            // 源根失效（isDirectory 判定后、readDir 前被删除等竞态）：整单失败，零写入
+            throw new AppError(E_IO_SOURCE_NOT_FOUND, '导入源路径不存在或不可读');
+          }
           for (const node of planImportRoots(
             rootEntries.map((entry) => ({
               name: entry.name,
@@ -332,6 +364,7 @@ export function createImportService(deps: {
           dirVPaths: new Map([['', target.virtual_path]]),
           dirStates: new Map(),
           failures: [],
+          importedNodeIds: [],
         };
         let imported = 0;
         let skipped = 0;
@@ -408,7 +441,7 @@ export function createImportService(deps: {
             `[io] 导入完成 importId=${importId} 新增=${imported} 跳过=${skipped} 失败=${failed}`,
           );
         }
-        return { imported, skipped, failed };
+        return { imported, skipped, failed, importedNodeIds: ctx.importedNodeIds };
       } finally {
         cancelled.delete(importId); // 取消登记随导入终结清理（内存态有界）
       }

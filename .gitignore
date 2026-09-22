@@ -27,3 +27,6 @@ Thumbs.db
 
 # SDD 技能工作区（评审包/报告/ledger，不入库）
 .superpowers/
+
+# Impeccable 设计 hook 本机缓存（会话扫描状态，非项目工具链组成）
+.impeccable/

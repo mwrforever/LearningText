@@ -87,7 +87,9 @@ function makeBackupStub(): BackupService {
 // `as unknown as` 与 makeVfsStub 同款测试期适配先例）
 function makeIoStub(): ImportService {
   return {
-    importNodes: vi.fn(() => Promise.resolve({ imported: 1, skipped: 0, failed: 0 })),
+    importNodes: vi.fn(() =>
+      Promise.resolve({ imported: 1, skipped: 0, failed: 0, importedNodeIds: [9] }),
+    ),
     cancel: vi.fn(),
   } as unknown as ImportService;
 }
@@ -106,6 +108,10 @@ function makeExportStub(): ExportService {
   } as unknown as ExportService;
 }
 
+// HTML 文件选择供给桩（M7）：可编程返回文件路径数组（取消为空数组）
+function makePickFileStub(): () => Promise<readonly string[]> {
+  return vi.fn(() => Promise.resolve(['D:/picked/page.html']));
+}
 // 打开目录供给桩（M5 批次⑥ Task 13）：openDirectoryInShell 默认成功（shell.openPath 返回空串语义）
 function makeOpenPathStub(): (dir: string) => Promise<void> {
   return vi.fn(() => Promise.resolve());
@@ -157,8 +163,9 @@ describe('system:ping 入口校验', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -231,8 +238,9 @@ describe('vfs 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -277,8 +285,9 @@ describe('vfs 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -314,8 +323,9 @@ describe('vfs 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -351,8 +361,9 @@ describe('vfs 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -399,8 +410,9 @@ describe('vfs 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -500,8 +512,9 @@ describe('search 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -538,8 +551,9 @@ describe('search 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -581,8 +595,9 @@ describe('settings 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -613,8 +628,9 @@ describe('settings 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -647,8 +663,9 @@ describe('settings 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange,
     });
@@ -676,8 +693,9 @@ describe('settings 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange,
     });
@@ -708,8 +726,9 @@ describe('vfs:get 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -764,8 +783,9 @@ describe('vfs:count 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -825,8 +845,9 @@ describe('vfs:list-trashed 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -867,8 +888,9 @@ describe('shell:force-close 接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -902,8 +924,9 @@ describe('广播版本号 rev', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -946,8 +969,9 @@ describe('backup 通道接线', () => {
       requestRelaunch: deps.requestRelaunch,
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
     });
@@ -1039,8 +1063,9 @@ describe('io 通道接线', () => {
   interface IoDeps {
     io: ImportService;
     pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
+    pickHtmlFile: () => Promise<readonly string[]>;
     export: ExportService;
-    dialogProducedDirs: ReadonlySet<string>;
+    dialogProducedPaths: ReadonlySet<string>;
     openDirectoryInShell: (dir: string) => Promise<void>;
     onAppearanceThemeChange: (intent: 'light' | 'dark' | 'system') => void;
   }
@@ -1049,8 +1074,9 @@ describe('io 通道接线', () => {
     const deps: IoDeps = {
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
       ...overrides,
@@ -1068,8 +1094,9 @@ describe('io 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: deps.io,
       pickDirectories: deps.pickDirectories,
+      pickHtmlFile: deps.pickHtmlFile,
       export: deps.export,
-      dialogProducedDirs: deps.dialogProducedDirs,
+      dialogProducedPaths: deps.dialogProducedPaths,
       openDirectoryInShell: deps.openDirectoryInShell,
       onAppearanceThemeChange: deps.onAppearanceThemeChange,
     });
@@ -1083,7 +1110,10 @@ describe('io 通道接线', () => {
       targetParentId: 1,
       conflict: 'skip',
     })) as { ok: boolean; value: { imported: number } };
-    expect(ok).toEqual({ ok: true, value: { imported: 1, skipped: 0, failed: 0 } });
+    expect(ok).toEqual({
+      ok: true,
+      value: { imported: 1, skipped: 0, failed: 0, importedNodeIds: [9] },
+    });
     expect(deps.io.importNodes).toHaveBeenCalledWith({
       sourcePaths: ['D:/picked'],
       targetParentId: 1,
@@ -1103,7 +1133,10 @@ describe('io 通道接线', () => {
       targetParentId: 1,
       conflict: 'skip',
     })) as { ok: boolean; value: { imported: number } };
-    expect(ok).toEqual({ ok: true, value: { imported: 1, skipped: 0, failed: 0 } });
+    expect(ok).toEqual({
+      ok: true,
+      value: { imported: 1, skipped: 0, failed: 0, importedNodeIds: [9] },
+    });
     expect(deps.io.importNodes).toHaveBeenCalledWith({
       sourcePaths: ['D:/picked'],
       targetParentId: 1,
@@ -1118,7 +1151,7 @@ describe('io 通道接线', () => {
     })) as { ok: boolean; error: { code: string; message: string } };
     expect(forged.ok).toBe(false);
     expect(forged.error.code).toBe(E_IPC_BAD_PAYLOAD);
-    expect(forged.error.message).toBe('导入源路径必须来自目录选择对话框');
+    expect(forged.error.message).toBe('导入源路径必须来自文件/目录选择对话框');
     expect(deps.io.importNodes).toHaveBeenCalledTimes(1);
 
     // 多源清单混入单个未登记串：整单拒绝，服务不发起（登记校验针对每个 sourcePath）
@@ -1206,6 +1239,28 @@ describe('io 通道接线', () => {
       multiple: false,
     })) as { ok: boolean; value: readonly string[] };
     expect(canceled).toEqual({ ok: true, value: [] });
+  });
+
+  it('io:pick-file 无参透传文件选择供给并返回路径；取消为空数组；载荷非 null 拒绝（M7）', async () => {
+    const pick = vi.fn(() => Promise.resolve(['D:/picked/page.html']));
+    registerWith({ pickHtmlFile: pick });
+    const ok = (await handlers.get(IPC.ioPickFile)?.(fakeEvent('app://bundle'), null)) as {
+      ok: boolean;
+      value: readonly string[];
+    };
+    expect(ok).toEqual({ ok: true, value: ['D:/picked/page.html'] });
+    expect(pick).toHaveBeenCalledWith();
+    registerWith({ pickHtmlFile: vi.fn(() => Promise.resolve([])) });
+    const canceled = (await handlers.get(IPC.ioPickFile)?.(fakeEvent('app://bundle'), null)) as {
+      ok: boolean;
+      value: readonly string[];
+    };
+    expect(canceled).toEqual({ ok: true, value: [] });
+    // 无参通道沿 settingsGet 先例：载荷必须为 null（IoPickFileRequestSchema = z.null()）
+    const badPayload = (await handlers.get(IPC.ioPickFile)?.(fakeEvent('app://bundle'), {
+      multiple: true,
+    })) as { ok: boolean };
+    expect(badPayload.ok).toBe(false);
   });
 
   it('io:export 白名单登记簿内的目标目录放行服务；登记外的串伪造拒绝（E_IPC_BAD_PAYLOAD）且服务不被调用', async () => {
@@ -1297,14 +1352,14 @@ describe('storage 通道接线', () => {
   interface StorageDeps {
     getStorageInfo: () => DataDirInfo;
     changeDataDir: (targetDir: string) => ChangeDataDirResponse;
-    dialogProducedDirs: ReadonlySet<string>;
+    dialogProducedPaths: ReadonlySet<string>;
   }
 
   function registerWith(overrides: Partial<StorageDeps> = {}): StorageDeps {
     const deps: StorageDeps = {
       getStorageInfo: makeGetStorageInfoStub(),
       changeDataDir: makeChangeDataDirStub(),
-      dialogProducedDirs: new Set(['D:/picked']),
+      dialogProducedPaths: new Set(['D:/picked']),
       ...overrides,
     };
     handlers.clear();
@@ -1320,8 +1375,9 @@ describe('storage 通道接线', () => {
       requestRelaunch: vi.fn(),
       io: makeIoStub(),
       pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
       export: makeExportStub(),
-      dialogProducedDirs: deps.dialogProducedDirs,
+      dialogProducedPaths: deps.dialogProducedPaths,
       openDirectoryInShell: makeOpenPathStub(),
       onAppearanceThemeChange: vi.fn(),
       getStorageInfo: deps.getStorageInfo,

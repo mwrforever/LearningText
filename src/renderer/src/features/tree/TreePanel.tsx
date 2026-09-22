@@ -1,22 +1,29 @@
 /**
- * 树面板（M3 spec §6 → M6 spec §2.3 图标化重制）：递归渲染 TreeNode（仅呈现/事件，数据归
- * Workspace+treeModel）；dir 点击展开折叠、file 点击选中；工具栏最小操作集全面图标化
- * （新建目录/新建文件 + 选中时删除/重命名/移动到…，图标钮一律 aria-label + title tooltip）。
- * move 选择模式（M4 spec §6.2 D8）下点选语义临时切换：dir 点选=选定移动目标
- * （data-move-target 高亮），file 点选禁用——合法性判定与确认归 Workspace。
+ * 树面板（M3 spec §6 → M7 树体验批次重制）：递归渲染 TreeNode（仅呈现/事件，数据归
+ * Workspace+treeModel）。M7 交互升级（用户需求 1/3/4/5）：
+ * —— 折叠可见化 ——目录行前置 chevron 指示器（折叠 ▸ / 展开 ▾，旋转 90° transform 过渡，
+ * 禁高度动画——设计系统 §6「仅 transform/opacity 合成器路径」红线）；展开态目录图标
+ * FolderOpen（展开集经 props 下传，M6 纯呈现批次的接口红线随功能批次解除）。
+ * —— 图标区分 ——类型图标按类型着色（低饱和双主题色板，映射见 treeIconClassFor），
+ * 尺寸升 16px（size-4）。
+ * —— 行内新建 ——目录新建进入 VS Code 式行内命名：目标父的子级首位渲染命名输入行
+ * （CreateDirRow，Enter 确认 / Esc、失焦取消），确认经 onConfirmCreateDir 走 createNode，
+ * 失败保留行内编辑态可改名重试；原「固定名直接入库」路径退役。
+ * —— 导入入口 ——「新建文件」钮升级为「导入 HTML 文件」（onImportHtml，流程归 Workspace）。
+ * 目录点选模式（dirPickMode）由 move / import-html 两流程共用：dir 点选=选定目标
+ * （data-pick-target 高亮），file 点选禁用——合法性判定与确认归各流程自身。
  * 行内「⋯」菜单（M5 批次④ Task 10）：每行 dropdown-menu 提供重命名/移动到…/删除（M6 起带
  * 图标），dir 与 file 均有，操作以节点 id 直传（脱离 selectedId 选中锚——目录不开标签即可
  * 操作；根为唯一例外，不渲染入口）。
- * M6：原 TreePane（树栏三态标题栏）退役——视图切换移交活动栏（spec §2.3），本组件回归
- * 纯树呈现；TreePaneView 类型保留（活动视图枚举消费）。媒体弱选中（D20）已随画布化退役
- * （媒体文件一律开标签，spec D4/D6）。
  */
 import {
+  ChevronRight,
   FileCode,
-  FilePlus,
   FileText,
+  FileUp,
   Folder,
   FolderInput,
+  FolderOpen,
   FolderPlus,
   Image as ImageIcon,
   MoreHorizontal,
@@ -24,6 +31,7 @@ import {
   Pencil,
   Trash2,
 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import {
   DropdownMenu,
@@ -41,35 +49,60 @@ export type TreePaneView = 'tree' | 'search' | 'trash';
 const ROOT_ID = 1;
 
 /**
- * 树节点类型图标（蓝图 §2.3「类型图标 + 名称」的图标先行落地；映射与标签条 §2.4 同族）：
- * dir → Folder；text/html → FileText；image/* → ImageIcon；audio/* → Music；其余文本
- * （css/js/txt 等）→ FileCode。展开态 FolderOpen 需要展开集状态（归 Workspace 持有、
- * 不经 props 下传），打磨红线禁改 props 接口，故目录恒用 Folder（不引入半态图标）。
+ * 树节点类型图标（映射与设计系统 §九-9 同族）：dir → Folder/FolderOpen（按展开态）；
+ * text/html → FileText；image/* → ImageIcon；audio/* → Music；其余文本（css/js/txt 等）
+ * → FileCode。图标色与形分离：形在此判定，色经 treeIconClassFor。
  */
-function treeIconFor(meta: NodeMeta): typeof Folder {
-  if (meta.nodeType === 'dir') return Folder;
+function treeIconFor(meta: NodeMeta, expanded: boolean): typeof Folder {
+  if (meta.nodeType === 'dir') return expanded ? FolderOpen : Folder;
   if (meta.mimeType === 'text/html') return FileText;
   if (meta.mimeType !== null && meta.mimeType.startsWith('image/')) return ImageIcon;
   if (meta.mimeType !== null && meta.mimeType.startsWith('audio/')) return Music;
   return FileCode;
 }
 
+/**
+ * 类型图标着色（M7 用户需求 4「用图标区分文件」）：低饱和类型色板、双主题各取一档
+ * （dark 下降一档亮度保对比），固定色不随主题语义反转——类型身份与 VS Code 图标主题
+ * 同构（目录琥珀 / HTML 橙 / 图片绿 / 音频紫 / 其余文本天蓝）。选中行文字提亮不变，
+ * 图标保持类型色（类型辨识优先级高于行态反馈）。
+ */
+function treeIconClassFor(meta: NodeMeta): string {
+  if (meta.nodeType === 'dir') return 'text-amber-500 dark:text-amber-400';
+  if (meta.mimeType === 'text/html') return 'text-orange-500 dark:text-orange-400';
+  if (meta.mimeType !== null && meta.mimeType.startsWith('image/'))
+    return 'text-emerald-500 dark:text-emerald-400';
+  if (meta.mimeType !== null && meta.mimeType.startsWith('audio/'))
+    return 'text-violet-500 dark:text-violet-400';
+  return 'text-sky-500 dark:text-sky-400';
+}
+
 export interface TreePanelProps {
   readonly roots: readonly TreeNode[];
   readonly selectedId: number | null;
-  /** move 选择模式进行中（dir 点选临时变为「选定目标」语义，file 点选禁用） */
-  readonly moveMode: boolean;
-  /** move 模式下已选定的目标目录 id（null=尚待点选）；命中者按钮带 data-move-target 高亮 */
-  readonly moveTargetId: number | null;
+  /** 展开目录 id 集（Workspace 持有）：chevron 朝向与 FolderOpen 形态判定源 */
+  readonly expanded: ReadonlySet<number>;
+  /** 目录点选模式进行中（move / import-html 共用：dir 点选=选定目标，file 点选禁用） */
+  readonly dirPickMode: boolean;
+  /** 点选模式下已选定目标目录 id（null=尚待点选）；命中者带 data-pick-target 高亮 */
+  readonly pickTargetId: number | null;
+  /** 行内新建目录目标父 id（null=无命名行）；父需 loaded（Workspace 进入时保证） */
+  readonly creatingDirParentId: number | null;
   onToggle(id: number): void;
   onSelect(node: NodeMeta): void;
-  /** 父 = 当前展开上下文（选中 dir 其本身、选中 file 其父、否则根）——判定归 Workspace */
-  onCreate(parentId: number, nodeType: 'dir' | 'file'): void;
+  /** 进入行内新建目录流程（工具栏钮入口；上下文父在面板内推导） */
+  onStartCreateDir(parentId: number): void;
+  /** 行内命名确认（Enter；空名不回传由行内自守）；失败由 Workspace toast 并保留行内态 */
+  onConfirmCreateDir(parentId: number, name: string): void;
+  /** 行内命名取消（Esc / 失焦） */
+  onCancelCreateDir(): void;
   onTrash(nodeId: number): void;
   /** 重命名入口（工具栏以选中 id、行内菜单以本行 id 直传；模态渲染归 Workspace） */
   onRename(id: number): void;
   /** 进入 move 选择模式（源 = 入参 id 直传：工具栏传选中、行内菜单传本行；判定归 Workspace） */
   onStartMove(id: number): void;
+  /** 导入 HTML 文件入口（工具栏钮；文件选择与确认浮层流程归 Workspace） */
+  onImportHtml(): void;
 }
 
 /** 行内「⋯」菜单触发钮标准类串（图标钮形态，字号取行内三档中的 xs 档）。
@@ -84,38 +117,112 @@ const TOOLBAR_ICON_BUTTON_CLASS =
   'inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40';
 
 /**
- * 树节点行主按钮标准类串（设计系统文档 §7.2 树列表形态 · M6 琢段增补 flex 行版）：
- * 图标 + 名称横向排布（gap-1.5 与标签条图标行同节奏），名称 span 持有 truncate；
- * 强选中 aria-current 半透明底 + 加粗；move 目标 ring 提示
+ * 树节点行主按钮标准类串（设计系统文档 §7.2 树列表形态 · M7 图标行版）：
+ * chevron + 类型图标 + 名称横向排布（gap-1.5 与标签条图标行同节奏），名称 span 持有
+ * truncate；强选中 aria-current 半透明底 + 加粗；点选目标 ring 提示
  */
 const TREE_ROW_BUTTON_CLASS =
-  'min-w-0 flex-1 flex items-center gap-1.5 rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40 aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground data-[move-target=true]:bg-primary/10 data-[move-target=true]:ring-1 data-[move-target=true]:ring-ring';
+  'min-w-0 flex-1 flex items-center gap-1.5 rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40 aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground data-[pick-target=true]:bg-primary/10 data-[pick-target=true]:ring-1 data-[pick-target=true]:ring-ring';
 
-/** 树节点行（行内菜单承载容器 + 主按钮）：主按钮占余宽，行尾「⋯」触发钮 20px 独立成钮 */
+/**
+ * 行内新建目录命名行（VS Code 式原地命名）：自持草稿态（预填「新建目录」、挂载即聚焦
+ * 全选，键入即覆盖）；Enter 确认（trim 空名视同取消）、Esc 取消（在途忽略取消——等待
+ * createNode 结果期间不被打断，失败 toast 后行内态保留可改名重试）。失焦不取消：命名行
+ * 是非模态轻量编辑，失焦取消与焦点系统时序（挂载期焦点重建伪影）强耦合且误伤键盘流，
+ * 留行让用户以 Enter/Esc 显式收口，代价更低。
+ * 类名 lt-create-row 与 aria-label「新目录名称」为 E2E/组件测试锚点。
+ */
+function CreateDirRow({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm(name: string): void;
+  onCancel(): void;
+}): React.JSX.Element {
+  const [draft, setDraft] = useState('新建目录');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // 挂载后手动聚焦并全选（不用 autoFocus：React 批处理多次 commit 间 jsdom 焦点时序不稳，
+  // effect 时点 DOM 已提交连接，聚焦一次到位）
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+  return (
+    <li className="lt-create-row list-none">
+      <div className="flex items-center gap-1.5 rounded-sm px-2 py-1">
+        {/* chevron 与类型图标占位（对齐命名行与树行纵向栅格；命名中无折叠语义） */}
+        <ChevronRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+        <FolderPlus
+          aria-hidden="true"
+          className="size-4 shrink-0 text-amber-500 dark:text-amber-400"
+        />
+        <input
+          ref={inputRef}
+          aria-label="新目录名称"
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+          }}
+          className="h-6 min-w-0 flex-1 rounded-sm border border-input bg-background px-1.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring duration-100 animate-in fade-in"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              const trimmed = draft.trim();
+              // 空名 Enter 视同取消（VS Code 同语义）；非空经确认回调（inFlight 守卫在 Workspace 侧）
+              if (trimmed.length === 0) onCancel();
+              else onConfirm(trimmed);
+            } else if (e.key === 'Escape') {
+              onCancel();
+            }
+          }}
+        />
+      </div>
+    </li>
+  );
+}
+
+/** 展开判定：展开集命中且子级已装载（懒加载未装载层视觉折叠，chevron 不转不换图标） */
+function isExpandedNode(node: TreeNode, expanded: ReadonlySet<number>): boolean {
+  return node.loaded && expanded.has(node.meta.id);
+}
+
+/**
+ * 树节点行（行内菜单承载容器 + 主按钮 + 子级容器）：主按钮占余宽，行尾「⋯」触发钮
+ * 20px 独立成钮；目录行前置 chevron（展开旋转 90°，transform 合成器路径），文件行以
+ * 等宽占位保持类型图标纵向对齐
+ */
 function TreeItem({
   node,
   selectedId,
-  moveMode,
-  moveTargetId,
+  expanded,
+  dirPickMode,
+  pickTargetId,
+  creatingDirParentId,
   onToggle,
   onSelect,
+  onConfirmCreateDir,
+  onCancelCreateDir,
   onRename,
   onStartMove,
   onTrash,
 }: {
   readonly node: TreeNode;
   readonly selectedId: number | null;
-  readonly moveMode: boolean;
-  readonly moveTargetId: number | null;
+  readonly expanded: ReadonlySet<number>;
+  readonly dirPickMode: boolean;
+  readonly pickTargetId: number | null;
+  readonly creatingDirParentId: number | null;
   onToggle(id: number): void;
   onSelect(node: NodeMeta): void;
+  onConfirmCreateDir(parentId: number, name: string): void;
+  onCancelCreateDir(): void;
   onRename(id: number): void;
   onStartMove(id: number): void;
   onTrash(nodeId: number): void;
 }): React.JSX.Element {
   const isDir = node.meta.nodeType === 'dir';
-  // 类型图标恒单色 muted 色阶（图标先行但不与内容争色，选中行文字提亮、图标保持安静）
-  const Icon = treeIconFor(node.meta);
+  const expandedNode = isExpandedNode(node, expanded);
+  // 类型图标按展开态换形（FolderOpen）、按类型着色（treeIconClassFor，不随行态变化）
+  const Icon = treeIconFor(node.meta, expandedNode);
   return (
     // 行容器为 group：「⋯」触发钮的悬停/焦点显形作用域（见 ROW_MENU_TRIGGER_CLASS 注）
     <li className="list-none">
@@ -123,12 +230,14 @@ function TreeItem({
         <button
           type="button"
           aria-current={node.meta.id === selectedId ? 'true' : undefined}
-          data-move-target={moveMode && isDir && node.meta.id === moveTargetId ? 'true' : undefined}
-          disabled={moveMode && !isDir}
+          data-pick-target={
+            dirPickMode && isDir && node.meta.id === pickTargetId ? 'true' : undefined
+          }
+          disabled={dirPickMode && !isDir}
           className={TREE_ROW_BUTTON_CLASS}
           onClick={() => {
-            // move 选择模式：dir 点选上抛（Workspace 记账为选定目标），file 点选已被 disabled 拦截
-            if (moveMode) {
+            // 目录点选模式：dir 点选上抛（Workspace 按流程记账目标），file 点选已被 disabled 拦截
+            if (dirPickMode) {
               if (isDir) onSelect(node.meta);
               return;
             }
@@ -137,12 +246,22 @@ function TreeItem({
           }}
         >
           {/* aria-hidden 图标不进可访问名/文本内容——既有测试以名称 textContent/角色名
-              精确寻址，逐字保留 */}
-          <Icon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+              精确寻址，逐字保留。chevron 旋转表达折叠/展开（100ms transform 过渡） */}
+          {isDir ? (
+            <ChevronRight
+              aria-hidden="true"
+              className={`size-3.5 shrink-0 text-muted-foreground transition-transform duration-100 ${
+                expandedNode ? 'rotate-90' : ''
+              }`}
+            />
+          ) : (
+            <span aria-hidden="true" className="size-3.5 shrink-0" />
+          )}
+          <Icon aria-hidden="true" className={`size-4 shrink-0 ${treeIconClassFor(node.meta)}`} />
           <span className="truncate">{node.meta.name}</span>
         </button>
         {/* 行内「⋯」菜单（Task 10）：根不渲染（根不可 rename/move/trash）；移动项与工具栏
-            同款在 move 模式期间禁用（防模式内再进模式）。键盘管理（方向键/Enter/Esc/焦点
+            同款在点选模式期间禁用（防模式内再进模式）。键盘管理（方向键/Enter/Esc/焦点
             回落）由 radix dropdown-menu 自带 */}
         {node.meta.id !== ROOT_ID ? (
           <DropdownMenu>
@@ -164,7 +283,7 @@ function TreeItem({
                 <Pencil aria-hidden="true" />
                 重命名
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={moveMode} onSelect={() => onStartMove(node.meta.id)}>
+              <DropdownMenuItem disabled={dirPickMode} onSelect={() => onStartMove(node.meta.id)}>
                 <FolderInput aria-hidden="true" />
                 移动到…
               </DropdownMenuItem>
@@ -179,17 +298,29 @@ function TreeItem({
         ) : null}
       </div>
       {isDir && node.loaded ? (
-        // 嵌套层经缩进 + 左侧连线表达层级（设计系统文档 §7.2 树列表形态）
-        <ul className="m-0 ml-4 list-none border-l border-border pl-1">
+        // 嵌套层经缩进 + 左侧连线表达层级（设计系统文档 §7.2 树列表形态）；展开入场
+        // fade 100ms（opacity 合成器路径，折叠→展开卸载重挂时重播，reduced-motion 全局降级）；
+        // 行内新建目录命名行渲染于子级首位（VS Code 新建项位置语义）
+        <ul className="m-0 ml-4 list-none border-l border-border pl-1 duration-100 animate-in fade-in">
+          {creatingDirParentId === node.meta.id ? (
+            <CreateDirRow
+              onConfirm={(name) => onConfirmCreateDir(node.meta.id, name)}
+              onCancel={onCancelCreateDir}
+            />
+          ) : null}
           {node.children.map((child) => (
             <TreeItem
               key={child.meta.id}
               node={child}
               selectedId={selectedId}
-              moveMode={moveMode}
-              moveTargetId={moveTargetId}
+              expanded={expanded}
+              dirPickMode={dirPickMode}
+              pickTargetId={pickTargetId}
+              creatingDirParentId={creatingDirParentId}
               onToggle={onToggle}
               onSelect={onSelect}
+              onConfirmCreateDir={onConfirmCreateDir}
+              onCancelCreateDir={onCancelCreateDir}
               onRename={onRename}
               onStartMove={onStartMove}
               onTrash={onTrash}
@@ -215,18 +346,18 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
           aria-label="新建目录"
           title="新建目录"
           className={TOOLBAR_ICON_BUTTON_CLASS}
-          onClick={() => props.onCreate(contextParentId, 'dir')}
+          onClick={() => props.onStartCreateDir(contextParentId)}
         >
           <FolderPlus aria-hidden="true" className="size-4" />
         </button>
         <button
           type="button"
-          aria-label="新建文件"
-          title="新建文件"
+          aria-label="导入 HTML 文件"
+          title="导入 HTML 文件"
           className={TOOLBAR_ICON_BUTTON_CLASS}
-          onClick={() => props.onCreate(contextParentId, 'file')}
+          onClick={props.onImportHtml}
         >
-          <FilePlus aria-hidden="true" className="size-4" />
+          <FileUp aria-hidden="true" className="size-4" />
         </button>
         {trashTarget !== null ? (
           <button
@@ -255,7 +386,7 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
               type="button"
               aria-label="移动到…"
               title="移动到…"
-              disabled={actionTarget === ROOT_ID || props.moveMode}
+              disabled={actionTarget === ROOT_ID || props.dirPickMode}
               className={TOOLBAR_ICON_BUTTON_CLASS}
               onClick={() => props.onStartMove(actionTarget)}
             >
@@ -271,10 +402,14 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
             key={node.meta.id}
             node={node}
             selectedId={props.selectedId}
-            moveMode={props.moveMode}
-            moveTargetId={props.moveTargetId}
+            expanded={props.expanded}
+            dirPickMode={props.dirPickMode}
+            pickTargetId={props.pickTargetId}
+            creatingDirParentId={props.creatingDirParentId}
             onToggle={props.onToggle}
             onSelect={props.onSelect}
+            onConfirmCreateDir={props.onConfirmCreateDir}
+            onCancelCreateDir={props.onCancelCreateDir}
             onRename={props.onRename}
             onStartMove={props.onStartMove}
             onTrash={props.onTrash}

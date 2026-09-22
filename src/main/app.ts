@@ -57,6 +57,12 @@ function createMainWindow(
     width: 1280,
     height: 800,
     title: 'LearningText',
+    // 窗口底色与初始主题同源（取值即 titleBarOverlayFor 的 color，theme.css muted 同值）：
+    // Windows 上缺省底色在两处露出黑色——① 首帧 web 内容装配前；② 最大化时 WCO（窗口
+    // 控制钮 overlay）上沿的系统保留带露出窗口底色（用户实测缺陷：亮色主题 + start.bat
+    // 生产形态，右上角系统按钮区整条发黑常驻）。主题切换后的 overlay 配色联动仍走
+    // onAppearanceThemeChange → setTitleBarOverlay，backgroundColor 仅承载首帧与系统露出带
+    backgroundColor: initialOverlayTheme === 'dark' ? '#1e293b' : '#f1f5f9',
     // 自绘集成标题栏（M6 spec §2.2，平台探针实证见 spec）：hidden 后原生菜单栏不渲染
     // （应用内菜单承接，application menu 保留承载加速器与 mac 系统菜单栏）；
     // 窗口控制钮 overlay 仅 Windows/Linux（mac 用系统红绿灯，不设 overlay）
@@ -229,14 +235,15 @@ export function bootstrapMain(): void {
           }
         },
       });
-      // 当次会话目录选择登记簿：pickDirectories 产出登记，io:export 的 targetDir 与
-      // shell:open-path 的 dir 只认登记簿内串——渲染层可伪造任意 IPC 载荷，用户可控串
-      // 直达磁盘写与 shell 的信任边界必须在主进程侧收敛（B.5-4 精神，安全审查裁决）。
-      // 生命周期：会话级、不清理——增长以用户目录选择操作次数为界；残留授权语义 =
-      // 本会话选过的目录持续可写/可打开，属用户当次会话的显式意愿，可接受。
-      const dialogProducedDirs = new Set<string>();
+      // 当次会话选择登记簿：pickDirectories / pickHtmlFile 产出登记，io:export 的 targetDir、
+      // shell:open-path 的 dir 与 io:import 的 sourcePaths 只认登记簿内串——渲染层可伪造
+      // 任意 IPC 载荷，用户可控串直达磁盘读/写与 shell 的信任边界必须在主进程侧收敛
+      // （B.5-4 精神，安全审查裁决）。生命周期：会话级、不清理——增长以用户选择操作次数
+      // 为界；残留授权语义 = 本会话选过的路径持续可读/可写/可打开，属用户当次会话的显式
+      // 意愿，可接受。
+      const dialogProducedPaths = new Set<string>();
       // 当前数据根启动期登记（M6 spec §4）：设置页「打开目录」直达（openPath 登记簿校验口径）
-      dialogProducedDirs.add(layout.root);
+      dialogProducedPaths.add(layout.root);
       // 目录选择供给（io:pick-directory，Task 13 复用）：dialog.showOpenDialog 异步弹出
       // （不阻塞主进程事件循环），目录模式；multiple 区分导入多选与导出单选；取消返回空数组。
       // 不绑定主窗 owner：单窗应用下系统对话框恒前台，省去「窗未建/已关」分支（渲染端发起
@@ -249,8 +256,22 @@ export function bootstrapMain(): void {
         };
         const result = await dialog.showOpenDialog(options);
         if (result.canceled) return [];
-        // 产出目录登记入册（Task 13：导出目标与打开目录的白名单校验事实来源）
-        for (const dir of result.filePaths) dialogProducedDirs.add(dir);
+        // 产出目录登记入册（导出目标、打开目录与导入源的白名单校验事实来源）
+        for (const dir of result.filePaths) dialogProducedPaths.add(dir);
+        return result.filePaths;
+      };
+      // HTML 文件选择供给（io:pick-file，M7 单文件导入入口）：openFile 单选，过滤器固定
+      // html/htm（扩展名白名单收敛在主进程侧，渲染端不传过滤器）；产出登记同一登记簿
+      // （io:import 的 sourcePaths 校验事实来源），取消返回空数组
+      const pickHtmlFile = async (): Promise<readonly string[]> => {
+        const options: OpenDialogOptions = {
+          title: '选择 HTML 文件',
+          properties: ['openFile'],
+          filters: [{ name: 'HTML 文件', extensions: ['html', 'htm'] }],
+        };
+        const result = await dialog.showOpenDialog(options);
+        if (result.canceled) return [];
+        for (const file of result.filePaths) dialogProducedPaths.add(file);
         return result.filePaths;
       };
       // 系统文件管理器打开目录（shell:open-path 供给）：shell.openPath 空串语义成功，
@@ -338,12 +359,13 @@ export function bootstrapMain(): void {
           app.relaunch();
           app.exit(0);
         },
-        // 导入域（M5 批次⑥）：导入服务与目录选择供给一并注入
+        // 导入域（M5 批次⑥）：导入服务与目录/文件选择供给一并注入（M7 增 pickHtmlFile）
         io,
         pickDirectories,
-        // 导出域（M5 批次⑥ Task 13）：导出服务、目录登记簿与打开目录供给一并注入
+        pickHtmlFile,
+        // 导出域（M5 批次⑥ Task 13）：导出服务、选择登记簿与打开目录供给一并注入
         export: exportService,
-        dialogProducedDirs,
+        dialogProducedPaths,
         openDirectoryInShell,
         // 数据目录域（M6 批次③）：布局查询与迁移编排供给
         getStorageInfo,

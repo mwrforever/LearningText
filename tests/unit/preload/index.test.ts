@@ -99,6 +99,7 @@ describe('preload 桥注册', () => {
       'importNodes',
       'cancelImport',
       'pickDirectory',
+      'pickHtmlFile',
       'exportNodes',
       'openPath',
       'getDataDirInfo',

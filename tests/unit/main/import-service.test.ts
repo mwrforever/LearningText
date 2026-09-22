@@ -84,6 +84,12 @@ function makeFakeFs(
         isDir: child.kind === 'dir',
       }));
     },
+    isDirectory(p: string): boolean {
+      // 贴近真实 statSync 语义：路径不存在即抛（服务侧转 E_IO_SOURCE_NOT_FOUND 整单失败）
+      const node = lookup(p);
+      if (node === undefined) throw new Error(`模拟路径不存在：${p}`);
+      return node.kind === 'dir';
+    },
     statSize(filePath: string): number {
       const node = lookup(filePath);
       if (node === undefined || node.kind !== 'file') {
@@ -136,6 +142,19 @@ function liveRowCount(db: Database.Database): number {
   );
 }
 
+/** 计数断言辅助：ImportResult.importedNodeIds 为 M7 增量字段，逐用例值枚举无业务价值——
+ * 计数主断言在此收口，importedNodeIds 的精确值由文件源专项用例断言 */
+function expectCounts(
+  result: { imported: number; skipped: number; failed: number },
+  imported: number,
+  skipped: number,
+  failed: number,
+): void {
+  expect(result.imported).toBe(imported);
+  expect(result.skipped).toBe(skipped);
+  expect(result.failed).toBe(failed);
+}
+
 // —— 用例 ——
 
 let db: Database.Database;
@@ -179,7 +198,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
     );
 
     const result = await service.importNodes(importRequest('skip'));
-    expect(result).toEqual({ imported: 6, skipped: 0, failed: 0 });
+    expectCounts(result, 6, 0, 0);
 
     const a = rowByPath(db, '/a.txt');
     expect(a).toMatchObject({
@@ -230,7 +249,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
     const result = await service.importNodes(importRequest('skip'));
 
     // E_VFS_FILE_TOO_LARGE 语义一致（写侧同上限）：超限计 skipped，非 failed
-    expect(result).toEqual({ imported: 2, skipped: 1, failed: 0 });
+    expectCounts(result, 2, 1, 0);
     expect(fakeFs.readFileCalls).not.toContain(path.join('src', 'big.bin'));
     expect(rowByPath(db, '/big.bin')).toBeUndefined();
     expect(rowByPath(db, '/edge.bin')).toBeDefined();
@@ -255,7 +274,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
 
     const result = await service.importNodes(importRequest('rename'));
 
-    expect(result).toEqual({ imported: 1, skipped: 0, failed: 0 });
+    expectCounts(result, 1, 0, 0);
     expect(rowByPath(db, '/a (3).txt')?.content?.toString('utf8')).toBe('new');
     // 既有两节点原样保留（rename 不触碰既有行）
     expect(rowByPath(db, '/a.txt')?.content?.toString('utf8')).toBe('old');
@@ -274,7 +293,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
 
     const result = await service.importNodes(importRequest('overwrite'));
 
-    expect(result).toEqual({ imported: 1, skipped: 0, failed: 0 });
+    expectCounts(result, 1, 0, 0);
     const fresh = rowByPath(db, '/a.txt');
     expect(fresh?.content?.toString('utf8')).toBe('new');
     expect(fresh?.id).not.toBe(oldNode.id);
@@ -303,7 +322,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
     const result = await service.importNodes(importRequest('skip'));
 
     // sub 合并 skipped、old.txt 同名跳过、new.txt 新增 imported
-    expect(result).toEqual({ imported: 1, skipped: 2, failed: 0 });
+    expectCounts(result, 1, 2, 0);
     const fresh = rowByPath(db, '/sub/new.txt');
     expect(fresh?.parent_id).toBe(seededSub.id);
     expect(fresh?.content?.toString('utf8')).toBe('y');
@@ -324,7 +343,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
     const service = createImportService({ db, fs: makeFakeFs({ src: d(files) }), onProgress: spy });
     const result = await service.importNodes(importRequest('skip'));
 
-    expect(result).toEqual({ imported: 200, skipped: 0, failed: 0 });
+    expectCounts(result, 200, 0, 0);
     expect(liveRowCount(db)).toBe(200);
     expect(progress.filter((p) => p.phase === 'writing')).toHaveLength(1);
   });
@@ -335,7 +354,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
 
     const result = await service.importNodes(importRequest('skip'));
 
-    expect(result).toEqual({ imported: 0, skipped: 0, failed: 0 });
+    expectCounts(result, 0, 0, 0);
     expect(liveRowCount(db)).toBe(0);
   });
 
@@ -344,7 +363,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
     expect(() => service.cancel(999)).not.toThrow();
 
     const result = await service.importNodes(importRequest('skip'));
-    expect(result).toEqual({ imported: 1, skipped: 0, failed: 0 });
+    expectCounts(result, 1, 0, 0);
   });
 
   it('批次 ≤200 节点切分：250 节点产出两写批，progress done 序列 [200, 250]', async () => {
@@ -357,7 +376,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
 
     const result = await service.importNodes(importRequest('skip'));
 
-    expect(result).toEqual({ imported: 250, skipped: 0, failed: 0 });
+    expectCounts(result, 250, 0, 0);
     const writing = progress.filter((p) => p.phase === 'writing');
     expect(writing.map((p) => p.done)).toEqual([200, 250]);
   });
@@ -372,7 +391,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
 
     const result = await service.importNodes(importRequest('skip'));
 
-    expect(result).toEqual({ imported: 3, skipped: 0, failed: 0 });
+    expectCounts(result, 3, 0, 0);
     const writing = progress.filter((p) => p.phase === 'writing');
     expect(writing.map((p) => p.done)).toEqual([2, 3]);
   });
@@ -445,7 +464,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
     try {
       const service = makeService({ src: { locked: d({}, true), 'ok.txt': f('x') } }, []);
       const result = await service.importNodes(importRequest('skip'));
-      expect(result).toEqual({ imported: 2, skipped: 0, failed: 0 });
+      expectCounts(result, 2, 0, 0);
       expect(rowByPath(db, '/locked')?.node_type).toBe('dir');
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('不可读'), expect.anything());
     } finally {
@@ -471,7 +490,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
 
       const result = await service.importNodes(importRequest('skip'));
 
-      expect(result).toEqual({ imported: 1, skipped: 0, failed: 3 });
+      expectCounts(result, 1, 0, 3);
       expect(rowByPath(db, '/ok.txt')).toBeDefined();
       expect(rowByPath(db, '/bad.txt')).toBeUndefined();
       expect(rowByPath(db, '/raw.txt')).toBeUndefined();
@@ -501,7 +520,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
     const result = await service.importNodes(importRequest('skip'));
 
     // 首批 200 提交并广播后取消：第二批在开工点（needFlush）被弃置，450-200=250 未开工
-    expect(result).toEqual({ imported: 200, skipped: 0, failed: 0 });
+    expectCounts(result, 200, 0, 0);
     expect(liveRowCount(db)).toBe(200);
     expect(progress.filter((p) => p.phase === 'writing')).toHaveLength(1);
   });
@@ -512,7 +531,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
 
     const result = await service.importNodes(importRequest('skip'));
 
-    expect(result).toEqual({ imported: 0, skipped: 0, failed: 0 });
+    expectCounts(result, 0, 0, 0);
     expect(progress).toHaveLength(1);
     expect(progress[0]?.phase).toBe('scanning');
     expect(liveRowCount(db)).toBe(0);
@@ -526,7 +545,7 @@ describe('importService 注入 fs 抽象（单元）', () => {
 
     const result = await service.importNodes(importRequest('skip'));
 
-    expect(result).toEqual({ imported: 1, skipped: 0, failed: 2 });
+    expectCounts(result, 1, 0, 2);
     expect(rowByPath(db, '/ok.txt')).toBeDefined();
     expect(rowByPath(db, '/bad<name')).toBeUndefined();
     expect(rowByPath(db, '/bad<name/inner.txt')).toBeUndefined();
@@ -545,7 +564,81 @@ describe('importService 注入 fs 抽象（单元）', () => {
       conflict: 'skip',
     });
 
-    expect(result).toEqual({ imported: 1, skipped: 1, failed: 0 });
+    expectCounts(result, 1, 1, 0);
     expect(rowByPath(db, '/x.txt')?.content?.toString('utf8')).toBe('first');
+  });
+
+  it('文件源导入：单节点物化为目标父直接子项，importedNodeIds 携带新节点 id（M7）', async () => {
+    const progress: ImportProgress[] = [];
+    const service = createImportService({
+      db,
+      fs: makeFakeFs({ 'hello.html': f('<p>page</p>') }),
+      onProgress: (p) => progress.push(p),
+    });
+
+    const result = await service.importNodes({
+      sourcePaths: ['hello.html'],
+      targetParentId: 1,
+      conflict: 'rename',
+    });
+
+    expectCounts(result, 1, 0, 0);
+    // 单文件导入「导入后即打开」的寻址依据：importedNodeIds[0] = 新节点 id
+    expect(result.importedNodeIds).toHaveLength(1);
+    const node = rowByPath(db, '/hello.html');
+    expect(node).toMatchObject({
+      parent_id: 1,
+      node_type: 'file',
+      name: 'hello.html',
+      mime_type: 'text/html',
+    });
+    expect(node?.id).toBe(result.importedNodeIds[0]);
+    expect(node?.content?.toString('utf8')).toBe('<p>page</p>');
+    // 源根判别走 isDirectory 分支：文件源不发起 readDir（progress 仅 scanning 一条）
+    expect(progress.filter((p) => p.phase === 'scanning')).toHaveLength(1);
+  });
+
+  it('文件源 sourceName：导入即重命名生效；空白值回退磁盘 basename（M7 确认浮层链）', async () => {
+    const service = createImportService({
+      db,
+      fs: makeFakeFs({ 'raw-name.html': f('a'), 'other.html': f('b') }),
+      onProgress: vi.fn(),
+    });
+
+    await service.importNodes({
+      sourcePaths: ['raw-name.html'],
+      targetParentId: 1,
+      conflict: 'rename',
+      sourceName: '自定义名.html',
+    });
+    expect(rowByPath(db, '/自定义名.html')).toBeDefined();
+    expect(rowByPath(db, '/raw-name.html')).toBeUndefined();
+
+    // 空白 sourceName 回退磁盘 basename（zod min(1) 拦截空串，防御性再兜一层 trim）
+    await service.importNodes({
+      sourcePaths: ['other.html'],
+      targetParentId: 1,
+      conflict: 'rename',
+      sourceName: '   ',
+    });
+    expect(rowByPath(db, '/other.html')).toBeDefined();
+  });
+
+  it('文件源与目录源混选：文件单节点入目标父、目录递归展开，互不干扰', async () => {
+    const service = createImportService({
+      db,
+      fs: makeFakeFs({ 'solo.txt': f('one'), src: d({ 'inner.txt': f('two') }) }),
+      onProgress: vi.fn(),
+    });
+
+    const result = await service.importNodes({
+      sourcePaths: ['solo.txt', 'src'],
+      targetParentId: 1,
+      conflict: 'skip',
+    });
+
+    expectCounts(result, 2, 0, 0);
+    expect(rowByPath(db, '/solo.txt')?.parent_id).toBe(1);
+    expect(rowByPath(db, '/inner.txt')?.parent_id).toBe(1);
   });
 });

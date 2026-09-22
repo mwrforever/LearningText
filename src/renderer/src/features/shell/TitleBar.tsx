@@ -53,8 +53,8 @@ export function TitleBar({ platform, onCommand }: TitleBarProps): React.JSX.Elem
               {/* 面板动效对齐蓝图基线 100ms（模板默认 150ms；duration-* 经
                   --tw-duration 传入 tw-animate-css，reduced-motion 全局降级覆盖） */}
               <MenubarContent className="duration-100">
-                <MenubarItem onClick={() => onCommand({ type: 'new-file' })}>
-                  新建文件
+                <MenubarItem onClick={() => onCommand({ type: 'import-html' })}>
+                  导入 HTML 文件…
                   <MenubarShortcut>Ctrl+N</MenubarShortcut>
                 </MenubarItem>
                 <MenubarItem onClick={() => onCommand({ type: 'new-dir' })}>

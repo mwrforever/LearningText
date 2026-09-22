@@ -213,7 +213,7 @@ describe('TitleBar 自绘标题栏', () => {
 
 describe('WelcomePage 欢迎页', () => {
   it('空态呈现 lt-welcome-empty 占位与主操作三钮；回调按钮各自触发', () => {
-    const onNewFile = vi.fn();
+    const onImportHtml = vi.fn();
     const onImport = vi.fn();
     const onQuickOpen = vi.fn();
     const onOpenRecent = vi.fn();
@@ -222,7 +222,7 @@ describe('WelcomePage 欢迎页', () => {
         <WelcomePage
           recent={[]}
           onOpenRecent={onOpenRecent}
-          onNewFile={onNewFile}
+          onImportHtml={onImportHtml}
           onImport={onImport}
           onQuickOpen={onQuickOpen}
         />,
@@ -230,7 +230,7 @@ describe('WelcomePage 欢迎页', () => {
     });
     expect(container.querySelector('.lt-welcome-empty')?.textContent).toContain('暂无最近打开');
     // 「快速打开」钮内嵌快捷键徽标（Ctrl+P），以 startsWith 匹配业务名
-    for (const label of ['新建文件', '导入…', '快速打开']) {
+    for (const label of ['导入 HTML', '导入…', '快速打开']) {
       expect(
         Array.from(container.querySelectorAll('button')).some((b) =>
           b.textContent?.startsWith(label),
@@ -244,10 +244,10 @@ describe('WelcomePage 欢迎页', () => {
           ?.click();
       });
     };
-    clickButton('新建文件');
+    clickButton('导入 HTML');
     clickButton('导入…');
     clickButton('快速打开');
-    expect(onNewFile).toHaveBeenCalledTimes(1);
+    expect(onImportHtml).toHaveBeenCalledTimes(1);
     expect(onImport).toHaveBeenCalledTimes(1);
     expect(onQuickOpen).toHaveBeenCalledTimes(1);
     expect(onOpenRecent).not.toHaveBeenCalled();
@@ -263,7 +263,7 @@ describe('WelcomePage 欢迎页', () => {
             { nodeId: 3, name: 'a.html', virtualPath: '/a.html' },
           ]}
           onOpenRecent={onOpenRecent}
-          onNewFile={vi.fn()}
+          onImportHtml={vi.fn()}
           onImport={vi.fn()}
           onQuickOpen={vi.fn()}
         />,

@@ -85,7 +85,7 @@ describe('导入服务集成（真实临时目录）', () => {
       conflict: 'skip',
     });
 
-    expect(result).toEqual({ imported: 6, skipped: 0, failed: 0 });
+    expect(result).toMatchObject({ imported: 6, skipped: 0, failed: 0 });
     const a = rowByPath('/a.txt');
     expect(a).toMatchObject({ parent_id: 1, node_type: 'file', mime_type: 'text/plain', size: 5 });
     expect(a?.content?.toString('utf8')).toBe('hello');
@@ -116,14 +116,14 @@ describe('导入服务集成（真实临时目录）', () => {
       targetParentId: 1,
       conflict: 'skip',
     });
-    expect(first).toEqual({ imported: 3, skipped: 0, failed: 0 });
+    expect(first).toMatchObject({ imported: 3, skipped: 0, failed: 0 });
 
     const second = await service.importNodes({
       sourcePaths: [sourceDir],
       targetParentId: 1,
       conflict: 'skip',
     });
-    expect(second).toEqual({ imported: 0, skipped: 3, failed: 0 });
+    expect(second).toMatchObject({ imported: 0, skipped: 3, failed: 0 });
     expect(liveRowCount()).toBe(3);
     expect((db.prepare('SELECT COUNT(*) AS n FROM node_fts').get() as { n: number }).n).toBe(3);
   });
@@ -152,7 +152,7 @@ describe('导入服务集成（真实临时目录）', () => {
       conflict: 'skip',
     });
 
-    expect(result).toEqual({ imported: 200, skipped: 0, failed: 0 });
+    expect(result).toMatchObject({ imported: 200, skipped: 0, failed: 0 });
     expect(liveRowCount()).toBe(200);
     // 已写入子树结构完整：每个活节点都有 FTS 行（无半写状态）
     expect((db.prepare('SELECT COUNT(*) AS n FROM node_fts').get() as { n: number }).n).toBe(200);
@@ -170,7 +170,7 @@ describe('导入服务集成（真实临时目录）', () => {
       conflict: 'rename',
     });
 
-    expect(result).toEqual({ imported: 1, skipped: 0, failed: 0 });
+    expect(result).toMatchObject({ imported: 1, skipped: 0, failed: 0 });
     expect(rowByPath('/a.txt')?.content?.toString('utf8')).toBe('v1');
     expect(rowByPath('/a (2).txt')?.content?.toString('utf8')).toBe('v2');
   });
@@ -194,5 +194,49 @@ describe('导入服务集成（真实临时目录）', () => {
     const writing = progress.filter((p) => p.phase === 'writing');
     expect(writing.map((p) => p.done)).toEqual([200, 250]);
     expect(writing.map((p) => p.total)).toEqual([250, 250]);
+  });
+
+  // —— 文件源（M7，FR-IO-01 文件形态）：真实磁盘单文件导入链（fixture = 用户实测示例文档）——
+
+  it('文件源导入：HTML 单文件物化为目标父直接子项，内容逐字节一致、importedNodeIds 可寻址', async () => {
+    const fixture = path.join(__dirname, '../../fixtures/code.html');
+    const service = makeService();
+
+    const result = await service.importNodes({
+      sourcePaths: [fixture],
+      targetParentId: 1,
+      conflict: 'rename',
+    });
+
+    expect(result).toMatchObject({ imported: 1, skipped: 0, failed: 0 });
+    // 「导入后即打开」的寻址依据：importedNodeIds[0] = 新节点 id
+    const node = rowByPath('/code.html');
+    expect(node).toMatchObject({
+      parent_id: 1,
+      node_type: 'file',
+      mime_type: 'text/html',
+      size: 76167,
+    });
+    expect(node?.id).toBe(result.importedNodeIds[0]);
+    expect(node?.content?.length).toBe(76167);
+    // HTML 内容入 FTS（文本 MIME body 提取，spec §7.7）
+    const ftsRow = db.prepare('SELECT body FROM node_fts WHERE rowid = ?').get(node?.id) as
+      { body: string } | undefined;
+    expect(ftsRow?.body).toContain('Spring');
+  });
+
+  it('文件源 sourceName 端到端：导入即重命名（落名生效、FTS 同步）', async () => {
+    const fixture = path.join(__dirname, '../../fixtures/code.html');
+    const service = makeService();
+
+    await service.importNodes({
+      sourcePaths: [fixture],
+      targetParentId: 1,
+      conflict: 'rename',
+      sourceName: 'Spring 解析.html',
+    });
+
+    expect(rowByPath('/Spring 解析.html')).toMatchObject({ mime_type: 'text/html' });
+    expect(rowByPath('/code.html')).toBeUndefined();
   });
 });

@@ -16,7 +16,7 @@ vi.mock('electron', () => ({
 }));
 
 describe('createMenuTemplate', () => {
-  it('文件菜单含新建文件/新建目录/保存（id 与 accelerator 逐字），全局搜索与导入导出 disabled 占位', () => {
+  it('文件菜单含导入 HTML 文件/新建目录/保存（id 与 accelerator 逐字），全局搜索与导入导出 disabled 占位', () => {
     const template = createMenuTemplate(false) as Array<{
       label: string;
       submenu: Array<Record<string, unknown>>;
@@ -53,15 +53,15 @@ describe('createMenuTemplate', () => {
     expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'save' });
   });
 
-  it('点击新建文件/新建目录项 → 同通道 shell:command 下发对应命令（E2E 按 id 触发面）', () => {
+  it('点击导入 HTML 文件/新建目录项 → 同通道 shell:command 下发对应命令（E2E 按 id 触发面）', () => {
     const template = createMenuTemplate(false) as Array<{
       label: string;
       submenu: Array<Record<string, unknown>>;
     }>;
     const items = template.find((m) => m.label === '文件')?.submenu ?? [];
-    (items.find((item) => item['id'] === 'menu-new-file')?.['click'] as () => void)();
+    (items.find((item) => item['id'] === 'menu-import-html')?.['click'] as () => void)();
     (items.find((item) => item['id'] === 'menu-new-dir')?.['click'] as () => void)();
-    expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'new-file' });
+    expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'import-html' });
     expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'new-dir' });
   });
 

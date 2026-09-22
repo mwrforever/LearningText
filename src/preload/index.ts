@@ -39,10 +39,12 @@ const api: WindowApi = {
   backupCreate: () => ipcRenderer.invoke(IPC.backupCreate, null),
   backupList: () => ipcRenderer.invoke(IPC.backupList, null),
   backupRestore: (request) => ipcRenderer.invoke(IPC.backupRestore, request),
-  // —— 导入域（M5 批次⑥）：invoke 长任务 + 取消寻址 + 目录选择供给 ——
+  // —— 导入域（M5 批次⑥）：invoke 长任务 + 取消寻址 + 目录/文件选择供给 ——
   importNodes: (request) => ipcRenderer.invoke(IPC.ioImport, request),
   cancelImport: (request) => ipcRenderer.invoke(IPC.ioCancel, request),
   pickDirectory: (request) => ipcRenderer.invoke(IPC.ioPickDirectory, request),
+  // 无参通道沿 settingsGet 先例固定发 null（HTML 文件选择，M7 单文件导入入口）
+  pickHtmlFile: () => ipcRenderer.invoke(IPC.ioPickFile, null),
   // —— 导出域（M5 批次⑥ Task 13）：invoke 长任务 + 打开目录完成动作 ——
   exportNodes: (request) => ipcRenderer.invoke(IPC.ioExport, request),
   // openPath 白名单边界（B.5-4 精神）：dir 仅接受主进程 dialog 产出的目录串，主进程

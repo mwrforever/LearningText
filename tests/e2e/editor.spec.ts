@@ -200,10 +200,14 @@ test.describe('M4 主链路（出厂默认设置）', () => {
   });
 
   test('主链路：新建→画布编辑→自动保存落库→重命名→移动→删除→桥还原→重开可编辑', async () => {
-    // 实现注①：新建文件创建即开标签，先建后经重命名模态落目标名；目录保持默认名
-    // 「新建目录」，树侧点击与工具栏按钮以作用域区分
+    // 实现注①（M7 修订）：新建目录走行内命名（工具栏钮 → 命名行 Enter 确认）；「新建文件」
+    // 升级为 HTML 导入命令（原生文件框不可自动化）——桥建同名空文件后树点选开签，开签/
+    // 画布/保存链路等价覆盖；导入链路写侧验收归集成测试（importService 文件源）与 ipc 单测
     await toolbar().getByRole('button', { name: '新建目录' }).click();
-    await toolbar().getByRole('button', { name: '新建文件' }).click();
+    await page.getByLabel('新目录名称').fill('新建目录');
+    await page.getByLabel('新目录名称').press('Enter');
+    await seedFile(1, '新建文件.html', '');
+    await openInTree('新建文件.html');
     await expect(page.getByRole('tab', { name: /新建文件\.html/ })).toBeVisible();
     await toolbar().getByRole('button', { name: '重命名' }).click();
     await page.getByLabel('新名称').fill('链路.html');
@@ -522,9 +526,11 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
       appClosedByGuard = false;
       await launchApp(false);
     }
-    // 菜单「新建文件」命令通路（验收项 5 另一半）：命令单通道下发，创建即开标签；
-    // HTML 新建即画布标签（M6 三分流），脏态经画布键入制造
-    expect(await clickMenuById('menu-new-file')).toBe(true);
+    // 制造脏标签（M7 修订）：「新建文件」菜单命令已升级为导入 HTML（原生文件框不可自动
+    // 化，E2E 禁点）——桥建文件 + 树点选开签，键入制造脏态；菜单命令触发面
+    // （menu-import-html → import-html 命令）由 unit menu.test 锁定
+    await seedFile(1, '新建文件.html', '');
+    await openInTree('新建文件.html');
     await expect(page.getByRole('tab', { name: /新建文件\.html/ })).toBeVisible();
     await focusCanvasAtEnd('新建文件.html');
     await page.keyboard.type('未保存的草稿');

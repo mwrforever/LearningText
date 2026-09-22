@@ -73,6 +73,7 @@ import {
 } from '../tree/treeModel';
 import { RenameDialog } from '../tree/RenameDialog';
 import { TreePanel, type TreePaneView } from '../tree/TreePanel';
+import { ImportHtmlDialog } from '../io/ImportHtmlDialog';
 import { TrashPanel } from '../trash/TrashPanel';
 import { SearchPanel } from '../search/SearchPanel';
 import { QuickOpenDialog } from '../quickopen/QuickOpenDialog';
@@ -119,6 +120,20 @@ export function Workspace(): React.JSX.Element {
   const [renameTarget, setRenameTarget] = useState<{ id: number; name: string } | null>(null);
   // rename 请求在途（模态确认钮防重复提交）
   const [renameInFlight, setRenameInFlight] = useState(false);
+  // 行内新建目录（M7，VS Code 式原地命名）：目标父 id（null=无命名行）；父未展开时进入
+  // 即自动展开装载（行内命名行渲染于子级首位，需父 loaded）
+  const [creatingDirParentId, setCreatingDirParentId] = useState<number | null>(null);
+  // 行内新建目录请求在途（确认防重复提交；在途忽略失焦取消）
+  const [createDirInFlight, setCreateDirInFlight] = useState(false);
+  // HTML 文件导入草稿（M7，FR-IO-01 文件形态）：io:pick-file 产出源路径 + 目标父目录
+  // （确认浮层非模态，打开期间树中点选目录即改目标——dirPickMode 与 move 共用语义），
+  // null=浮层关闭
+  const [importHtmlDraft, setImportHtmlDraft] = useState<{
+    readonly sourcePath: string;
+    readonly targetParentId: number;
+  } | null>(null);
+  // HTML 文件导入请求在途（浮层确认钮防重复提交）
+  const [importHtmlInFlight, setImportHtmlInFlight] = useState(false);
   // 树栏视图态（M6 起由 layout.activityView 承载持久化，本态为渲染派生镜像——v4 装载前
   // 默认 'tree'；写入口 switchView/updateLayout 同步持久化）
   const [view, setView] = useState<TreePaneView>('tree');
@@ -448,21 +463,111 @@ export function Workspace(): React.JSX.Element {
     setExpanded(next);
   }
 
-  function onCreate(parentId: number, nodeType: 'dir' | 'file'): void {
-    const name = nodeType === 'dir' ? '新建目录' : '新建文件.html';
-    void window.api.createNode({ parentId, name, nodeType }).then((result) => {
-      // created 广播到达自动挂入已加载父（treeModel insert）；重名等错误 toast 归后续批次，此处静默忽略
-      // selected→activeTab 语义迁移：新建文件即开标签，承接 M3「创建即选中」的用户预期
-      if (result.ok && nodeType === 'file') openFile(result.value);
+  /**
+   * 进入行内新建目录（M7，VS Code 式原地命名；树工具栏钮与菜单「新建目录」共用）：
+   * 目标父未展开则先展开装载（命名行渲染于子级首位需父 loaded），已展开不动——避免
+   * 重复拉取（onToggle 展开分支自带 listChildren 回写）。
+   */
+  function startCreateDir(parentId: number): void {
+    setCreatingDirParentId(parentId);
+    if (!expanded.has(parentId)) onToggle(parentId);
+  }
+
+  /**
+   * 行内命名确认：createNode 以用户输入名建目录；成功清命名行（created 广播挂入树），
+   * 失败（重名/非法名）toast 并保留命名行可改名重试（错误不落盘，行内态与库无冲突）
+   */
+  function confirmCreateDir(parentId: number, name: string): void {
+    if (createDirInFlight) return;
+    setCreateDirInFlight(true);
+    void window.api.createNode({ parentId, name, nodeType: 'dir' }).then((result) => {
+      setCreateDirInFlight(false);
+      if (result.ok) {
+        setCreatingDirParentId(null);
+      } else {
+        showToast(`创建目录失败：${result.error.message}`);
+      }
+    });
+  }
+
+  /** 行内命名取消（Esc/失焦/空名 Enter） */
+  function cancelCreateDir(): void {
+    setCreatingDirParentId(null);
+  }
+
+  /**
+   * 导入 HTML 文件入口（树工具栏钮 / 菜单「导入 HTML 文件…」/Ctrl+N / 欢迎页共用）：
+   * 主进程弹 HTML 文件选择框（单选，html/htm 过滤），取消（空清单）静默返回；选定即打开
+   * 确认浮层，名称预填磁盘文件名（浮层内可改），目标父目录此刻推导（树选中上下文）。
+   */
+  function beginImportHtml(): void {
+    void window.api.pickHtmlFile().then((picked) => {
+      if (!picked.ok) {
+        showToast(`选择 HTML 文件失败：${picked.error.message}`);
+        return;
+      }
+      const file = picked.value[0];
+      if (file === undefined) return; // 用户取消选择：不弹确认浮层
+      setImportHtmlDraft({ sourcePath: file, targetParentId: deriveTreeContextParentId() });
     });
   }
 
   /**
-   * 菜单命令入口（M4 spec §5.2，与树工具栏新建钮共用 onCreate 语义）：无树上下文时
-   * 落根目录新建；新建文件经 onCreate 的创建即开标签回路呈现为标签
+   * 确认导入文件：io:import 单文件源（conflict 固定 rename——浮层已承载显式命名，重名
+   * 递增 `name (2).ext` 不打断）+ sourceName（导入即重命名）。结果收口三件事：
+   * ① toast 计数（D17 口径）；② 树刷新双通道（confirmImport 同款：整树 stale + 目标父
+   * 直调回写——合成根与已折叠已装载目录两个 stale 盲区由直调补口）；③ 导入即打开：
+   * importedNodeIds[0] 反查 meta 走 openFile 统一入口（HTML → 画布所见即所得渲染）。
+   * 失败 toast 并保留浮层（源文件/目标仍有效时可改名重试）。
+   * @param name 浮层名称输入（trim 非空，空名确认钮已禁用不达此处）
    */
-  function createInContext(nodeType: 'dir' | 'file'): void {
-    onCreate(ROOT_ID, nodeType);
+  function confirmImportHtml(name: string): void {
+    if (importHtmlDraft === null) return;
+    const draft = importHtmlDraft;
+    setImportHtmlInFlight(true);
+    void window.api
+      .importNodes({
+        sourcePaths: [draft.sourcePath],
+        targetParentId: draft.targetParentId,
+        conflict: 'rename',
+        sourceName: name,
+      })
+      .then((result) => {
+        setImportHtmlInFlight(false);
+        if (result.ok) {
+          setImportHtmlDraft(null);
+          const { imported, skipped, failed, importedNodeIds } = result.value;
+          showToast(`导入完成：新增 ${imported}、跳过 ${skipped}、失败 ${failed}`);
+          setRoots((prev) => markAllStale(prev));
+          // 盲区补口：目标父目录子级直调回写（onToggle 同款 withChildren 形态）
+          void window.api.listChildren({ parentId: draft.targetParentId }).then((children) => {
+            if (children.ok) {
+              setRoots((prev) =>
+                replaceNode(prev, draft.targetParentId, (node) =>
+                  withChildren(
+                    node,
+                    children.value.map((meta) => makeTreeRoot(meta)),
+                  ),
+                ),
+              );
+            }
+          });
+          // 导入即打开：跳过名称反查（rename 策略可能递增改名），新节点 id 直寻
+          const newNodeId = importedNodeIds[0];
+          if (newNodeId !== undefined) {
+            void window.api.getNode({ nodeId: newNodeId }).then((meta) => {
+              if (meta.ok) void openFile(meta.value);
+            });
+          }
+        } else {
+          showToast(`导入失败：${result.error.message}`);
+        }
+      });
+  }
+
+  /** 取消导入文件（浮层取消钮/Esc）：清草稿即关闭（无在途写侧副作用需回滚） */
+  function cancelImportHtml(): void {
+    setImportHtmlDraft(null);
   }
 
   function onTrash(nodeId: number): void {
@@ -745,12 +850,12 @@ export function Workspace(): React.JSX.Element {
   // —— 导入链路（M5 批次⑥ Task 12，FR-IO-01）：目录选择 → 策略确认弹层 → io:import ——
 
   /**
-   * 目标父目录推导（spec §7.1「树选中上下文默认根」的最小实现）：取树选中上下文
-   * （reveal 覆盖选中 ?? 激活标签对应节点——与 TreePanel selectedId 同源），命中且为
-   * 目录即以其为导入目标父；文件选中/无命中/无选中一律回落根。目录不开标签（懒加载）
-   * 也能经 reveal 命中，与 M4 以来的选中语义一致。
+   * 树选中上下文父推导（导入目标 / 菜单新建目录 / 文件导入的共用锚，M7 自 deriveImportTargetParentId
+   * 泛化改名）：取树选中上下文（reveal 覆盖选中 ?? 激活标签对应节点——与 TreePanel
+   * selectedId 同源），命中且为目录即取其 id；文件选中/无命中/无选中一律回落根。目录不开
+   * 标签（懒加载）也能经 reveal 命中，与 M4 以来的选中语义一致。
    */
-  function deriveImportTargetParentId(): number {
+  function deriveTreeContextParentId(): number {
     const selectedId = selectedTreeId;
     if (selectedId === null) return ROOT_ID;
     const node = findNode(roots, selectedId);
@@ -770,7 +875,7 @@ export function Workspace(): React.JSX.Element {
       if (picked.value.length === 0) return; // 用户取消选择：不弹确认层
       setImportDraft({
         sourcePaths: picked.value,
-        targetParentId: deriveImportTargetParentId(),
+        targetParentId: deriveTreeContextParentId(),
         conflict: 'skip',
       });
     });
@@ -943,16 +1048,28 @@ export function Workspace(): React.JSX.Element {
     moveSourceId !== null &&
     moveTargetId !== null &&
     (moveTargetId === moveSourceId || isDescendant(roots, moveSourceId, moveTargetId));
+  // 目录点选模式合成（M7：TreePanel 以单组 props 承载 move / import-html 两流程——
+  // dir 点选=选定目标、file 点选禁用、目标高亮；两流程互斥，同时仅一流程在途）
+  const dirPickMode = moveMode !== null || importHtmlDraft !== null;
+  const pickTargetId =
+    moveMode !== null ? moveMode.targetId : (importHtmlDraft?.targetParentId ?? null);
 
   /**
-   * 树点选统一入口：常规模式走 openFile（开标签）；move 选择模式下 dir 点选临时变为
-   * 「选定目标」记账（file 点选已被 TreePanel 禁用），合法性判定归确认钮。
-   * 记账保留进入时直传的 sourceId（Task 10 源锚语义：模式生命周期内源恒不变）
+   * 树点选统一入口：常规模式走 openFile（开标签）；目录点选模式下 dir 点选临时变为
+   * 「选定目标」记账（file 点选已被 TreePanel 禁用），合法性判定归各流程确认钮——
+   * move 记账 moveMode.targetId，HTML 文件导入改写 importHtmlDraft.targetParentId
+   * （M7：非模态浮层打开期间树中点选目录即改导入位置）
    */
   function onSelectNode(node: NodeMeta): void {
     if (moveMode !== null) {
       if (node.nodeType === 'dir') {
         setMoveMode((prev) => (prev === null ? prev : { ...prev, targetId: node.id }));
+      }
+      return;
+    }
+    if (importHtmlDraft !== null) {
+      if (node.nodeType === 'dir') {
+        setImportHtmlDraft((prev) => (prev === null ? prev : { ...prev, targetParentId: node.id }));
       }
       return;
     }
@@ -1003,17 +1120,21 @@ export function Workspace(): React.JSX.Element {
     });
   }
 
-  // move 选择模式 Esc 退出（spec §6.2 D8）：keydown 监听随模式进出成对挂卸
+  // move 选择模式 Esc 退出（spec §6.2 D8）与导入确认浮层 Esc 关闭（M7）：keydown 监听
+  // 随各自模式进出成对挂卸；二者互斥（dirPickMode 由两流程共用，同时仅一流程在途）
   useEffect(() => {
-    if (moveMode === null) return undefined;
+    if (moveMode === null && importHtmlDraft === null) return undefined;
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setMoveMode(null);
+      if (e.key === 'Escape') {
+        setMoveMode(null);
+        setImportHtmlDraft(null);
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [moveMode]);
+  }, [moveMode, importHtmlDraft]);
 
   /**
    * 视图切离统一入口（Task 4 deferred Esc 双监听耦合的顺手闭环，M5 批次④ Task 10）：
@@ -1023,6 +1144,7 @@ export function Workspace(): React.JSX.Element {
    */
   function switchViewAway(next: Exclude<TreePaneView, 'tree'>): void {
     setMoveMode(null);
+    setImportHtmlDraft(null);
     updateLayout({ activityView: next });
     setView(next);
   }
@@ -1031,6 +1153,7 @@ export function Workspace(): React.JSX.Element {
   function switchView(next: TreePaneView): void {
     if (next !== 'tree') {
       setMoveMode(null);
+      setImportHtmlDraft(null);
     }
     updateLayout({ activityView: next });
     setView(next);
@@ -1248,11 +1371,15 @@ export function Workspace(): React.JSX.Element {
         // 菜单「保存」/Ctrl+S：立即写激活标签（管线 flush 语义，无激活为 no-op）
         saveController.flushActive();
         break;
-      case 'new-file':
-        createInContext('file');
+      case 'import-html':
+        // 菜单「导入 HTML 文件…」/Ctrl+N（M7，原 new-file 语义升级）：文件选择 → 确认
+        // 浮层 → 单文件导入即打开链入口
+        beginImportHtml();
         break;
       case 'new-dir':
-        createInContext('dir');
+        // 菜单「新建目录」/Ctrl+Shift+N：行内命名流程入口（M7 起与树工具栏钮同语义，
+        // 目标落树选中上下文目录——无选中落根）
+        startCreateDir(deriveTreeContextParentId());
         break;
       case 'quick-open':
         // 菜单「快速打开」/Ctrl+P：置开关浮层（数据自持，点选经 onPick 回 openFile）
@@ -1394,14 +1521,19 @@ export function Workspace(): React.JSX.Element {
                 <TreePanel
                   roots={roots}
                   selectedId={selectedTreeId}
-                  moveMode={moveMode !== null}
-                  moveTargetId={moveTargetId}
+                  expanded={expanded}
+                  dirPickMode={dirPickMode}
+                  pickTargetId={pickTargetId}
+                  creatingDirParentId={creatingDirParentId}
                   onToggle={onToggle}
                   onSelect={onSelectNode}
-                  onCreate={onCreate}
+                  onStartCreateDir={startCreateDir}
+                  onConfirmCreateDir={confirmCreateDir}
+                  onCancelCreateDir={cancelCreateDir}
                   onTrash={onTrash}
                   onRename={onRename}
                   onStartMove={startMove}
+                  onImportHtml={beginImportHtml}
                 />
                 {/* move 选择模式操作条（spec §6.2 D8）：目标未定/自身或后代/在途时确认禁用；
                     Esc 或取消退出。引导文案（§6.2 字面，Task 10 补欠账）于目标未定时呈现，
@@ -1448,6 +1580,18 @@ export function Workspace(): React.JSX.Element {
                     inFlight={renameInFlight}
                     onConfirm={confirmRename}
                     onCancel={() => setRenameTarget(null)}
+                  />
+                ) : null}
+                {/* HTML 文件导入确认浮层（M7）：非模态——打开期间树中点选目录即改导入
+                    目标（dirPickMode 合成下发）；名称可改（导入即重命名），重名固定
+                    rename 递增不打断；确认后导入即打开画布渲染（confirmImportHtml） */}
+                {importHtmlDraft !== null ? (
+                  <ImportHtmlDialog
+                    sourcePath={importHtmlDraft.sourcePath}
+                    targetName={findNode(roots, importHtmlDraft.targetParentId)?.meta.name ?? '根'}
+                    inFlight={importHtmlInFlight}
+                    onConfirm={confirmImportHtml}
+                    onCancel={cancelImportHtml}
                   />
                 ) : null}
               </div>
@@ -1549,7 +1693,7 @@ export function Workspace(): React.JSX.Element {
                   }
                 });
               }}
-              onNewFile={() => createInContext('file')}
+              onImportHtml={beginImportHtml}
               onImport={beginImport}
               onQuickOpen={() => setQuickOpen(true)}
             />

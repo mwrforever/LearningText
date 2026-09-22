@@ -56,6 +56,8 @@ export const IPC = {
   ioProgress: 'io:progress',
   /** 选择磁盘目录（openDirectory；multiple 开关区分多选源与单选目标，Task 13 复用） */
   ioPickDirectory: 'io:pick-directory',
+  /** 选择 HTML 文件（openFile 单选，过滤器固定 html/htm；M7 单文件导入入口） */
+  ioPickFile: 'io:pick-file',
   /** 导出 VFS 子树到磁盘（逐节点写盘 + vfs:// 引用改写，进度经 ioProgress 广播） */
   ioExport: 'io:export',
   /** 在系统文件管理器中打开目录（导出完成动作；入参按当次会话目录选择登记簿校验） */

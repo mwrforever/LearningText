@@ -11,16 +11,24 @@ import { z } from 'zod';
 export type ImportConflict = 'skip' | 'rename' | 'overwrite';
 
 /**
- * io:import 请求：源磁盘路径清单（目录，多选）+ 目标父节点 id + 重名策略。
- * 源目录内容合并导入目标父目录之下（源根目录本身不物化为节点——实现读法经设计文档
- * §7.1 澄清注钉死，属既有合并语义的自然延伸）。sourcePaths 必须来自主进程目录选择
- * 对话框的当次会话产出（ipc 层按登记簿校验，渲染层伪造串拒绝——io:export / shell:open-path
- * 同一登记簿，防渲染层被攻破后任意路径读盘）。
+ * io:import 请求：源磁盘路径清单（目录或文件，可混选）+ 目标父节点 id + 重名策略。
+ * 目录源：内容合并导入目标父目录之下（源根目录本身不物化为节点——实现读法经设计文档
+ * §7.1 澄清注钉死，属既有合并语义的自然延伸）；文件源：单节点物化为目标父的直接子项
+ * （FR-IO-01「目录/文件批量导入」的文件形态，M7 批次补全）。sourcePaths 必须来自主进程
+ * 选择对话框（io:pick-directory 目录 / io:pick-file 文件）的当次会话产出（ipc 层按登记簿
+ * 校验，渲染层伪造串拒绝——io:export / shell:open-path 同一登记簿，防渲染层被攻破后
+ * 任意路径读盘）。
  */
 export const ImportRequestSchema = z.strictObject({
   sourcePaths: z.array(z.string().min(1)).min(1),
   targetParentId: z.number().int(),
   conflict: z.enum(['skip', 'rename', 'overwrite']),
+  /**
+   * 文件源落点名（可选，M7「导入即重命名」）：仅对文件源生效（目录源忽略）——渲染端
+   * 导入确认浮层的名称输入直传，未传/空白回退磁盘 basename。合法性（非法字符/重名）
+   * 由服务层 validateNodeName 与冲突策略兜底。
+   */
+  sourceName: z.string().min(1).optional(),
 });
 export type ImportRequest = z.infer<typeof ImportRequestSchema>;
 
@@ -39,12 +47,25 @@ export interface ImportProgress {
   readonly currentPath: string;
 }
 
-/** 导入结果计数（D17 toast 汇总口径）：imported 新增 / skipped 跳过（含目录合并与超限跳过）/ failed 失败 */
+/**
+ * 导入结果计数（D17 toast 汇总口径）：imported 新增 / skipped 跳过（含目录合并与超限跳过）/
+ * failed 失败。importedNodeIds 为本次 imported 命中的新节点 id（与计数同序累积）——单文件
+ * 导入的「导入后即打开」渲染链按 [0] 寻址，避免渲染层靠名称反查（rename 策略可能递增改名）。
+ */
 export interface ImportResult {
   readonly imported: number;
   readonly skipped: number;
   readonly failed: number;
+  readonly importedNodeIds: readonly number[];
 }
+
+/**
+ * io:pick-file 请求：主进程弹出文件选择框（单选，过滤器固定 HTML：html/htm——HTML 文档
+ * 导入专用入口，FR-IO-01 文件形态）。无参通道载荷固定 null（settingsGet 先例）；
+ * 用户取消弹窗返回空数组（不作为错误）。产出文件路径登记入当次会话登记簿。
+ */
+export const IoPickFileRequestSchema = z.null();
+export type IoPickFileRequest = null;
 
 /** io:cancel 请求：按服务侧单调分配的 importId 寻址（首个进度广播到达即可取消） */
 export const IoCancelRequestSchema = z.strictObject({ importId: z.number().int() });

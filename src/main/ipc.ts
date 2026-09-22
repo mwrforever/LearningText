@@ -35,6 +35,7 @@ import {
   ImportRequestSchema,
   IoCancelRequestSchema,
   IoPickDirectoryRequestSchema,
+  IoPickFileRequestSchema,
 } from '../shared/io-contract';
 import type {
   ExportRequest,
@@ -108,15 +109,20 @@ export interface IpcHandlerDeps {
    * （Task 13 复用）。用户取消返回空数组（不作为错误）。
    */
   readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
+  /**
+   * 主进程 HTML 文件选择供给（app.ts 提供，同 pickDirectories 先例的依赖注入）：
+   * dialog.showOpenDialog（openFile 单选，过滤器固定 html/htm）。用户取消返回空数组。
+   */
+  readonly pickHtmlFile: () => Promise<readonly string[]>;
   /** 导出服务（M5 批次⑥ Task 13）：export 长任务（逐节点写盘 + 引用改写 + 进度广播） */
   readonly export: ExportService;
   /**
-   * 当次会话目录选择登记簿（app.ts 持有，pickDirectories 产出时登记）：io:export 的
-   * targetDir、shell:open-path 的 dir 与 io:import 的 sourcePaths 只接受登记簿内的串
-   * ——渲染层可伪造任意 IPC 载荷，用户可控串直达磁盘写与 shell 的信任边界必须在主进程
-   * 侧收敛（B.5-4 精神）。
+   * 当次会话选择登记簿（app.ts 持有，pickDirectories / pickHtmlFile 产出时登记）：
+   * io:export 的 targetDir、shell:open-path 的 dir 与 io:import 的 sourcePaths 只接受
+   * 登记簿内的串——渲染层可伪造任意 IPC 载荷，用户可控串直达磁盘读/写与 shell 的
+   * 信任边界必须在主进程侧收敛（B.5-4 精神）。
    */
-  readonly dialogProducedDirs: ReadonlySet<string>;
+  readonly dialogProducedPaths: ReadonlySet<string>;
   /**
    * 系统文件管理器打开目录（app.ts 提供，shell.openPath 包装）：空串语义成功；
    * 非空返回值为错误描述串，转异常上抛经 handleWithAsync 收敛 E_STORE_INTERNAL。
@@ -383,13 +389,14 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   // —— 导入域（M5 批次⑥）：导入为分批长任务（批次间让出事件循环，io:cancel 可插队），
   //    树刷新由渲染层在 invoke 结果到达后统一收口；进度经 io:progress 广播（服务侧 B.3-4）；
   //    源路径只接受登记簿内串（与 io:export / shell:open-path 同一信任边界，见 deps 注：
-  //    源经 io:pick-directory 目录模式产出、登记形态即目录绝对路径，语义一致）——
+  //    目录源经 io:pick-directory 产出、文件源经 io:pick-file 产出，登记形态均为绝对路径，
+  //    语义一致）——
   ipcMain.handle(
     IPC.ioImport,
     handleWithAsync(deps, ImportRequestSchema, async (q: ImportRequest) => {
       for (const sourcePath of q.sourcePaths) {
-        if (!deps.dialogProducedDirs.has(sourcePath)) {
-          throw new AppError(E_IPC_BAD_PAYLOAD, '导入源路径必须来自目录选择对话框');
+        if (!deps.dialogProducedPaths.has(sourcePath)) {
+          throw new AppError(E_IPC_BAD_PAYLOAD, '导入源路径必须来自文件/目录选择对话框');
         }
       }
       const result: ImportResult = await deps.io.importNodes(q);
@@ -411,13 +418,19 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       deps.pickDirectories(q.multiple),
     ),
   );
+  // HTML 文件选择（M7 单文件导入入口）：无参载荷沿 null 先例，过滤器收敛在主进程供给侧；
+  // 无写事务不广播
+  ipcMain.handle(
+    IPC.ioPickFile,
+    handleWithAsync(deps, IoPickFileRequestSchema, () => deps.pickHtmlFile()),
+  );
 
   // —— 导出域（M5 批次⑥ Task 13）：写盘为事务外逐节点长任务（无 vfs 写事务 → 不广播，
   //    进度经 io:progress 服务侧广播）；targetDir 只接受登记簿内串（见 deps 注）——
   ipcMain.handle(
     IPC.ioExport,
     handleWithAsync(deps, ExportRequestSchema, async (q: ExportRequest) => {
-      if (!deps.dialogProducedDirs.has(q.targetDir)) {
+      if (!deps.dialogProducedPaths.has(q.targetDir)) {
         throw new AppError(E_IPC_BAD_PAYLOAD, '导出目标目录必须来自目录选择对话框');
       }
       return deps.export.exportNodes(q);
@@ -428,7 +441,7 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle(
     IPC.shellOpenPath,
     handleWithAsync(deps, OpenPathRequestSchema, async (q: OpenPathRequest) => {
-      if (!deps.dialogProducedDirs.has(q.dir)) {
+      if (!deps.dialogProducedPaths.has(q.dir)) {
         throw new AppError(E_IPC_BAD_PAYLOAD, '目录必须来自目录选择对话框');
       }
       await deps.openDirectoryInShell(q.dir);
@@ -445,7 +458,7 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     IPC.storageChangeDataDir,
     handleWith(deps, ChangeDataDirRequestSchema, (q: ChangeDataDirRequest) => {
       // 信任边界（B.5-4 精神）：迁移目标必须是本会话目录选择对话框产出的目录
-      if (!deps.dialogProducedDirs.has(q.targetDir)) {
+      if (!deps.dialogProducedPaths.has(q.targetDir)) {
         throw new AppError(E_IPC_BAD_PAYLOAD, '目标目录必须来自目录选择对话框');
       }
       return { result: deps.changeDataDir(q.targetDir) satisfies ChangeDataDirResponse };

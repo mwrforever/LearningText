@@ -20,10 +20,12 @@ function sendCommand(command: ShellCommand): void {
 export function createMenuTemplate(isMac: boolean): MenuItemConstructorOptions[] {
   const fileSubmenu: MenuItemConstructorOptions[] = [
     {
-      id: 'menu-new-file',
-      label: '新建文件',
+      id: 'menu-import-html',
+      label: '导入 HTML 文件…',
       accelerator: 'CmdOrCtrl+N',
-      click: () => sendCommand({ type: 'new-file' }),
+      // M7：原「新建文件」语义升级为 HTML 文件导入（文件选择 → 导入确认浮层 → 导入即开），
+      // 命令单通道下发
+      click: () => sendCommand({ type: 'import-html' }),
     },
     {
       id: 'menu-new-dir',

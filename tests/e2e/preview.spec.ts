@@ -2,7 +2,7 @@
 // fetch/https 外链 CSP 阻断/删除后不可达保持；「连续输入最终态一致/未变子资源重取/NFR-04
 // 重载计时」改写为画布语义（编辑面=渲染面零重载 + D7 外部写入后手动「从库重新加载」，
 // 304 重验探针勘误见 spec §4.2；编辑面上 CSP/localStorage 隔离等由保活 iframe 同面承载）
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
@@ -243,4 +243,34 @@ test('删除（回收站）后预览不可达', async () => {
   await page.evaluate((nodeId) => window.api.trashNode({ nodeId }), id);
   const res = await page.evaluate(() => fetch('vfs://local/回收测试.html').then((r) => r.status));
   expect(res).toBe(404);
+});
+
+test('M7 文件导入渲染：导入落库的示例 HTML 文档（code.html）画布渲染正常', async () => {
+  // 「导入」的落库事实经桥等价注入（io:pick-file 原生文件框不可自动化；导入写侧验收由
+  // integration import-service 文件源用例锁定）——fixture 即用户实测示例文档（76KB 中文
+  // 长文，内联样式 + CDN 外链样式）。树点选打开 = 导入完成后「即打开」的同一 openFile 链。
+  // 置于本文件末尾：该用例打开的 code.html iframe 与此前用例的 a.html iframe 保活并存，
+  // 后续用例若再用无差别 iframe 定位会 strict 违例（连锁失败曾实证，锚点均按 title 收窄）
+  const html = readFileSync(path.join(__dirname, '../fixtures/code.html'), 'utf8');
+  const created = await page.evaluate(
+    (text) =>
+      window.api.createNode({
+        parentId: 1,
+        name: 'code.html',
+        nodeType: 'file',
+        content: new TextEncoder().encode(text),
+      }),
+    html,
+  );
+  if (!created.ok) throw new Error('建 code.html 失败');
+  await page.getByRole('button', { name: 'code.html' }).click();
+  // 按 title 定位（此前用例的 a.html iframe 保活并存，无差别 iframe 定位会 strict 违例）
+  const frame = page.frameLocator('iframe[title="编辑 code.html"]');
+  // 渲染断言：文档主标题 + 章节关键文本——长文档结构与中文内容完整呈现
+  await expect(frame.locator('body')).toContainText('Spring 框架全景解析', { timeout: 10000 });
+  await expect(frame.locator('body')).toContainText('从入门到精通', { useInnerText: true });
+  // 渲染留证（M7 验收需求：示例文件导入渲染实测）——test-results 为 gitignore 产物目录
+  await page
+    .locator('iframe[title="编辑 code.html"]')
+    .screenshot({ path: 'test-results/m7-code-html-render.png' });
 });

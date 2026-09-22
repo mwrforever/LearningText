@@ -5,12 +5,14 @@
  * global-search 为菜单「全局搜索」下发（M5 批次① Task 7，树栏 search 态切入命令）；
  * open-settings 为菜单「设置…」下发（M5 批次③ Task 8，全屏覆盖设置页开启命令）；
  * import 为菜单「导入…」下发（M5 批次⑥ Task 12，目录选择 → 策略确认 → io:import 链入口）；
+ * import-html 为「导入 HTML 文件」下发（M7：树工具栏/菜单/Ctrl+N/欢迎页共用，文件选择 →
+ * 导入确认浮层 → io:import 单文件链入口——空文件创建入口退役，导入即建）；
  * export 为菜单「导出…」下发（M5 批次⑥ Task 13，目录选择 → io:export → 完成动作链入口）。
  */
 import { z } from 'zod';
 
 export type ShellCommand =
-  | { readonly type: 'new-file' }
+  | { readonly type: 'import-html' }
   | { readonly type: 'new-dir' }
   | { readonly type: 'save' }
   | { readonly type: 'confirm-close' }

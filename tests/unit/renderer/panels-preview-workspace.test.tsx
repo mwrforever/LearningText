@@ -48,6 +48,14 @@ function stubApi(overrides: Partial<Record<string, unknown>> = {}): Record<strin
     forceClose: vi.fn(() => Promise.resolve({ ok: true, value: null })),
     // 回收站面板挂载首拉（trash 态内容自持数据；Task 10 move 复位用例切入 trash 态时需要）
     listTrashed: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
+    // M7 导入域默认桩：pickHtmlFile 默认取消（空清单，不弹浮层）；importNodes 默认成功单节点
+    pickHtmlFile: vi.fn(() => Promise.resolve({ ok: true, value: [] })),
+    importNodes: vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        value: { imported: 1, skipped: 0, failed: 0, importedNodeIds: [9] },
+      }),
+    ),
     // 状态栏文档计数（M6 spec §2.6）：启动装配与树广播后各查一次；平台标识供 TitleBar 消费
     countNodes: vi.fn(() => Promise.resolve({ ok: true, value: 1 })),
     platform: 'win32',
@@ -756,36 +764,71 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
     }
   });
 
-  it('new-file/new-dir 命令 → 根目录新建；new-file 创建即开标签、new-dir 不开', async () => {
-    const { api, handlers } = captureShell();
+  it('new-dir 命令 → 行内命名流程：Enter 提交 createNode（M7 不再固定名直建）；import-html 命令 → pickHtmlFile + 确认浮层 + 导入即开标签', async () => {
+    const { api, handlers } = captureShell({
+      pickHtmlFile: vi.fn(() => Promise.resolve({ ok: true, value: ['D:/dl/page.html'] })),
+      // 导入即打开的反查桩：importedNodeIds[0]=9 → 返回导入落名 meta（HTML → 画布标签）
+      getNode: vi.fn(() => Promise.resolve({ ok: true, value: meta(9, 'page.html') })),
+    });
     const tree = createRoot(container);
     await act(async () => {
       tree.render(<Workspace />);
     });
+    // —— new-dir（M7 行内命名）：命令不再直接建目录，先渲染命名行（预填默认名）——
     await act(async () => {
       handlers[0]?.({ type: 'new-dir' });
+    });
+    // jsdom 焦点伪影：行首次挂载期间的伪影 blur 会被「失焦延迟取消」宏任务回收
+    // （真实浏览器焦点系统无此伪影）——flush 一拍后经工具栏钮（同链路 startCreateDir）
+    // 补触发一次，行稳定保留
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="新建目录"]')?.click();
+    });
+    await new Promise((r) => {
+      setTimeout(r, 0);
+    });
+    expect(api.createNode).not.toHaveBeenCalled();
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="新目录名称"]');
+    expect(input).not.toBeNull();
+    expect(input?.value).toBe('新建目录');
+    // Enter 提交 → createNode 以输入名在树选中上下文（无选中 → 根）建目录
+    await act(async () => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
     });
     expect(api.createNode).toHaveBeenCalledWith({
       parentId: 1,
       name: '新建目录',
       nodeType: 'dir',
     });
+    // 命名行随成功关闭（无残留行）
+    expect(container.querySelector('li.lt-create-row')).toBeNull();
+
+    // —— import-html（M7）：pickHtmlFile 产出 → 非模态确认浮层（名称预填磁盘名）——
     await act(async () => {
-      handlers[0]?.({ type: 'new-file' });
+      handlers[0]?.({ type: 'import-html' });
     });
-    expect(api.createNode).toHaveBeenCalledWith({
-      parentId: 1,
-      name: '新建文件.html',
-      nodeType: 'file',
+    expect(api.pickHtmlFile).toHaveBeenCalledTimes(1);
+    const dialog = container.querySelector<HTMLElement>('.lt-import-html');
+    expect(dialog).not.toBeNull();
+    const nameInput = dialog?.querySelector<HTMLInputElement>('input[aria-label="导入文件名"]');
+    expect(nameInput?.value).toBe('page.html');
+    // 确认导入：单文件源 + 浮层名直传（导入即重命名）+ 固定 rename 策略
+    await act(async () => {
+      dialog?.querySelector<HTMLButtonElement>('button[aria-label="确认导入文件"]')?.click();
     });
-    // 创建即开标签回路（onCreate 同款语义，M6 批次②）：HTML 新建走画布分流——
-    // 不读库（iframe 直载）+ 标签呈现
-    expect(api.readFile).not.toHaveBeenCalled();
-    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(api.importNodes).toHaveBeenCalledWith({
+      sourcePaths: ['D:/dl/page.html'],
+      targetParentId: 1,
+      conflict: 'rename',
+      sourceName: 'page.html',
+    });
+    // 导入即打开：importedNodeIds[0] 反查后走 openFile 统一入口，HTML 呈现为画布标签
     const activeTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
       (b) => b.getAttribute('aria-current') === 'true',
     );
-    expect(activeTab?.textContent).toBe('新文件');
+    expect(activeTab?.textContent).toBe('page.html');
     act(() => {
       tree.unmount();
     });
@@ -1060,7 +1103,7 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
     });
   });
 
-  it('move 选择模式：dir 点选记账目标（data-move-target）、file 点选禁用、确认按 nodeId+targetDirId 调 moveNode', async () => {
+  it('move 选择模式：dir 点选记账目标（data-pick-target）、file 点选禁用、确认按 nodeId+targetDirId 调 moveNode', async () => {
     const { api, tree } = await setupWithFileTab({
       moveNode: vi.fn(() => Promise.resolve({ ok: true, value: { affectedCount: 1 } })),
     });
@@ -1077,12 +1120,12 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
       container.querySelectorAll<HTMLButtonElement>('nav[aria-label="资源树"] button'),
     ).find((b) => b.textContent === 'a.html');
     expect(treeFileBtn?.disabled).toBe(true);
-    // dir 点选=选定目标：data-move-target 高亮、确认解禁、引导文案退场
+    // dir 点选=选定目标：data-pick-target 高亮、确认解禁、引导文案退场
     await clickButton('笔记');
     const dirBtn = Array.from(container.querySelectorAll('button')).find(
       (b) => b.textContent === '笔记',
     );
-    expect(dirBtn?.getAttribute('data-move-target')).toBe('true');
+    expect(dirBtn?.getAttribute('data-pick-target')).toBe('true');
     expect(confirmBtn()?.disabled).toBe(false);
     expect(bar()?.textContent).not.toContain('在树中选择目标目录并确认');
     await act(async () => {
