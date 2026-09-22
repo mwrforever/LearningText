@@ -440,6 +440,23 @@ describe('importService 注入 fs 抽象（单元）', () => {
     expect(liveRowCount(db)).toBe(0);
   });
 
+  it('目录源 isDirectory 判定后 readDir 失败（源根竞态失效）→ E_IO_SOURCE_NOT_FOUND 整单失败零写入（M7 catch 分支）', async () => {
+    // 不经 makeService（其会把顶层键统一包成普通目录）：直接以「根即 unreadable 目录」
+    // 构桩——isDirectory=true 判别过、readDir 抛，精确命中「判别后、读取前源失效」的
+    // 防御分支（真实世界对应 stat 通过后目录被删/权限收紧的竞态窗口）
+    const progress: ImportProgress[] = [];
+    const service = createImportService({
+      db,
+      fs: makeFakeFs({ 挂了: d({}, true) }),
+      onProgress: (p) => progress.push(p),
+    });
+
+    await expect(
+      service.importNodes({ sourcePaths: ['挂了'], targetParentId: 1, conflict: 'skip' }),
+    ).rejects.toMatchObject({ code: E_IO_SOURCE_NOT_FOUND } satisfies Partial<AppError>);
+    expect(liveRowCount(db)).toBe(0);
+  });
+
   it('目标非法：不存在 E_VFS_NOT_FOUND、文件目标 E_VFS_TYPE_MISMATCH', async () => {
     const vfs = createVfsService(db);
     const fileNode = vfs.createNode({

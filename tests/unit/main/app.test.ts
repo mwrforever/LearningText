@@ -728,6 +728,9 @@ describe('主进程装配 bootstrapMain', () => {
   describe('导入服务装配与目录选择供给', () => {
     interface IpcDeps {
       readonly pickDirectories: (allowMultiple: boolean) => Promise<readonly string[]>;
+      /** M7 单文件导入入口：HTML 文件选择供给（io:pick-file 通道实现闭包） */
+      readonly pickHtmlFile: () => Promise<readonly string[]>;
+      readonly dialogProducedPaths: ReadonlySet<string>;
     }
 
     /** 取 showOpenDialog 末次调用的末位实参（OpenDialogOptions；带窗/不带窗重载通吃） */
@@ -785,6 +788,29 @@ describe('主进程装配 bootstrapMain', () => {
       const singleOptions = lastDialogOptions();
       expect(singleOptions.properties).toContain('openDirectory');
       expect(singleOptions.properties).not.toContain('multiSelections');
+    });
+
+    it('pickHtmlFile 注入实现：openFile 单选 + html/htm 扩展名白名单（M7 导入入口），产出登记入册、取消空清单', async () => {
+      const { deps } = await bootstrapWithIo();
+      mocks.showOpenDialog.mockResolvedValue({ canceled: false, filePaths: ['D:/page.html'] });
+      await expect(deps.pickHtmlFile()).resolves.toEqual(['D:/page.html']);
+      // 白名单收敛在主进程侧（渲染端不传过滤器）：openFile 单选、扩展名仅 html/htm
+      const options = lastDialogOptions() as {
+        properties: string[];
+        filters: readonly { name: string; extensions: readonly string[] }[];
+      };
+      expect(options.properties).toContain('openFile');
+      expect(options.properties).not.toContain('openDirectory');
+      expect(options.properties).not.toContain('multiSelections');
+      expect(options.filters).toHaveLength(1);
+      expect(options.filters[0]?.extensions).toEqual(['html', 'htm']);
+      // 产出登记入册（io:import 的 sourcePaths 白名单校验事实来源）
+      expect(deps.dialogProducedPaths.has('D:/page.html')).toBe(true);
+      // 取消返回空清单且不新增登记（防伪路径借道入库）
+      const registered = deps.dialogProducedPaths.size;
+      mocks.showOpenDialog.mockResolvedValue({ canceled: true, filePaths: [] });
+      await expect(deps.pickHtmlFile()).resolves.toEqual([]);
+      expect(deps.dialogProducedPaths.size).toBe(registered);
     });
   });
 

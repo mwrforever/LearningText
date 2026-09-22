@@ -30,6 +30,7 @@ interface ExposedApi {
   importNodes(request: unknown): Promise<unknown>;
   cancelImport(request: unknown): Promise<unknown>;
   pickDirectory(request: unknown): Promise<unknown>;
+  pickHtmlFile(request: unknown): Promise<unknown>;
   exportNodes(request: unknown): Promise<unknown>;
   openPath(request: unknown): Promise<unknown>;
   getDataDirInfo(request: unknown): Promise<unknown>;
@@ -162,6 +163,8 @@ describe('preload 桥注册', () => {
       ],
       ['cancelImport', IPC.ioCancel, { importId: 1 }],
       ['pickDirectory', IPC.ioPickDirectory, { multiple: true }],
+      // 无参通道沿 settingsGet 先例固定发 null（HTML 文件选择，M7 单文件导入入口）
+      ['pickHtmlFile', IPC.ioPickFile, null],
       // 导出域（M5 批次⑥ Task 13）：导出请求透传、打开目录串透传（白名单登记簿校验在主进程侧）
       ['exportNodes', IPC.ioExport, { nodeId: 7, targetDir: 'D:/picked' }],
       ['openPath', IPC.shellOpenPath, { dir: 'D:/picked' }],
