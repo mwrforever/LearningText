@@ -40,6 +40,8 @@ afterAll(() => {
 });
 
 describe('M2 文件库基准（万级节点，服务层语句形态）', () => {
+  // 显式超时：用例自身预算（写 <5000ms + 50 次 P95 采样）已超 vitest 默认 5s——CI runner
+  // 磁盘/负载波动下默认超时必炸（2026-09-22 windows CI 实证：写 3771ms 合规仍撞 5s 整测超时）
   it('万行单事务写入含 node_fts（X′ 采集）与 search:query P95 < 200ms（NFR-03）', () => {
     const dbFile = path.join(dir, 'perf.db');
     const db = openDatabase({ file: dbFile });
@@ -96,7 +98,7 @@ describe('M2 文件库基准（万级节点，服务层语句形态）', () => {
     } finally {
       db.close();
     }
-  });
+  }, 30_000);
 
   it('冷启动（v2 已生效文件库开库+迁移就绪）< 2s 与 v2 迁移自身耗时采集（NFR-01）', () => {
     const dbFile = path.join(dir, 'startup.db');
@@ -150,5 +152,5 @@ describe('M2 文件库基准（万级节点，服务层语句形态）', () => {
     } finally {
       db.close();
     }
-  });
+  }, 20_000);
 });

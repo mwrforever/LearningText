@@ -23,10 +23,11 @@ test.beforeAll(async () => {
   page.on('response', (res) => {
     if (res.url().startsWith('vfs://')) vfsResponses.push(res);
   });
-  // 装配完成信号（业务语义，非 sleep）：根按钮出现 = Workspace mount 首拉 listChildren
-  // 已应用到树——此后经桥建目录只与广播链竞争，消除「本用例建目录与 mount 首拉交错」
-  // 的装配期双「笔记」竞争（探针实证见 task-8-report §5.3）
-  await page.getByRole('button', { name: '根' }).waitFor();
+  // 装配完成信号（业务语义，非 sleep）：树 nav data-ready 置位 = Workspace mount 首拉
+  // listChildren 已应用到树（②批次隐藏合成根行后，「根按钮出现」等待由该锚等价替代——
+  // 空库也有合成根，置位语义一致）——此后经桥建目录只与广播链竞争，消除「本用例建目录与
+  // mount 首拉交错」的装配期双「笔记」竞争（探针实证见 task-8-report §5.3）
+  await page.locator('nav[aria-label="资源树"][data-ready="true"]').waitFor();
 });
 
 test.afterAll(async () => {

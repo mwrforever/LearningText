@@ -83,11 +83,11 @@ function make1x1Png(): Buffer {
   ]);
 }
 
-/** 启动应用并等待装配完成业务信号（根按钮 = mount 首拉已应用，M3 先例） */
+/** 启动应用并等待装配完成业务信号（树 nav data-ready 置位 = mount 首拉已应用；②批次隐藏合成根行后替代「根按钮」锚，M3 先例） */
 async function launchApp(dir: string): Promise<void> {
   app = await electron.launch({ args: ['.', `--user-data-dir=${dir}`] });
   page = await app.firstWindow();
-  await page.getByRole('button', { name: '根' }).waitFor();
+  await page.locator('nav[aria-label="资源树"][data-ready="true"]').waitFor();
 }
 
 /** 实例 pid 存活判定（重启前等待旧进程完全退出、释放 SQLite 连接，防文件锁与写锁串扰） */
@@ -307,7 +307,9 @@ test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
     await trashedRow.getByLabel('还原 p.html').click();
     await expect(trashedRow).toHaveCount(0); // restored 广播重拉后出列
     await page.getByLabel('返回资源树').click();
-    await tree.getByRole('button', { name: '探针目录' }).click(); // 重新展开（还原后重取）
+    // 修复批次核对（⑤折叠藏子级落地后）：「探针目录」自首次展开后从未收起，此处不可再
+    // 点选目录行（点选=切换折叠，会把目录收起藏住 p.html）；restored 广播已把还原文件挂回
+    // loaded 目录，p.html 无需重取直接可见
     await tree.getByRole('button', { name: 'p.html' }).click();
     await expect(page.getByRole('tab', { name: /p\.html/ })).toBeVisible();
     // —— 导出子树（搜索「在树中显示」设定导出根 → 目录选择打桩 → io:export）→ Node 侧断言 ——

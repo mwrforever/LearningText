@@ -31,9 +31,10 @@ let appClosedByGuard = false;
 const vfsResponses: Response[] = [];
 
 /**
- * 启动应用并等待装配完成业务信号。折叠记忆重启的会话侧栏处于折叠态、根按钮不可见，
- * 以「展开侧栏」钮出现为 settings 装载完成信号；首启会话沿用 M3 先例——根按钮出现 =
- * mount 首拉 listChildren 已应用到树，此后经桥建数据只与广播链竞争
+ * 启动应用并等待装配完成业务信号。折叠记忆重启的会话侧栏处于折叠态、树 nav 不可见，
+ * 以「展开侧栏」钮出现为 settings 装载完成信号；首启会话沿用 M3 先例——树 nav data-ready
+ * 置位 = mount 首拉 listChildren 已应用到树（②批次隐藏合成根行后替代「根按钮出现」锚），
+ * 此后经桥建数据只与广播链竞争
  */
 async function launchApp(awaitTreeSignal: boolean): Promise<void> {
   app = await electron.launch({ args: ['.', `--user-data-dir=${userDataDir}`] });
@@ -43,7 +44,7 @@ async function launchApp(awaitTreeSignal: boolean): Promise<void> {
     if (res.url().startsWith('vfs://')) vfsResponses.push(res);
   });
   if (awaitTreeSignal) {
-    await page.getByRole('button', { name: '根' }).waitFor();
+    await page.locator('nav[aria-label="资源树"][data-ready="true"]').waitFor();
   } else {
     await page.getByLabel('展开侧栏').waitFor();
   }
@@ -237,11 +238,15 @@ test.describe('M4 主链路（出厂默认设置）', () => {
     await page.getByLabel('确认移动').click();
     await expect(page.getByLabel('移动选择模式')).toHaveCount(0);
     // 移动双证据：树侧文件落入目录（展开可见）+ 桥侧新路径反查命中同 id
-    await treeNodes().getByRole('button', { name: '新建目录' }).click(); // 常规模式 dir 点选=展开
+    await treeNodes().getByRole('button', { name: '新建目录' }).click(); // 常规模式 dir 点选=选中+展开（④语义）
     await expect(treeNodes().getByRole('button', { name: '链路二.html' })).toBeVisible();
     expect(await bridgeNodeId('/新建目录/链路二.html')).toBe(nodeId);
-    // 删除：唯一标签关闭后画布回欢迎页空态（M6 单画布模型：无标签空态由欢迎页承载）
-    await toolbar().getByRole('button', { name: '删除' }).click();
+    // 删除：唯一标签关闭后画布回欢迎页空态（M6 单画布模型：无标签空态由欢迎页承载）。
+    // ④批次语义核对：上一步「点新建目录展开」的点选已把树选中迁至目录（点选=选中+展开，
+    // VS Code 同构），工具栏删除目标随选中会命中目录而非激活文件——删除入口改行内「⋯」
+    // 菜单（节点 id 直传，M5 起「脱离选中锚」语义），精确删除 链路二.html 本体
+    await page.locator(`button[data-node-id="${String(nodeId)}"]`).click();
+    await page.getByRole('menuitem', { name: '删除' }).click();
     await expect(page.getByRole('tab')).toHaveCount(0);
     await expect(page.locator('.lt-welcome')).toBeVisible();
     // 还原（回收站 UI 归 M5，spec §9.1-1 还原步骤经桥）+ 搜索定位（搜索步骤经 searchQuery 桥）
@@ -525,6 +530,12 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
     if (appClosedByGuard) {
       appClosedByGuard = false;
       await launchApp(false);
+    }
+    // 折叠态下树 nav 不渲染（折叠与宽度记忆用例遗留折叠态，guard 重启亦默认折叠）——
+    // 树点选制造脏态前先展开侧栏；已展开时 isVisible 立即 false 跳过（无重试等待）
+    const expandSidebar = page.getByLabel('展开侧栏');
+    if (await expandSidebar.isVisible()) {
+      await expandSidebar.click();
     }
     // 制造脏标签（M7 修订）：「新建文件」菜单命令已升级为导入 HTML（原生文件框不可自动
     // 化，E2E 禁点）——桥建文件 + 树点选开签，键入制造脏态；菜单命令触发面
