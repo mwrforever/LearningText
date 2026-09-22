@@ -1,0 +1,110 @@
+# 发布工作流：push v* tag 触发三平台构建，产出 draft release（人工发布闸门）
+# 与 ci.yml 的分工：CI 在 main/dev 上把关质量门禁；本工作流只负责出包与草稿发布，不做测试门禁
+# 签名现状：无证书期发未签名包（TASK.md「待决策：macOS 签名/公证证书」行跟踪；
+# 证书就绪后填 secrets 并开启 forceCodeSigning 硬门禁）
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# 同 tag 不并发重复出包；发布过程不可中途取消（cancel-in-progress 恒为 false）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# electron-builder 建 draft release 并上传安装包需要 contents:write（最小授权，无其他 scope）
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      # CI 内禁用 husky 钩子（宪法 C.6-2）
+      HUSKY: 0
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # Node 版本与本地/CI 同源（宪法 C.6-1：.nvmrc 单一来源）
+          node-version-file: .nvmrc
+          cache: npm
+
+      # 缓存对齐 ci.yml 既有形态（Electron 二进制与 electron-builder 下载，key 含 OS）
+      - uses: actions/cache@v6
+        with:
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+
+      - name: 安装依赖
+        run: npm ci
+
+      # 原生模块 ABI 重编译（better-sqlite3，三平台全验，对齐 ci.yml 既有先例）
+      - name: 原生模块 ABI 重编译
+        run: npm run rebuild
+
+      # tag/版本一致性守卫：electron-builder 的 GitHub 发布 tag 取自 package.json version
+      # （app-builder-lib PublishManager createPublisher(appInfo.version) → githubPublisher
+      # githubTagPrefix + version），与推送 tag 无关——两者错位时产物会挂到指向不存在 tag
+      # 的草稿、人工发布时在默认分支 HEAD 上建错 tag。三平台矩阵各自 fail-fast 阻断
+      - name: tag 与 package.json 版本一致性守卫
+        shell: bash
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "推送 tag（$GITHUB_REF_NAME）与 package.json version（$expected）不一致，拒绝出包"
+            exit 1
+          fi
+
+      - name: 完整构建（主进程 + 渲染层）
+        run: npm run build
+
+      # macOS 无证书期显式关闭签名身份自动发现，避免 CI 上反复探测证书拖慢构建；
+      # 证书就绪后删除本步即恢复自动发现（届时配 CSC_LINK / CSC_KEY_PASSWORD）
+      - name: 关闭 macOS 签名身份自动发现（无证书期）
+        if: runner.os == 'macOS'
+        run: echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+
+      # 选 --publish always 而非 onTagOrDraft：工作流触发面已限定 v* tag，
+      # 「按 CI 环境探测是否该发布」的分支是多余的，always 语义直白且不依赖探测
+      # draft 闸门：electron-builder 对 GitHub publisher 默认 releaseType=draft
+      # （electron-publish/out/githubPublisher.js 实证），tag 推送后产出草稿 release，人工审核后手动发布
+      # 仓库定位：package.json 无 repository 字段时 electron-builder 回退读 .git/config 的
+      # remote origin（app-builder-lib/out/util/repositoryInfo.js 实证），checkout 已满足
+      # GITHUB_TOKEN 由 electron-builder 内建感知（GH_TOKEN/GITHUB_TOKEN 等价）
+      #
+      # 签名 secrets 槽位（证书就绪后填入，占位仅注释不启用——空 secrets 会报错）：
+      #   CSC_LINK / CSC_KEY_PASSWORD            Windows 与 macOS 签名通用（electron-builder 官方命名）
+      #   APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID   macOS 公证（未来）
+      - name: 打包并发布到 draft release
+        run: npx electron-builder --publish always
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 构建产物旁路留存（draft release 是主通道，artifact 供快速排查；
+      # 三平台各只命中自身后缀 glob，未命中项为空属预期）
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-artifacts-${{ matrix.os }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.AppImage
+          retention-days: 7
+          if-no-files-found: error

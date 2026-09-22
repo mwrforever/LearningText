@@ -4,6 +4,13 @@
 
 ## 2026-09-23
 
+- **发布就绪批次（fuses 落地 + release 工作流，交接 2.4；subagent 实现/审查闭环）**：
+  - **fuses 清单调研落地**（清 TASK.md 待调研项）：`docs/agmds-research/2026-09-23-electron-fuses清单.md`——全量 9 位对照官方文档逐位裁决：RunAsNode / EnableNodeOptionsEnvironmentVariable / EnableNodeCliInspectArguments / GrantFileProtocolExtraPrivileges 四个默认开启攻击面位**关**（sandbox 渲染、无 Node 集成、无 file:// 语义背书）；EnableEmbeddedAsarIntegrityValidation / OnlyLoadAppFromAsar **本期缓启**（完整性校验链依赖签名，无证书期链路不齐备，随证书就绪启用）；其余维持官方默认。
+  - **afterPack 接 `@electron/fuses` 2.1.3**：`scripts/flip-fuses.mjs`——`strictlyRequireAllFuses`（Electron 未来加位即打包失败强制补决策）+ 翻转后逐位回读断言（结果进打包日志，任一不符抛错阻断）+ 只读 `--check` 事后复核 CLI；`electron-builder.yml` 接 `afterPack`（时序实证：翻转先于签名与 NSIS/DMG 压缩，无进程占用窗口）；electron-builder 26 原生 `electronFuses` 配置并存留证（切换成本数行，评审可择一）。
+  - **release 工作流**（`.github/workflows/release.yml`）：push tag `v*` 触发三平台 matrix（对齐 ci.yml 的 node/cache/action 版本）；npm ci → rebuild → build → `electron-builder --publish always`（触发面已限 tag，取 always 免探测分支）→ draft release（electron-builder GitHub publisher 默认 releaseType=draft 实证）+ 三平台 artifact 旁路留存；`permissions: contents: write` 最小授权；macOS 无证书期 `CSC_IDENTITY_AUTO_DISCOVERY=false`，签名 secrets 槽位（CSC_LINK 等）仅注释占位；**tag 与 package.json version 一致性守卫**（审查 P2：electron-builder 发布 tag 取自 version 而非推送 tag，错位会在默认分支 HEAD 建错 tag——三平台各自 fail-fast）。
+  - **本机 Windows NSIS 冒烟**：`LearningText-Setup-0.1.0.exe`（≈118MB）产出，flip-fuses 回读 9/9 位符合裁决（含 `--check` 独立复核）。
+  - **覆盖率门禁回归修复**（CI 实证：M7 批次新增代码未跑 coverage 门禁即推送，三平台 unit/integration 全绿但 `src/main`/`src/preload` 阈值红）：补 `io:pick-file` 供给闭包用例（openFile 单选 + html/htm 主进程侧白名单 + 产出登记入册 + 取消零登记）、importService「isDirectory 判定后 readDir 失败」竞态分支用例、preload `pickHtmlFile` 包装通道用例；本地 `npm run test:coverage` 全绿复验。
+
 - **用户实测五项反馈修复批次（fix + review loop，subagent 实现/审查分项闭环）**：
   - **反馈① 导入进度提示不消失**：根因 `confirmImportHtml` 收口缺 `setImportProgress(null)`（成功/失败双分支补齐，对照 `confirmImport` 同款）；导入/导出两进度面板新增 `useExitPresence` 退场存在性 hook——收口后播 240ms `animate-out fade-out slide-out-to-bottom-2` 再卸载（`PROGRESS_EXIT_MS` 与 `duration-240` 双源互指注释），退场期间新进度广播到达即复位入场态（快速连开竞态防护），退场期 `pointer-events-none` 防误点。
   - **反馈② 隐藏树「根」目录**：合成根行不再渲染（呈现层收窄，`roots` 单节点且 id=根约定才直出子级——树数据模型/懒加载零改动）；工具栏下方 `lt-tree-root-path` 小字展示数据目录路径（挂载期 `storage:get-info` 一次快照）；E2E 装配信号三 spec 由「根按钮出现」换锚 `nav[data-ready]`（首拉已应用语义等价，空库亦置位）。

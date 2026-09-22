@@ -27,7 +27,7 @@
 | --- | --- | --- |
 | tsconfig 次级开关取值（exactOptionalPropertyTypes / verbatimModuleSyntax / isolatedModules） | 2026-09-14-语言框架与UI栈.md §三 | M0 编写 tsconfig 前 |
 | TypeScript 7 与 5.x/6.x 行为差异 | 同上 §三 | M0 版本锁定前 |
-| Electron fuses 全量清单与 @electron/fuses 用法 | 同上 §三（B-0-19） | M6 打包前 |
+| Electron fuses 全量清单与 @electron/fuses 用法 | 同上 §三（B-0-19） | 完成（2026-09-23）：清单与逐条裁决见 `docs/agmds-research/2026-09-23-electron-fuses清单.md`，afterPack 已接线（`scripts/flip-fuses.mjs`）；asar 完整性双 fuse（#4/#5）本期缓启，随 docs/09 spec 证书就绪后启用 |
 | Electron 用户设置社区方案（如 electron-store） | 同上 §三（A.2） | 若内置 userData JSON 方案不足 |
 | wal_checkpoint TRUNCATE 模式原文；trigram 引入精确版本号（3.34.0）核对 | 2026-09-14-存储层.md §三（P-3/P-4） | 引用对应语义时核对原文 |
 | Playwright Linux E2E 是否需 install-deps；screenshot/video 配置默认值 | 2026-09-14-构建测试与打包.md §三 | CI 首次三平台跑通 / E2E 规范编写前 |
@@ -47,7 +47,7 @@
 | --- | --- | --- | --- | --- |
 | docs/07 | 编辑器与保存管线设计 | 多标签页状态模型、自动保存去抖与写合并（竞态规则）、大文件阈值行为 | M4 开工前 | 待撰写 |
 | docs/08 | 导入导出与辅助功能设计 | 导入冲突判定键与三策略（跳过/重命名/覆盖）语义、vfs:// → 相对路径改写算法、设置 schema、备份命名与恢复流程 | M5 开工前 | 待撰写 |
-| docs/09 | 打包与发布规格 | electron-builder 配置基线、@electron/fuses 关闭清单（待调研项）、release 工作流与签名占位、版本号策略 | M6 发布批次开工前（先完成 fuses 待调研项） | 部分覆盖（2026-09-22）：NSIS 安装位置可选与 author 字段已由 `docs/superpowers/specs/2026-09-22-产品化UI重构-design.md` §5.3 落地；fuses/release 工作流/版本策略仍待本 spec |
+| docs/09 | 打包与发布规格 | electron-builder 配置基线、@electron/fuses 关闭清单（待调研项）、release 工作流与签名占位、版本号策略 | M6 发布批次开工前（先完成 fuses 待调研项） | 部分覆盖（2026-09-22）：NSIS 安装位置可选与 author 字段已由 `docs/superpowers/specs/2026-09-22-产品化UI重构-design.md` §5.3 落地；fuses 调研与 afterPack 落地已完成（2026-09-23，`docs/agmds-research/2026-09-23-electron-fuses清单.md`，asar 完整性双 fuse 缓启待本 spec）、release 工作流已建（`.github/workflows/release.yml`）；asar 完整性启用与版本策略仍待本 spec |
 
 不需要单独 spec 的：M0 脚手架（宪法 C.4/C.6 + TASK.md 执行项已是完整依据）；IPC 字段级契约（在 `src/shared` 以 TS + zod 为单一来源，docs/03 §7 已定通道语义，代码即规格）；安全基线（宪法 B.5 禁令已完备）。
 
@@ -59,7 +59,7 @@
 | 配置分支保护（**dev=日常开发主干；main=生产分支，项目完整落地后一次性合入并触发完整 CI/CD 打包发布**）：dev 与 main 必需检查 = 三平台检查名 + 要求分支同步，无人工绕过通道 | 同上；分支模型经用户 2026-09-15 指定 | M0 首个 PR 前 | 完成（M0） |
 | 【M1 前置】补齐 B.5-4/5 窗口安全基线缺口：`will-navigate` origin 白名单拦截（URL 解析器比较）、`setWindowOpenHandler` 一律 deny、`setPermissionRequestHandler` 默认拒绝 | 宪法 B.5-4/5 强制条款，M0 未落地 | M1 窗口 / 预览工作时优先补齐 | 完成（M1） |
 | 【M1 前置】preload 从 tsconfig.main 拆出独立构建：现 dev watch 与单独 `npm run build:main` 会用 tsc 多文件产物覆盖 rolldown 单文件 preload（sandbox 下坏产物、dev 形态 IPC 断），重构构建编排——dev 主开发循环即受影响，M1 开工首日即撞上 | M0-Task 8/11 实测遗留 | M1 前置（M1 开工首日） | 完成（M1） |
-| release 发布工作流：tag 触发、draft release 人工发布闸门、签名 / 公证 secrets 占位、`forceCodeSigning` 证书就绪后开启为硬门禁 | 同上 §三方案 C | M6 | 待办 |
+| release 发布工作流：tag 触发、draft release 人工发布闸门、签名 / 公证 secrets 占位、`forceCodeSigning` 证书就绪后开启为硬门禁 | 同上 §三方案 C | M6 | 主体完成（2026-09-23：`.github/workflows/release.yml` 三平台 matrix + draft 闸门 + tag/版本一致性守卫；forceCodeSigning 与签名 secrets 随证书就绪启用） |
 | 搜索索引重建修复例程（设置页：v1 对账不平或用户自修复触发——同 v2 复制范式重跑） | docs/superpowers/specs/2026-09-17-搜索-design.md §7.1 | 后续批次 | 待办（M6 已按用户需求「未实现功能不设计」移除设置页 disabled 占位按钮；接线项保留） |
 | electron-builder v27 `electronGet` 更名复核 | 同上 §三（C.6-11） | v27 发布后 |
 | A.5-4 交互/批量预算分档与基句悬空指针清理（终审建议：交互单点写与批量导入分档、删「见 TASK.md」悬空引用） | M2 终审 | 下一修宪周期 | 待办 |
