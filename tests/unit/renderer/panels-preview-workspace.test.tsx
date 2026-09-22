@@ -58,6 +58,19 @@ function stubApi(overrides: Partial<Record<string, unknown>> = {}): Record<strin
     ),
     // 状态栏文档计数（M6 spec §2.6）：启动装配与树广播后各查一次；平台标识供 TitleBar 消费
     countNodes: vi.fn(() => Promise.resolve({ ok: true, value: 1 })),
+    // 数据目录信息（M6 批次③设置域；②批次起 Workspace 挂载期亦拉取，供树栏保存路径小字）
+    getDataDirInfo: vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        value: {
+          root: 'D:/lt-user-data/LearningText',
+          dbFile: 'D:/lt-user-data/LearningText/learningtext.db',
+          backupsDir: 'D:/lt-user-data/LearningText/backups',
+          settingsFile: 'D:/lt-user-data/LearningText/settings/settings.json',
+          custom: false,
+        },
+      }),
+    ),
     platform: 'win32',
     onShellCommand: vi.fn((callback: (command: ShellCommand) => void) => {
       // 退订函数为 vi.fn 桩，卸载后可断言 cleanup 确实调用（同 onVfsChanged 强化先例）
@@ -135,6 +148,56 @@ describe('Workspace 启动装配', () => {
     // 状态栏文档计数装配（M6 spec §2.6）：挂载即查一次并呈现「N 个文档」
     expect(api.countNodes).toHaveBeenCalled();
     expect(container.textContent).toContain('1 个文档');
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  // —— 树交互修复批次②：树栏保存路径小字与装配信号（TreePanel 呈现，数据装配归 Workspace）——
+
+  it('②挂载期拉取 getDataDirInfo 渲染 lt-tree-root-path 保存路径小字；nav data-ready 随首拉置位', async () => {
+    const api = stubApi() as unknown as { getDataDirInfo: ReturnType<typeof vi.fn> };
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    // 挂载期独立 effect 拉取一次（数据目录仅迁移变更且迁移即重启，快照恒有效）
+    expect(api.getDataDirInfo).toHaveBeenCalledTimes(1);
+    // 路径小字呈现在树工具栏下方（根行已隐藏，落点告知补位）
+    const pathRow = container.querySelector('.lt-tree-root-path');
+    expect(pathRow?.textContent).toBe('D:/lt-user-data/LearningText');
+    // 装配信号锚：首拉应用后 nav data-ready="true"（E2E 三 spec 等待点，替代原「根按钮」锚）
+    expect(container.querySelector('nav[aria-label="资源树"]')?.getAttribute('data-ready')).toBe(
+      'true',
+    );
+    // 合成根行不再渲染：树侧无「根」行钮，根子级（笔记）直接顶层呈现
+    const rowNames = Array.from(container.querySelectorAll('nav[aria-label="资源树"] button')).map(
+      (b) => b.textContent,
+    );
+    expect(rowNames).not.toContain('根');
+    expect(rowNames).toContain('笔记');
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('②getDataDirInfo 失败（storageInfo 未装载）不渲染路径行，树功能不受影响', async () => {
+    stubApi({
+      getDataDirInfo: vi.fn(() =>
+        Promise.resolve({ ok: false, error: { code: 'E_STORAGE', message: '读取失败' } }),
+      ),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    expect(container.querySelector('.lt-tree-root-path')).toBeNull();
+    // 树装配不受路径拉取失败影响：根子级照常呈现
+    expect(
+      Array.from(container.querySelectorAll('nav[aria-label="资源树"] button')).some(
+        (b) => b.textContent === '笔记',
+      ),
+    ).toBe(true);
     act(() => {
       tree.unmount();
     });
@@ -1249,6 +1312,10 @@ describe('Workspace 树 rename/move 链路（M4 Task 8）', () => {
 // 导入链路接线（M5 批次⑥ Task 12，FR-IO-01）：菜单命令 → 目录选择 → 策略确认弹层 →
 // io:import 发起；io:progress 广播驱动进度面板与取消；结果 toast 与树刷新收口。
 describe('Workspace 导入链路（M5 Task 12）', () => {
+  afterEach(() => {
+    vi.useRealTimers(); // 退场过渡用例切假时钟，逐用例还原防泄漏到相邻用例（M4 describe 先例）
+  });
+
   interface ImportCapture {
     api: Record<string, ReturnType<typeof vi.fn>>;
     shellHandlers: Array<(command: ShellCommand) => void>;
@@ -1565,6 +1632,158 @@ describe('Workspace 导入链路（M5 Task 12）', () => {
     expect(container.textContent).toContain('2/5');
     expect(container.textContent).toContain('notes/a.css');
     expect(container.querySelector('.lt-import-progress')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  // —— 退场存在性（缺陷修复回归组）：收口置 null 后保留快照播 240ms 滑出再卸载；
+  // 退场期间新广播到达必须复位回入场（竞态防护），假时钟推进断言卸载时机 ——
+
+  it('单文件 HTML 导入完成收口：面板进入退场态（animate-out）且 240ms 后卸载（回归：confirmImportHtml 此前漏置 null 致面板永不消失）', async () => {
+    vi.useFakeTimers();
+    const capture = captureImport({
+      // 单文件源：pickHtmlFile 产出 → 非模态确认浮层 → 确认导入文件（confirmImportHtml 链）
+      pickHtmlFile: vi.fn(() => Promise.resolve({ ok: true, value: ['D:/dl/page.html'] })),
+      // 单文件链续体按契约解构 importedNodeIds[0] 反查开签——桩必须携带该字段
+      importNodes: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: { imported: 1, skipped: 0, failed: 0, importedNodeIds: [9] },
+        }),
+      ),
+      // 导入即打开反查桩：importedNodeIds[0]=9 → openFile 链（import-html 命令链用例同款）
+      getNode: vi.fn(() => Promise.resolve({ ok: true, value: meta(9, 'page.html') })),
+    });
+    const tree = await renderWorkspace();
+    // 先播进度（面板入场呈现），再走单文件导入：invoke 返回必须收口置 null（退场起点）
+    await act(async () => {
+      capture.progressHandlers[0]?.({
+        kind: 'import',
+        importId: 7,
+        phase: 'writing',
+        done: 1,
+        total: 1,
+        currentPath: 'D:/dl/page.html',
+      });
+    });
+    expect(container.querySelector('.lt-import-progress')).not.toBeNull();
+
+    await act(async () => {
+      capture.shellHandlers[0]?.({ type: 'import-html' });
+    });
+    await act(async () => {
+      (container.querySelector('button[aria-label="确认导入文件"]') as HTMLElement).click();
+    });
+    expect(capture.api.importNodes).toHaveBeenCalledTimes(1);
+
+    // 收口非瞬时卸载：面板保留最后快照进入退场播放（退场类挂载、入场类退位）
+    const panel = container.querySelector('.lt-import-progress');
+    expect(panel).not.toBeNull();
+    expect(panel?.className).toContain('animate-out');
+    expect(panel?.className).toContain('slide-out-to-bottom-2');
+    expect(panel?.className).not.toContain('animate-in');
+    // 240ms 退场播完才卸载（与 PROGRESS_EXIT_MS / duration-240 同源时长）
+    await act(async () => {
+      vi.advanceTimersByTime(240);
+    });
+    expect(container.querySelector('.lt-import-progress')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('退场播放期间新进度广播到达：面板复位为入场态不卸载（竞态防护：旧退场计时器被清除）', async () => {
+    vi.useFakeTimers();
+    const capture = captureImport();
+    const tree = await renderWorkspace();
+    // 首次进度入场 → 批量导入确认（importNodes resolve 即收口置 null）进入退场
+    await act(async () => {
+      capture.progressHandlers[0]?.({
+        kind: 'import',
+        importId: 7,
+        phase: 'writing',
+        done: 1,
+        total: 2,
+        currentPath: 'D:/notes/a.html',
+      });
+    });
+    await openImportDialog(capture);
+    await act(async () => {
+      (document.querySelector('[aria-label="确认导入"]') as HTMLElement).click();
+    });
+    // 退场播放中途（100ms < 240ms）：面板仍在、退场类挂载
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+    const exiting = container.querySelector('.lt-import-progress');
+    expect(exiting).not.toBeNull();
+    expect(exiting?.className).toContain('animate-out');
+
+    // 退场未播完时新进度广播到达：复位为入场呈现（新载荷快照），退场类退位
+    await act(async () => {
+      capture.progressHandlers[0]?.({
+        kind: 'import',
+        importId: 8,
+        phase: 'writing',
+        done: 4,
+        total: 9,
+        currentPath: 'D:/notes/sub/b.html',
+      });
+    });
+    const reset = container.querySelector('.lt-import-progress');
+    expect(reset).not.toBeNull();
+    expect(reset?.className).toContain('animate-in');
+    expect(reset?.className).not.toContain('animate-out');
+    expect(container.textContent).toContain('4/9');
+    // 若旧退场计时器未被清除，此处推进 240ms 面板必被误卸载——存在即竞态防护生效
+    await act(async () => {
+      vi.advanceTimersByTime(240);
+    });
+    expect(container.querySelector('.lt-import-progress')).not.toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('导出面板同款退场：invoke 收口后播退场且 240ms 后卸载（beginExport 收口语义回归）', async () => {
+    vi.useFakeTimers();
+    const capture = captureImport({
+      pickDirectory: vi.fn(() => Promise.resolve({ ok: true, value: ['D:/export-out'] })),
+      // 树根直挂文件节点：点选开标签 → 导出选中上下文（export 命令链用例同款）
+      listChildren: vi.fn(() => Promise.resolve({ ok: true, value: [meta(4, '新页')] })),
+    });
+    const tree = await renderWorkspace();
+    const fileButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('nav[aria-label="资源树"] button'),
+    ).find((b) => b.textContent === '新页');
+    expect(fileButton).toBeDefined();
+    await act(async () => {
+      fileButton?.click();
+    });
+    // 导出进度广播 → 面板入场呈现
+    await act(async () => {
+      capture.progressHandlers[0]?.({
+        kind: 'export',
+        exportId: 1,
+        phase: 'writing',
+        done: 2,
+        total: 5,
+        currentPath: 'notes/a.css',
+      });
+    });
+    expect(container.querySelector('.lt-export-progress')).not.toBeNull();
+    // export 命令 → 目录选择 → exportNodes resolve（收口置 null）→ 退场 → 240ms 后卸载
+    await act(async () => {
+      capture.shellHandlers[0]?.({ type: 'export' });
+    });
+    const panel = container.querySelector('.lt-export-progress');
+    expect(panel).not.toBeNull();
+    expect(panel?.className).toContain('animate-out');
+    await act(async () => {
+      vi.advanceTimersByTime(240);
+    });
+    expect(container.querySelector('.lt-export-progress')).toBeNull();
     act(() => {
       tree.unmount();
     });

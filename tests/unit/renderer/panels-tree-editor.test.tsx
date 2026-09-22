@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 // TreePanel 冒烟（宪法 A.6-2）：渲染结构、回调触发。M7 树体验批次：工具栏「新建文件」
 // 升级为「导入 HTML 文件」，目录新建改行内命名（CreateDirRow），chevron/FolderOpen 展开
-// 指示落地。EditorPanel 冒烟自 M4 Task 3 起移步 tests/unit/renderer/editor-panel.test.tsx。
+// 指示落地。树交互修复批次（②④⑤）：合成根行隐藏（根子级顶层直出 + 根层命名行回归顶层
+// + nav data-ready 装配信号锚 + rootPath 路径小字位）、目录点选=选中+展开切换、折叠真正
+// 收起子级（expanded 集驱动）。EditorPanel 冒烟自 M4 Task 3 起移步
+// tests/unit/renderer/editor-panel.test.tsx。
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -55,6 +58,7 @@ describe('TreePanel', () => {
           dirPickMode={false}
           pickTargetId={null}
           creatingDirParentId={null}
+          rootPath={null}
 
           onToggle={vi.fn()}
           onSelect={onSelect}
@@ -104,6 +108,7 @@ describe('TreePanel', () => {
           dirPickMode={false}
           pickTargetId={null}
           creatingDirParentId={null}
+          rootPath={null}
 
           onToggle={onToggle}
           onSelect={vi.fn()}
@@ -138,6 +143,7 @@ describe('TreePanel', () => {
           dirPickMode={false}
           pickTargetId={null}
           creatingDirParentId={null}
+          rootPath={null}
 
           onToggle={onToggle}
           onSelect={vi.fn()}
@@ -164,15 +170,19 @@ describe('TreePanel', () => {
     const onConfirmCreateDir = vi.fn();
     const onCancelCreateDir = vi.fn();
     const tree = createRoot(container);
+    // ⑤语义：命名行渲染于目标父子级首位需父在展开集（⑤折叠藏子级落地后，loaded 不再恒
+    // 可见）——expanded 含目标父 id=2（Workspace startCreateDir 进入时保证）
+    const expanded = new Set([2]);
     act(() => {
       tree.render(
         <TreePanel
           roots={roots}
           selectedId={null}
-          expanded={new Set([1])}
+          expanded={expanded}
           dirPickMode={false}
           pickTargetId={null}
           creatingDirParentId={2}
+          rootPath={null}
 
           onToggle={vi.fn()}
           onSelect={vi.fn()}
@@ -205,16 +215,17 @@ describe('TreePanel', () => {
       );
     });
     expect(onCancelCreateDir).toHaveBeenCalledTimes(1);
-    // 未命中父不渲染命名行（展开根下无 creating 目标时不出现第二行）
+    // 未命中父不渲染命名行（展开目标父下无 creating 目标时不出现第二行）
     act(() => {
       tree.render(
         <TreePanel
           roots={roots}
           selectedId={null}
-          expanded={new Set([1])}
+          expanded={expanded}
           dirPickMode={false}
           pickTargetId={null}
           creatingDirParentId={null}
+          rootPath={null}
 
           onToggle={vi.fn()}
           onSelect={vi.fn()}
@@ -229,6 +240,225 @@ describe('TreePanel', () => {
       );
     });
     expect(container.querySelector('li.lt-create-row')).toBeNull();
+  });
+
+  // —— 树交互修复批次（②④⑤）——
+
+  it('②隐藏合成根行：根子级顶层直出、无「根」行；nav data-ready 随 roots 空/非空切换（装配信号锚）', () => {
+    const roots = [
+      withChildren(makeTreeRoot(meta(1, '根', 'dir')), [makeTreeRoot(meta(2, 'a.html'))]),
+    ];
+    const tree = createRoot(container);
+    const renderPanel = (panelRoots: readonly TreeNode[]): void => {
+      act(() => {
+        tree.render(
+          <TreePanel
+            roots={panelRoots}
+            selectedId={null}
+            expanded={new Set()}
+            dirPickMode={false}
+            pickTargetId={null}
+            creatingDirParentId={null}
+            rootPath={null}
+            onToggle={vi.fn()}
+            onSelect={vi.fn()}
+            onStartCreateDir={vi.fn()}
+            onConfirmCreateDir={vi.fn()}
+            onCancelCreateDir={vi.fn()}
+            onTrash={vi.fn()}
+            onRename={vi.fn()}
+            onStartMove={vi.fn()}
+            onImportHtml={vi.fn()}
+          />,
+        );
+      });
+    };
+    // 首拉前空树：data-ready 缺省（装配未完成）
+    renderPanel([]);
+    expect(container.querySelector('nav')?.getAttribute('data-ready')).toBeNull();
+    // 首拉应用（空库也有合成根）：data-ready="true" = Workspace mount 首拉已完成（E2E 等待锚）
+    renderPanel(roots);
+    expect(container.querySelector('nav')?.getAttribute('data-ready')).toBe('true');
+    // 合成根行不再渲染，根子级直接顶层呈现（用户数据目录即默认根）
+    const rowNames = Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+    expect(rowNames).not.toContain('根');
+    expect(rowNames).toContain('a.html');
+  });
+
+  it('②根层命名行回归顶层：creatingDirParentId=根 id 时顶层首位渲染命名行，确认回传根目标', () => {
+    const roots = [
+      withChildren(makeTreeRoot(meta(1, '根', 'dir')), [makeTreeRoot(meta(2, 'a.html'))]),
+    ];
+    const onConfirmCreateDir = vi.fn();
+    const tree = createRoot(container);
+    act(() => {
+      tree.render(
+        <TreePanel
+          roots={roots}
+          selectedId={null}
+          expanded={new Set()}
+          dirPickMode={false}
+          pickTargetId={null}
+          creatingDirParentId={1}
+          rootPath={null}
+          onToggle={vi.fn()}
+          onSelect={vi.fn()}
+          onStartCreateDir={vi.fn()}
+          onConfirmCreateDir={onConfirmCreateDir}
+          onCancelCreateDir={vi.fn()}
+          onTrash={vi.fn()}
+          onRename={vi.fn()}
+          onStartMove={vi.fn()}
+          onImportHtml={vi.fn()}
+        />,
+      );
+    });
+    // 根行已隐藏，命名行渲染于顶层列表首位（Enter 确认目标父=根 id）
+    const row = container.querySelector<HTMLElement>('li.lt-create-row');
+    expect(row).not.toBeNull();
+    const input = row?.querySelector<HTMLInputElement>('input[aria-label="新目录名称"]');
+    act(() => {
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+    });
+    expect(onConfirmCreateDir).toHaveBeenCalledWith(1, '新建目录');
+  });
+
+  it('②rootPath 非空渲染 lt-tree-root-path 路径小字，null 不渲染', () => {
+    const roots = [withChildren(makeTreeRoot(meta(1, '根', 'dir')), [])];
+    const tree = createRoot(container);
+    const renderPanel = (rootPath: string | null): void => {
+      act(() => {
+        tree.render(
+          <TreePanel
+            roots={roots}
+            selectedId={null}
+            expanded={new Set()}
+            dirPickMode={false}
+            pickTargetId={null}
+            creatingDirParentId={null}
+            rootPath={rootPath}
+            onToggle={vi.fn()}
+            onSelect={vi.fn()}
+            onStartCreateDir={vi.fn()}
+            onConfirmCreateDir={vi.fn()}
+            onCancelCreateDir={vi.fn()}
+            onTrash={vi.fn()}
+            onRename={vi.fn()}
+            onStartMove={vi.fn()}
+            onImportHtml={vi.fn()}
+          />,
+        );
+      });
+    };
+    renderPanel('D:/lt-user-data/LearningText');
+    expect(container.querySelector('.lt-tree-root-path')?.textContent).toBe(
+      'D:/lt-user-data/LearningText',
+    );
+    renderPanel(null);
+    expect(container.querySelector('.lt-tree-root-path')).toBeNull();
+  });
+
+  it('⑤折叠目录隐藏子级、再展开恢复（expanded 集驱动；折叠仅藏渲染，数据保留）', () => {
+    // 根子级「笔记」已装载（含 b.html）：顶层经②直出，b.html 可见性由展开集驱动
+    const roots = [
+      withChildren(makeTreeRoot(meta(1, '根', 'dir')), [
+        withChildren(makeTreeRoot(meta(2, '笔记', 'dir')), [makeTreeRoot(meta(5, 'b.html'))]),
+      ]),
+    ];
+    const tree = createRoot(container);
+    const renderPanel = (panelExpanded: ReadonlySet<number>): void => {
+      act(() => {
+        tree.render(
+          <TreePanel
+            roots={roots}
+            selectedId={null}
+            expanded={panelExpanded}
+            dirPickMode={false}
+            pickTargetId={null}
+            creatingDirParentId={null}
+            rootPath={null}
+            onToggle={vi.fn()}
+            onSelect={vi.fn()}
+            onStartCreateDir={vi.fn()}
+            onConfirmCreateDir={vi.fn()}
+            onCancelCreateDir={vi.fn()}
+            onTrash={vi.fn()}
+            onRename={vi.fn()}
+            onStartMove={vi.fn()}
+            onImportHtml={vi.fn()}
+          />,
+        );
+      });
+    };
+    const rowNames = (): string[] =>
+      Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
+    // 折叠态：目录行可见、子级隐藏（修复「装载即恒可见」存量缺陷）
+    renderPanel(new Set());
+    expect(rowNames()).toContain('笔记');
+    expect(rowNames()).not.toContain('b.html');
+    // 展开态：子级恢复可见
+    renderPanel(new Set([2]));
+    expect(rowNames()).toContain('b.html');
+    // 再折叠：子级再次隐藏（loaded 保持，仅渲染隐藏）
+    renderPanel(new Set());
+    expect(rowNames()).not.toContain('b.html');
+  });
+
+  it('④常规模式目录点选=选中+展开切换（同时上抛 onSelect 与 onToggle）；dirPickMode 下仍仅 onSelect（目标记账回归锁定）', () => {
+    const roots = [
+      withChildren(makeTreeRoot(meta(1, '根', 'dir')), [makeTreeRoot(meta(2, '笔记', 'dir'))]),
+    ];
+    const onToggle = vi.fn();
+    const onSelect = vi.fn();
+    const tree = createRoot(container);
+    const renderPanel = (pickMode: boolean): void => {
+      act(() => {
+        tree.render(
+          <TreePanel
+            roots={roots}
+            selectedId={null}
+            expanded={new Set()}
+            dirPickMode={pickMode}
+            pickTargetId={null}
+            creatingDirParentId={null}
+            rootPath={null}
+            onToggle={onToggle}
+            onSelect={onSelect}
+            onStartCreateDir={vi.fn()}
+            onConfirmCreateDir={vi.fn()}
+            onCancelCreateDir={vi.fn()}
+            onTrash={vi.fn()}
+            onRename={vi.fn()}
+            onStartMove={vi.fn()}
+            onImportHtml={vi.fn()}
+          />,
+        );
+      });
+    };
+    // 常规模式：dir 点选同时上抛两回调（VS Code 点选=选中+展开/折叠）
+    renderPanel(false);
+    const dirBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === '笔记',
+    );
+    expect(dirBtn).toBeDefined();
+    act(() => {
+      dirBtn?.click();
+    });
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }));
+    expect(onToggle).toHaveBeenCalledWith(2);
+    // dirPickMode（move/导入共用）：dir 点选仍仅记账目标，不触发展开切换（回归锁定）
+    onSelect.mockClear();
+    onToggle.mockClear();
+    renderPanel(true);
+    act(() => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === '笔记')
+        ?.click();
+    });
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onToggle).not.toHaveBeenCalled();
   });
 });
 
@@ -265,6 +495,7 @@ describe('TreePanel 行内「⋯」菜单（M5 批次④）', () => {
           dirPickMode={false}
           pickTargetId={null}
           creatingDirParentId={null}
+          rootPath={null}
 
           onToggle={vi.fn()}
           onSelect={vi.fn()}

@@ -15,6 +15,12 @@
  * 行内「⋯」菜单（M5 批次④ Task 10）：每行 dropdown-menu 提供重命名/移动到…/删除（M6 起带
  * 图标），dir 与 file 均有，操作以节点 id 直传（脱离 selectedId 选中锚——目录不开标签即可
  * 操作；根为唯一例外，不渲染入口）。
+ * 树交互修复批次（用户实测反馈②④⑤）：②隐藏合成根行——用户数据目录即默认根，根子级顶层
+ * 直出，工具栏下方以小字展示保存路径（lt-tree-root-path）；nav data-ready 为装配完成信号锚
+ * （替代原「根按钮出现」等待语义）。④目录点选 = 选中 + 展开/折叠（VS Code 同构：点选目录
+ * 同时上抛 onSelect 与 onToggle，新建/导入落点随点选目录）。⑤子级渲染条件改展开判定
+ * （isExpandedNode）——修复 M3 起「装载即恒可见、折叠从未真正收起子级」的存量缺陷
+ * （chevron M7 落地后才显形为「收起无反应」）。
  */
 import {
   ChevronRight,
@@ -88,6 +94,11 @@ export interface TreePanelProps {
   readonly pickTargetId: number | null;
   /** 行内新建目录目标父 id（null=无命名行）；父需 loaded（Workspace 进入时保证） */
   readonly creatingDirParentId: number | null;
+  /**
+   * 数据目录根路径（storage 域 getDataDirInfo().root，②保存路径小字展示源）：null=未装载
+   * 不渲染该行。数据目录仅经设置迁移变更且迁移即重启，挂载期快照恒有效
+   */
+  readonly rootPath: string | null;
   onToggle(id: number): void;
   onSelect(node: NodeMeta): void;
   /** 进入行内新建目录流程（工具栏钮入口；上下文父在面板内推导） */
@@ -241,8 +252,15 @@ function TreeItem({
               if (isDir) onSelect(node.meta);
               return;
             }
-            if (isDir) onToggle(node.meta.id);
-            else onSelect(node.meta);
+            if (isDir) {
+              // ④目录点选 = 选中 + 展开/折叠（VS Code 同构语义）：onSelect 让 Workspace
+              // 记账树选中（新建/导入落点随点选目录），onToggle 切换展开态；两回调同批
+              // 提交，互不依赖先后
+              onSelect(node.meta);
+              onToggle(node.meta.id);
+            } else {
+              onSelect(node.meta);
+            }
           }}
         >
           {/* aria-hidden 图标不进可访问名/文本内容——既有测试以名称 textContent/角色名
@@ -297,7 +315,12 @@ function TreeItem({
           </DropdownMenu>
         ) : null}
       </div>
-      {isDir && node.loaded ? (
+      {expandedNode ? (
+        // ⑤子级渲染条件 = 展开判定（isExpandedNode：loaded 且在展开集）——修复 M3 起
+        // 「装载即恒可见」的存量缺陷（原条件 isDir && node.loaded 使折叠从未真正收起子级，
+        // chevron M7 落地后才显形为「收起无反应」）。折叠仅隐藏渲染：loaded 保持、子级
+        // 数据保留（隐藏非卸载数据），再展开立即以保留数据渲染无空窗，数据过期由既有
+        // stale 重取效应与 onToggle 展开恒重取刷新。
         // 嵌套层经缩进 + 左侧连线表达层级（设计系统文档 §7.2 树列表形态）；展开入场
         // fade 100ms（opacity 合成器路径，折叠→展开卸载重挂时重播，reduced-motion 全局降级）；
         // 行内新建目录命名行渲染于子级首位（VS Code 新建项位置语义）
@@ -338,8 +361,25 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
   const trashTarget = props.selectedId;
   // 重命名/移动入口：有选中即渲染、根选中禁用（根不可 rename/move，spec §6.2 D8）
   const actionTarget = props.selectedId;
+  // ②顶层列表跳过合成根行（用户数据目录即默认根，不在树中展示「根」节点行——VS Code
+  // 侧栏同构）：根为单节点合成约定（Workspace 挂载首拉后 roots 恒为 [合成根] 且挂载即
+  // loaded），顶层直接呈现根子级。收窄保守：仅「恰一节点且 id=根约定值」才按合成根展开
+  // 子级，其余形态（含首拉前的空树）原样渲染——树数据模型（Workspace roots/懒加载）不动，
+  // 只改呈现层
+  const firstRoot = props.roots[0];
+  const visibleRoots =
+    props.roots.length === 1 && firstRoot !== undefined && firstRoot.meta.id === ROOT_ID
+      ? firstRoot.children
+      : props.roots;
   return (
-    <nav aria-label="资源树" className="flex min-h-0 flex-1 flex-col">
+    <nav
+      aria-label="资源树"
+      // 装配完成信号锚（E2E 三 spec 等待点）：roots 非空 = Workspace mount 首拉
+      // listChildren 已应用到树——空库也有合成根，置位语义与原「根按钮出现」完全等价；
+      // data-* 属性为既有锚点先例（行内菜单 data-node-id）
+      data-ready={props.roots.length > 0 ? 'true' : undefined}
+      className="flex min-h-0 flex-1 flex-col"
+    >
       <div className="lt-tree-toolbar flex items-center gap-1 border-b border-border px-2 py-1">
         <button
           type="button"
@@ -395,9 +435,27 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
           </>
         ) : null}
       </div>
+      {props.rootPath !== null ? (
+        // ②保存路径小字（根行隐藏后补位告知数据落点，VS Code 侧栏同构的 xs muted 形态）：
+        // truncate 截断溢出，title 悬停看全路径；类名 lt-tree-root-path 为 E2E/测试锚点
+        <div
+          className="lt-tree-root-path shrink-0 truncate border-b border-border px-2 py-1 text-xs text-muted-foreground"
+          title={props.rootPath}
+        >
+          {props.rootPath}
+        </div>
+      ) : null}
       {/* 顶层列表占满余高并自滚动（页面级不滚动，设计系统文档 §二） */}
       <ul className="m-0 min-h-0 flex-1 list-none overflow-auto p-2 text-sm">
-        {props.roots.map((node) => (
+        {/* ②根层命名行回归顶层：根行已不渲染，TreeItem 内 ROOT_ID 命中分支自然不再生效
+            （无双行）；目标父=根时命名行渲染于顶层列表首位 */}
+        {props.creatingDirParentId === ROOT_ID ? (
+          <CreateDirRow
+            onConfirm={(name) => props.onConfirmCreateDir(ROOT_ID, name)}
+            onCancel={props.onCancelCreateDir}
+          />
+        ) : null}
+        {visibleRoots.map((node) => (
           <TreeItem
             key={node.meta.id}
             node={node}
@@ -420,7 +478,10 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
   );
 }
 
-/** 新建上下文父：选中 dir → 其本身；file → 其 parentId；未选 → 根（id=1 约定，与 resolvePath('/') 同源） */
+/**
+ * 新建上下文父：选中 dir → 其本身；file → 其 parentId；未选 → 根（id=1 约定，与 resolvePath('/')
+ * 同源）。④目录点选即记账选中（selectedId 可为目录），工具栏新建由此落到当前点选目录
+ */
 function findContextParent(roots: readonly TreeNode[], selectedId: number | null): number {
   if (selectedId === null) return ROOT_ID;
   const walk = (nodes: readonly TreeNode[]): NodeMeta | null => {

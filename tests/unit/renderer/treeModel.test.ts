@@ -73,6 +73,26 @@ describe('treeModel applyBroadcast', () => {
     const purged = applyBroadcast(tree, bcast({ type: 'purged', nodeId: 2, purgedCount: 2 }));
     expect(purged).toHaveLength(0);
   });
+
+  it('moved/renamed 连带树内直父 stale（旧父层重取清除已移走/旧名副本），无直父（顶层）只标自身', () => {
+    // 结构：根层 [笔记(2){a.html(3)}, 兄弟(5)]——moved(3) 时直父 笔记(2) 与自身 3 同批 stale，
+    // 兄弟(5) 与更上层不波及
+    const tree = [
+      withChildren(makeTreeRoot({ ...meta(2, 1, '笔记'), nodeType: 'dir' }), [
+        makeTreeRoot(meta(3, 2, 'a.html')),
+      ]),
+      makeTreeRoot({ ...meta(5, 1, '兄弟'), nodeType: 'dir' }),
+    ];
+    const after = applyBroadcast(tree, bcast({ type: 'moved', nodeId: 3, affectedCount: 1 }));
+    expect(findNode(after, 3)?.stale).toBe(true); // 自身（子孙路径展示重取）
+    expect(findNode(after, 2)?.stale).toBe(true); // 树内直父（旧落点副本清除依赖父层重取）
+    expect(findNode(after, 5)?.stale).toBe(false); // 兄弟分支不波及
+    // 顶层节点（合成根不rendered 但可能在树中）无直父：只标自身不误标同层
+    const topAfter = applyBroadcast(tree, bcast({ type: 'renamed', nodeId: 5, affectedCount: 1 }));
+    expect(findNode(topAfter, 5)?.stale).toBe(true);
+    expect(findNode(topAfter, 2)?.stale).toBe(false);
+    expect(collectStaleExpanded(topAfter, new Set([2]))).toEqual([]); // 未展开的重取门不收集
+  });
 });
 
 // move 目标合法性判定（M4 spec §6.2 D8）：后代（含多级）命中为真、自身/兄弟/祖先为假、

@@ -20,6 +20,19 @@ describe('App 根组件', () => {
         // 导入进度订阅（M5 批次⑥ Task 12）：Workspace 挂载即订阅
         onIoProgress: vi.fn(() => () => undefined),
         countNodes: vi.fn(() => Promise.resolve({ ok: true, value: 0 })),
+        // 数据目录信息（②批次起 Workspace 挂载期拉取，供树栏保存路径小字）
+        getDataDirInfo: vi.fn(() =>
+          Promise.resolve({
+            ok: true,
+            value: {
+              root: 'D:/lt-user-data/LearningText',
+              dbFile: 'D:/lt-user-data/LearningText/learningtext.db',
+              backupsDir: 'D:/lt-user-data/LearningText/backups',
+              settingsFile: 'D:/lt-user-data/LearningText/settings/settings.json',
+              custom: false,
+            },
+          }),
+        ),
         platform: 'win32',
         getNode: vi.fn(() =>
           Promise.resolve({

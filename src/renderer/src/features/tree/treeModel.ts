@@ -88,7 +88,7 @@ export function applyBroadcast(
       return remove(roots, event.nodeId);
     case 'renamed':
     case 'moved':
-      return markStale(roots, event.nodeId);
+      return markStaleAround(roots, event.nodeId);
   }
 }
 
@@ -113,9 +113,27 @@ function remove(nodes: readonly TreeNode[], id: number): readonly TreeNode[] {
     .map((t) => ({ ...t, children: remove(t.children, id) }));
 }
 
-function markStale(nodes: readonly TreeNode[], id: number): readonly TreeNode[] {
+/** 按 id 标记单节点 stale（moved 新父标记消费：广播契约不携目标父，由新鲜 meta 反查） */
+export function markStale(nodes: readonly TreeNode[], id: number): readonly TreeNode[] {
   return nodes.map((t) => {
     if (t.meta.id === id) return { ...t, stale: true };
     return { ...t, children: markStale(t.children, id) };
+  });
+}
+
+/**
+ * 标记节点与其树内直父一并 stale（renamed/moved 广播用）：节点自身 meta 不随这两类广播
+ * 携带（契约只有 nodeId），展示名/落点更新依赖「父层 listChildren 重取回写子级新 meta」
+ * ——只标节点自身会使旧父层残留已移走/已改名副本（重命名后旧名副本永不消失，E2E 实证）。
+ * 目标父不在本树（未加载）时自然无标记——折叠目录展开时 onToggle 恒重取，无需提前标记。
+ */
+export function markStaleAround(nodes: readonly TreeNode[], id: number): readonly TreeNode[] {
+  return nodes.map((t) => {
+    if (t.meta.id === id) return { ...t, stale: true };
+    if (t.children.some((child) => child.meta.id === id)) {
+      // 直父命中：父与子同批标记（子沿用 markStale 语义，孙代不波及）
+      return { ...t, stale: true, children: markStale(t.children, id) };
+    }
+    return { ...t, children: markStaleAround(t.children, id) };
   });
 }

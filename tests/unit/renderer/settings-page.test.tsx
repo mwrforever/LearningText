@@ -861,12 +861,14 @@ describe('Workspace 数据与存储接线（M6 批次③）', () => {
   it('打开设置标签拉取数据目录信息（storage:get-info）；关闭再开重拉（随标签进出装载）', async () => {
     const { api } = renderWorkspace();
     await flushMicrotasks();
-    expect(api.getDataDirInfo).not.toHaveBeenCalled(); // 未开设置不预取
+    // ②批次起挂载期即拉取一次（树栏保存路径小字展示源；数据目录仅迁移变更且迁移即重启）
+    expect(api.getDataDirInfo).toHaveBeenCalledTimes(1);
     act(() => {
       statusSettingsButton()?.click();
     });
     await flushMicrotasks();
-    expect(api.getDataDirInfo).toHaveBeenCalledTimes(1);
+    // 设置标签打开期间随标签进出重拉（设置页展示与树栏小字共用同一 storageInfo 态）
+    expect(api.getDataDirInfo).toHaveBeenCalledTimes(2);
     act(() => {
       container.querySelector<HTMLButtonElement>('button[aria-label="关闭设置"]')?.click();
     });
@@ -874,7 +876,7 @@ describe('Workspace 数据与存储接线（M6 批次③）', () => {
       statusSettingsButton()?.click();
     });
     await flushMicrotasks();
-    expect(api.getDataDirInfo).toHaveBeenCalledTimes(2);
+    expect(api.getDataDirInfo).toHaveBeenCalledTimes(3);
   });
 
   it('「打开数据目录」经 openPath 携登记簿内的当前数据根', async () => {

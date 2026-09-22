@@ -17,6 +17,10 @@
  * SaveController 保存管线（edit/flush/flushActive/关签 flush）、树懒加载与广播同步、
  * rename/move 模态与选择模式、revealInTree 树侧定位、recent/workspace 域串行写链与启动
  * 恢复、快速打开浮层、导入导出链路与进度面板、主题装配（.dark 切换 + matchMedia）。
+ * —— 树交互修复批次（用户实测反馈②④⑤）——②隐藏合成根行（根子级顶层直出 + 数据目录
+ * 挂载期装载供树栏保存路径小字）；④目录点选 = 记账树选中（reveal 覆盖，新建/导入落点随
+ * 点选目录，文件点选仍开签）；⑤展开集实时镜像（expandedRef 同步写，快速连点防闭包旧值
+ * 回滚）。
  */
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
@@ -68,6 +72,7 @@ import {
   findNode,
   isDescendant,
   makeTreeRoot,
+  markStale,
   withChildren,
   type TreeNode,
 } from '../tree/treeModel';
@@ -86,6 +91,7 @@ import { WelcomePage } from '../shell/WelcomePage';
 import { showToast } from '../ui/Toast';
 import { TabBar } from './TabBar';
 import { ratioFromPointer } from './layoutModel';
+import { PROGRESS_EXIT_MS, useExitPresence } from './ioProgressPresence';
 import {
   EMPTY_TABS_OP,
   MAX_TABS,
@@ -100,7 +106,21 @@ import {
 
 export function Workspace(): React.JSX.Element {
   const [roots, setRoots] = useState<readonly TreeNode[]>([]);
-  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
+  // 展开集种子含合成根（ROOT_ID 常量在模块底部声明，函数体运行时已初始化）：②根行隐藏后
+  // 根子级顶层直出不依赖展开集，但 stale 重取效应以 expanded.has 为门——根不入集则顶层
+  // moved/renamed 广播后的旧父层重取永不发生，旧名/已移走副本将永久残留（E2E 实证）。根行
+  // 已无 UI 折叠入口，恒驻展开集无副作用
+  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set([ROOT_ID]));
+  // 展开集实时镜像（settingsRef/tabsRef 同款同步模式）：⑤快速连点下事件闭包 expanded 必
+  // 陈旧——两次连点各读同一旧集合、翻转互相覆盖回滚，正是「收起/展开点击偶发无反应」的
+  // 根因。写入纪律：所有写路径统一「读镜像 → 算新值 → 同步写镜像 → setState」，镜像才是
+  // 事件时刻的事实源，setState 只承载渲染提交。刻意不用「setState(updater) 内记账副作用」
+  // 形态：updater 由 React 推迟到渲染期才求值（仅队列空闲时才急切求值），同事件内前置
+  // setState（如目录点选先 setRevealSelectionId）会让调用侧读不到 updater 内的记账结果
+  const expandedRef = useRef<ReadonlySet<number>>(expanded);
+  useEffect(() => {
+    expandedRef.current = expanded;
+  }, [expanded]);
   // 标签操作状态机（M6 扩型）：设置伪标签存在标记与 'settings' 哨兵激活见 tabModel
   const [tabsOp, setTabsOp] = useState<TabsOp>(EMPTY_TABS_OP);
   const [debounceMs, setDebounceMs] = useState(300);
@@ -161,7 +181,8 @@ export function Workspace(): React.JSX.Element {
   const [restoreOnStart, setRestoreOnStart] = useState(true);
   const [backups, setBackups] = useState<readonly BackupEntry[]>([]);
   // 导入域（M5 批次⑥ Task 12）：待确认导入草稿（源路径/目标父/策略——确认弹层受控态，
-  // null=关闭）与进行中进度（io:progress 广播驱动；invoke 返回即收口置 null）
+  // null=关闭）与进行中进度（io:progress 广播驱动；invoke 返回即收口置 null——收口后由
+  // useExitPresence 保留快照播 240ms 退场再卸载，实时值仍由本 state 持有）
   const [importDraft, setImportDraft] = useState<{
     readonly sourcePaths: readonly string[];
     readonly targetParentId: number;
@@ -169,8 +190,13 @@ export function Workspace(): React.JSX.Element {
   } | null>(null);
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   // 导出域（M5 批次⑥ Task 13）：进行中导出进度（io:progress kind:export 广播驱动；
-  // invoke 返回即收口置 null），无取消语义（FR-IO-02 未要求）
+  // invoke 返回即收口置 null，退场过渡同导入），无取消语义（FR-IO-02 未要求）
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+  // 进度面板退场存在性（缺陷修复①配套）：收口 null 后保留快照播 240ms 滑出再卸载；
+  // 退场期间新广播到达自动复位回入场（hook 内竞态防护）。原始 state 保留——
+  // cancelRunningImport 读实时值、各 invoke 续体写 null 的既有语义不变，本 hook 只承接呈现
+  const importPresence = useExitPresence(importProgress, PROGRESS_EXIT_MS);
+  const exportPresence = useExitPresence(exportProgress, PROGRESS_EXIT_MS);
   // 数据目录域（M6 批次③）：布局展示值（设置标签打开期间装载）与迁移确认弹层目标
   const [storageInfo, setStorageInfo] = useState<DataDirInfo | null>(null);
   const [storageChangeTarget, setStorageChangeTarget] = useState<string | null>(null);
@@ -217,7 +243,8 @@ export function Workspace(): React.JSX.Element {
         : null;
   }, [selectedTreeId, roots]);
   // reveal 选中覆盖回收：activeId 变化即用户改变焦点（开签/切签/关签补位），覆盖值让位
-  //（初始挂载同样触发一次，值为 null 无副作用）
+  //（初始挂载同样触发一次，值为 null 无副作用）。④交互下目录点选也会置覆盖选中：其后
+  // 点文件开签 → activeId 变 → 选中迁移到新标签节点（预期行为——用户焦点变化优先）
   useEffect(() => {
     setRevealSelectionId(null);
   }, [tabsOp.activeId]);
@@ -364,6 +391,13 @@ export function Workspace(): React.JSX.Element {
         void window.api.getNode({ nodeId: event.nodeId }).then((result) => {
           if (result.ok) {
             setTabsOp((prev) => updateTabMeta(prev, result.value.id, result.value));
+            // 新父层标记 stale（moved 展示同步的另一半，markStaleAround 只能标树内旧父）：
+            // 契约广播不带目标父 id，从新鲜 meta.parentId 反查——已展开可见则 stale 重取
+            // 效应立即可见新落点；折叠未装载时本标记为 no-op，展开时 onToggle 恒重取兜底
+            const newParentId = result.value.parentId;
+            if (newParentId !== null) {
+              setRoots((prev) => markStale(prev, newParentId));
+            }
           }
         });
       }
@@ -428,6 +462,19 @@ export function Workspace(): React.JSX.Element {
     };
   }, [tabsOp.settingsOpen]);
 
+  // 数据目录根路径挂载期装载（②树栏保存路径小字展示源）：挂载取一次即可——数据目录仅经
+  // 设置「更改数据位置」迁移变更且迁移成功即重启应用，挂载期快照恒有效；上方设置期装载
+  // effect 保留不动，两路共用同一 storageInfo 态
+  useEffect(() => {
+    let alive = true;
+    void window.api.getDataDirInfo().then((result) => {
+      if (alive && result.ok) setStorageInfo(result.value);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // io 进度订阅（M5 批次⑥ Task 12/13，挂载期常驻 + cleanup 成对摘除）：io:progress 广播
   // 为导入/导出可辨识联合（kind 判别字段，A.1-4），按 kind 分流入各自进度面板；完成态
   // 清理由 importNodes/exportNodes invoke 续体收口（toast + 收尾），广播不负责终态
@@ -442,11 +489,22 @@ export function Workspace(): React.JSX.Element {
   }, []);
 
   function onToggle(id: number): void {
-    const next = new Set(expanded);
+    // ⑤从实时镜像取「此刻」展开集而非渲染闭包旧值（快速连点防回滚）；镜像同步写先于
+    // setState——同一事件内第二次点击读到的已是第一次写入后的集合
+    const next = new Set(expandedRef.current);
+    let willExpand: boolean;
     if (next.has(id)) {
       next.delete(id);
+      willExpand = false;
     } else {
       next.add(id);
+      // 仅展开分支需要懒加载拉取（折叠只是隐藏渲染，子级数据保留不重拉）
+      willExpand = true;
+    }
+    expandedRef.current = next;
+    setExpanded(next);
+    if (willExpand) {
+      // IPC 副作用在状态写入后发起（镜像已同步，时序确定；渲染期不发起任何副作用）
       void window.api.listChildren({ parentId: id }).then((result) => {
         if (result.ok) {
           setRoots((prev) =>
@@ -460,7 +518,6 @@ export function Workspace(): React.JSX.Element {
         }
       });
     }
-    setExpanded(next);
   }
 
   /**
@@ -469,8 +526,10 @@ export function Workspace(): React.JSX.Element {
    * 重复拉取（onToggle 展开分支自带 listChildren 回写）。
    */
   function startCreateDir(parentId: number): void {
+    // 目标父重复进入幂等（同值覆盖，连点无副作用）；展开判定读实时镜像（渲染闭包在
+    // 连点场景下必陈旧，⑤同类问题）
     setCreatingDirParentId(parentId);
-    if (!expanded.has(parentId)) onToggle(parentId);
+    if (!expandedRef.current.has(parentId)) onToggle(parentId);
   }
 
   /**
@@ -514,10 +573,12 @@ export function Workspace(): React.JSX.Element {
 
   /**
    * 确认导入文件：io:import 单文件源（conflict 固定 rename——浮层已承载显式命名，重名
-   * 递增 `name (2).ext` 不打断）+ sourceName（导入即重命名）。结果收口三件事：
+   * 递增 `name (2).ext` 不打断）+ sourceName（导入即重命名）。结果收口四件事：
    * ① toast 计数（D17 口径）；② 树刷新双通道（confirmImport 同款：整树 stale + 目标父
    * 直调回写——合成根与已折叠已装载目录两个 stale 盲区由直调补口）；③ 导入即打开：
-   * importedNodeIds[0] 反查 meta 走 openFile 统一入口（HTML → 画布所见即所得渲染）。
+   * importedNodeIds[0] 反查 meta 走 openFile 统一入口（HTML → 画布所见即所得渲染）；
+   * ④ 进度面板收口 setImportProgress(null)（与 confirmImport 同款——成功失败都收，漏写
+   * 会让面板在 io:progress 广播后永不消失，触发退场过渡）。
    * 失败 toast 并保留浮层（源文件/目标仍有效时可改名重试）。
    * @param name 浮层名称输入（trim 非空，空名确认钮已禁用不达此处）
    */
@@ -534,6 +595,8 @@ export function Workspace(): React.JSX.Element {
       })
       .then((result) => {
         setImportHtmlInFlight(false);
+        // 进度面板收口：invoke 返回即终态（无论成败），置 null 交由退场存在性 hook 播过渡
+        setImportProgress(null);
         if (result.ok) {
           setImportHtmlDraft(null);
           const { imported, skipped, failed, importedNodeIds } = result.value;
@@ -616,7 +679,12 @@ export function Workspace(): React.JSX.Element {
         );
       }
     }
-    setExpanded((prev) => new Set([...prev, ...expandIds]));
+    // 展开并集基于实时镜像计算（异步续体里渲染闭包 expanded 必陈旧，⑤同款镜像纪律）；
+    // 并集只增不减、天然幂等，连续多次 reveal 互不覆盖
+    const merged = new Set(expandedRef.current);
+    for (const id of expandIds) merged.add(id);
+    expandedRef.current = merged;
+    setExpanded(merged);
   }
 
   /**
@@ -852,8 +920,8 @@ export function Workspace(): React.JSX.Element {
   /**
    * 树选中上下文父推导（导入目标 / 菜单新建目录 / 文件导入的共用锚，M7 自 deriveImportTargetParentId
    * 泛化改名）：取树选中上下文（reveal 覆盖选中 ?? 激活标签对应节点——与 TreePanel
-   * selectedId 同源），命中且为目录即取其 id；文件选中/无命中/无选中一律回落根。目录不开
-   * 标签（懒加载）也能经 reveal 命中，与 M4 以来的选中语义一致。
+   * selectedId 同源），命中且为目录即取其 id；文件选中/无命中/无选中一律回落根。④起目录
+   * 点选即置 reveal 选中，目录不开标签也能成为新建/导入落点（与搜索「在树中显示」同源语义）。
    */
   function deriveTreeContextParentId(): number {
     const selectedId = selectedTreeId;
@@ -1055,10 +1123,12 @@ export function Workspace(): React.JSX.Element {
     moveMode !== null ? moveMode.targetId : (importHtmlDraft?.targetParentId ?? null);
 
   /**
-   * 树点选统一入口：常规模式走 openFile（开标签）；目录点选模式下 dir 点选临时变为
-   * 「选定目标」记账（file 点选已被 TreePanel 禁用），合法性判定归各流程确认钮——
-   * move 记账 moveMode.targetId，HTML 文件导入改写 importHtmlDraft.targetParentId
-   * （M7：非模态浮层打开期间树中点选目录即改导入位置）
+   * 树点选统一入口：目录点选模式下 dir 点选临时变为「选定目标」记账（file 点选已被
+   * TreePanel 禁用），合法性判定归各流程确认钮——move 记账 moveMode.targetId，HTML 文件
+   * 导入改写 importHtmlDraft.targetParentId（M7：非模态浮层打开期间树中点选目录即改导入
+   * 位置）。常规模式下：④目录点选 = 记账树选中（reveal 覆盖机制天然支持目录高亮，且目录
+   * 点选不改 activeId——选中持续保持，新建/导入落点随点选目录）；文件节点照旧 openFile
+   * （activeId 变化自动收走 reveal 覆盖，树选中迁移到新标签节点）
    */
   function onSelectNode(node: NodeMeta): void {
     if (moveMode !== null) {
@@ -1071,6 +1141,10 @@ export function Workspace(): React.JSX.Element {
       if (node.nodeType === 'dir') {
         setImportHtmlDraft((prev) => (prev === null ? prev : { ...prev, targetParentId: node.id }));
       }
+      return;
+    }
+    if (node.nodeType === 'dir') {
+      setRevealSelectionId(node.id);
       return;
     }
     openFile(node);
@@ -1525,6 +1599,7 @@ export function Workspace(): React.JSX.Element {
                   dirPickMode={dirPickMode}
                   pickTargetId={pickTargetId}
                   creatingDirParentId={creatingDirParentId}
+                  rootPath={storageInfo === null ? null : storageInfo.root}
                   onToggle={onToggle}
                   onSelect={onSelectNode}
                   onStartCreateDir={startCreateDir}
@@ -1708,18 +1783,22 @@ export function Workspace(): React.JSX.Element {
         onPick={(node) => void openFile(node)}
       />
       {/* 导入进度面板（M5 批次⑥ Task 12）：io:progress 广播驱动，toast 形态的等价呈现
-          （批次粒度更新，不逐节点）；bottom-14 让位 toast 队列（完成 toast 同屏不重叠） */}
-      {importProgress !== null ? (
+          （批次粒度更新，不逐节点）；bottom-14 让位 toast 队列（完成 toast 同屏不重叠）。
+          退场存在性 hook 驱动：收口后保留快照播滑出过渡（PROGRESS_EXIT_CLASSES）再卸载，
+          退场期 pointer-events-none 防「取消」误点 */}
+      {importPresence !== null ? (
         <div
-          className="lt-import-progress pointer-events-auto fixed bottom-14 right-4 z-50 flex w-80 flex-col gap-1 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2 tabular-nums"
+          className={`lt-import-progress fixed bottom-14 right-4 z-50 flex w-80 flex-col gap-1 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md tabular-nums ${
+            importPresence.leaving ? PROGRESS_EXIT_CLASSES : PROGRESS_ENTER_CLASSES
+          }`}
           role="status"
           aria-live="polite"
         >
           <div className="flex items-center justify-between gap-2">
             <span className="font-medium">
-              {importProgress.phase === 'scanning'
+              {importPresence.value.phase === 'scanning'
                 ? '正在扫描导入源…'
-                : `正在导入（${importProgress.done}/${importProgress.total}）`}
+                : `正在导入（${importPresence.value.done}/${importPresence.value.total}）`}
             </span>
             <button
               type="button"
@@ -1731,25 +1810,27 @@ export function Workspace(): React.JSX.Element {
             </button>
           </div>
           <span className="lt-import-progress-path truncate text-muted-foreground">
-            {importProgress.currentPath}
+            {importPresence.value.currentPath}
           </span>
         </div>
       ) : null}
       {/* 导出进度面板（M5 批次⑥ Task 13）：与导入面板同形态呈现（写盘无事务，批次粒度）；
-          无取消语义（FR-IO-02 未要求），invoke 结果到达即收口 */}
-      {exportProgress !== null ? (
+          无取消语义（FR-IO-02 未要求），invoke 结果到达即收口，退场过渡与导入面板一致 */}
+      {exportPresence !== null ? (
         <div
-          className="lt-export-progress pointer-events-auto fixed bottom-14 right-4 z-50 flex w-80 flex-col gap-1 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md duration-240 animate-in fade-in slide-in-from-bottom-2 tabular-nums"
+          className={`lt-export-progress fixed bottom-14 right-4 z-50 flex w-80 flex-col gap-1 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md tabular-nums ${
+            exportPresence.leaving ? PROGRESS_EXIT_CLASSES : PROGRESS_ENTER_CLASSES
+          }`}
           role="status"
           aria-live="polite"
         >
           <span className="font-medium">
-            {exportProgress.phase === 'collecting'
+            {exportPresence.value.phase === 'collecting'
               ? '正在准备导出…'
-              : `正在导出（${exportProgress.done}/${exportProgress.total}）`}
+              : `正在导出（${exportPresence.value.done}/${exportPresence.value.total}）`}
           </span>
           <span className="lt-export-progress-path truncate text-muted-foreground">
-            {exportProgress.currentPath}
+            {exportPresence.value.currentPath}
           </span>
         </div>
       ) : null}
@@ -1890,6 +1971,17 @@ const LARGE_FILE_HARD_LIMIT_BYTES = 50 * 1024 * 1024;
 /** 侧栏头图标钮标准类串（折叠/返回钮共用，M6 spec §2.3） */
 const SIDEBAR_ICON_BUTTON_CLASS =
   'inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground';
+
+/** 进度面板入场动效类串（导入/导出共用）：保持既有滑入形态，duration-240 与退场对称 */
+const PROGRESS_ENTER_CLASSES =
+  'pointer-events-auto duration-240 animate-in fade-in slide-in-from-bottom-2';
+/**
+ * 进度面板退场动效类串（导入/导出共用）：滑出过渡 + pointer-events-none 防退场播放期
+ * （240ms）误点「取消」；duration-240 与 ioProgressPresence 的 PROGRESS_EXIT_MS 计时
+ * 同源——Tailwind JIT 需字面类名，调整时长必须两处同步修改
+ */
+const PROGRESS_EXIT_CLASSES =
+  'pointer-events-none duration-240 animate-out fade-out slide-out-to-bottom-2';
 
 /**
  * 文本可编辑 MIME 判定（M3 textarea 版 EditorPanel 同名函数语义迁入——openFile 前置拦截

@@ -4,6 +4,15 @@
 
 ## 2026-09-23
 
+- **用户实测五项反馈修复批次（fix + review loop，subagent 实现/审查分项闭环）**：
+  - **反馈① 导入进度提示不消失**：根因 `confirmImportHtml` 收口缺 `setImportProgress(null)`（成功/失败双分支补齐，对照 `confirmImport` 同款）；导入/导出两进度面板新增 `useExitPresence` 退场存在性 hook——收口后播 240ms `animate-out fade-out slide-out-to-bottom-2` 再卸载（`PROGRESS_EXIT_MS` 与 `duration-240` 双源互指注释），退场期间新进度广播到达即复位入场态（快速连开竞态防护），退场期 `pointer-events-none` 防误点。
+  - **反馈② 隐藏树「根」目录**：合成根行不再渲染（呈现层收窄，`roots` 单节点且 id=根约定才直出子级——树数据模型/懒加载零改动）；工具栏下方 `lt-tree-root-path` 小字展示数据目录路径（挂载期 `storage:get-info` 一次快照）；E2E 装配信号三 spec 由「根按钮出现」换锚 `nav[data-ready]`（首拉已应用语义等价，空库亦置位）。
+  - **反馈③ 原地命名聚焦语义**：核查无偏差（仅新建目录自动聚焦命名行，改名走「重命名」模态入口），零改动。
+  - **反馈④ 目录点选=选中+展开折叠（VS Code 同构）**：常规模式 dir 点选同批上抛 `onSelect`+`onToggle`（dirPickMode 分支仍仅记账目标）；Workspace 以 reveal 覆盖选中记账目录选中（activeId 不变、选中持续）——新建目录/导入落点随点选目录（两条推导链同源 `selectedTreeId`）。
+  - **反馈⑤ 折叠/新建点击偶发无反应**：`onToggle`/`startCreateDir`/`revealInTree` 三写路径统一 expandedRef 实时镜像（快速连点闭包旧集合翻转互覆盖根因）；**随批修复存量缺陷**：子级渲染条件原为 `isDir && node.loaded`（M3 起「装载即恒可见、折叠从未真正收起」，chevron 落地后显形为收起无反应）改展开判定 `isExpandedNode`——折叠仅隐藏渲染，数据保留、再展开即时呈现，过期由 stale 重取与展开恒重取兜底。
+  - **随批修复（E2E 实证两处）**：①树同步缺陷——renamed/moved 广播只标节点自身 stale，旧父层残留已移走/已改名副本（主链路 strict 违例实证）：新增 `markStaleAround`（节点+树内直父同批 stale）+ 广播订阅 getNode 续体按新鲜 `meta.parentId` 标新父 stale + expanded 种子含根（顶层重取门覆盖）；②guard 用例首轮 30s 超时——折叠与宽度记忆用例遗留侧栏折叠态下树 nav 未渲染即树点选（对照实验单跑即过实证），guard 树点选前条件展开侧栏。
+  - **测试同步**：treeModel 补 markStaleAround 连带 stale 用例；TreePanel 补折叠藏子级/双回调/pickMode 回归/data-ready/rootPath 用例；Workspace 级补挂载期取数与进度面板三态用例；settings-page 取数计数断言随新语义更新；TASK.md 登记「多层后代 meta 不随单条广播刷新」存量观察（P3）。
+
 - **M7「树体验与单文件导入」批次（用户亲测反馈驱动，六项需求一次交付）**：
   - **需求基线同步（docs/03）**：FR-SHELL-02 菜单构成具体化（「新建文件」位升级为「导入 HTML 文件…」，Ctrl+N 随迁）；FR-IO-01 补文件形态落地注（单文件导入入口/导入即重命名/目标目录树中点选可选/导入成功自动打开）；§7.1 通道表补 `io:pick-file`。
   - **树交互（VS Code 式）**：目录行 chevron 展开指示（旋转 90° transform 过渡，禁高度动画）+ 展开态 `FolderOpen` 图标（展开集经 props 下传，M6 纯呈现批次接口红线随功能批次解除）；新建目录改行内原地命名（`lt-create-row` 命名行，Enter 确认/Esc 取消/失焦不取消——裁决留证见设计系统 §十）；目录点选模式泛化为 move/导入两流程共用（`dirPickMode`/`data-pick-target`）。

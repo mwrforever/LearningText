@@ -102,6 +102,19 @@ function stubSearchApi(overrides: Partial<Record<string, unknown>> = {}): {
     onIoProgress: vi.fn(() => vi.fn()),
     // M6 壳层装配路径补员：状态栏文档计数与 TitleBar 平台标识
     countNodes: vi.fn(() => Promise.resolve({ ok: true, value: 0 })),
+    // 数据目录信息（②批次起 Workspace 挂载期拉取，供树栏保存路径小字）
+    getDataDirInfo: vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        value: {
+          root: 'D:/lt-user-data/LearningText',
+          dbFile: 'D:/lt-user-data/LearningText/learningtext.db',
+          backupsDir: 'D:/lt-user-data/LearningText/backups',
+          settingsFile: 'D:/lt-user-data/LearningText/settings/settings.json',
+          custom: false,
+        },
+      }),
+    ),
     platform: 'win32',
     ...overrides,
   };
