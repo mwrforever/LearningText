@@ -2,6 +2,17 @@
 
 > 规则：宪法体系（AGENTS.md / CLAUDE.md）及其配套文件修订**先在本文件登记，再改正文**；追加式，不删改历史条目。
 
+## 2026-09-23
+
+- **M7「树体验与单文件导入」批次（用户亲测反馈驱动，六项需求一次交付）**：
+  - **需求基线同步（docs/03）**：FR-SHELL-02 菜单构成具体化（「新建文件」位升级为「导入 HTML 文件…」，Ctrl+N 随迁）；FR-IO-01 补文件形态落地注（单文件导入入口/导入即重命名/目标目录树中点选可选/导入成功自动打开）；§7.1 通道表补 `io:pick-file`。
+  - **树交互（VS Code 式）**：目录行 chevron 展开指示（旋转 90° transform 过渡，禁高度动画）+ 展开态 `FolderOpen` 图标（展开集经 props 下传，M6 纯呈现批次接口红线随功能批次解除）；新建目录改行内原地命名（`lt-create-row` 命名行，Enter 确认/Esc 取消/失焦不取消——裁决留证见设计系统 §十）；目录点选模式泛化为 move/导入两流程共用（`dirPickMode`/`data-pick-target`）。
+  - **单文件导入链路（FR-IO-01 文件形态补全）**：新增 `io:pick-file` 通道（主进程固定 html/htm 过滤器，产出入当次会话登记簿——登记簿随语义更名 `dialogProducedPaths`）；`ImportFs` 增 `isDirectory`，`importService` 扫描阶段判别源形态（目录递归/文件单节点，可混选），`ImportRequest` 增可选 `sourceName`（导入即重命名），`ImportResult` 增 `importedNodeIds`（导入后即打开的寻址依据——rename 策略可能递增改名，跳过名称反查）；UI 侧「导入 HTML 文件」流程：树工具栏/菜单/Ctrl+N/欢迎页四入口 → 文件选择 → 非模态确认浮层（名称可改 + 树中点选目录改目标）→ 导入 → 自动打开画布渲染。
+  - **图标区分**：树类型图标低饱和固定色板着色（dir 琥珀/html 橙/image 翠绿/audio 紫/其余文本天蓝，双主题各一档），尺寸 3.5→4。
+  - **动效**（全走 transform/opacity 合成器路径，100/240ms token，reduced-motion 全局兜底）：chevron 旋转、子树展开 fade 100ms、命名行入场、导入浮层 fade+zoom 240ms。
+  - **产品缺陷修复（用户实测：亮色主题 + start.bat，右上角系统按钮区整条发黑）**：`BrowserWindow` 补 `backgroundColor`（与 `titleBarOverlayFor` color 同源，按启动解析主题）——缺省底色在首帧与最大化态从 WCO 系统保留带露出黑色；主题切换 overlay 联动不变。
+  - **测试同步**：E2E 锚点改造（主链路「新建文件」改桥建+树点选开签；guard 用例同；`menu-new-file`→`menu-import-html` 触发面归单测锁定）；新增 M7 渲染验证用例（用户实测示例文档 `tests/fixtures/code.html`，76KB 中文长文，桥注入后画布渲染断言 + 截图留证）；集成测试补文件源/`sourceName`/混选用例；单元测试补行内命名/chevron/导入浮层/io:pick-file 通道用例；`import-service` 单测桩补 `isDirectory`（贴近真实 statSync 语义：路径不存在即抛）。
+
 ## 2026-09-22
 
 - **M6「产品化重构」里程碑出口达标（同日定稿、实施、验收）**：五提交落地（4da1246 基线 / dca5bf6 壳层 / 26aaed0 批次②③ / 1b5c9ed E2E 收敛与缺陷修复 / 09584b6 琢段打磨）。出口证据（Windows 本机实测，台账 `docs/progress/2026-09-22-M6产品化重构-进度台账.md`）：`npm test` 全绿（unit 505 / integration 133 / E2E 26）、coverage 过阈值（三域 100%）、typecheck/lint 零告警、`package:dir` 冒烟通过、NSIS 安装位置可选配置落地、`start.bat`/`start.sh` 实跑/语法验证通过。过程要点：
