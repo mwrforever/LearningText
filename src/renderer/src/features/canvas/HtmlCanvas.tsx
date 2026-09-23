@@ -3,6 +3,8 @@
  * 一个保活沙箱 iframe（opaque origin + allow-scripts 红线不变）——激活可见、后台隐藏
  * （切标签保留浏览器原生撤销）；iframe onLoad 后经注入桥 lt:edit-enable 进入编辑态，
  * 编辑输入由桥内 200ms 去抖序列化经 lt:doc-edit 上报（onDocEdit 出口 → 保存管线）。
+ * 文档面基底为浏览器白（`bg-white`，见 iframe 处注与设计系统 §十二）：子文档背景透明时
+ * 应用底色会透出文档，曾表现为用户实测的「灰色遮罩层」。
  * 刷新抑制（spec D7）为结构性保证：画布自身不存在「写后重载」机制，written 广播不触发
  * 任何重载；外部变更（导入/还原）经右下角「从库重新加载」钮显式拉取（脏态禁用——
  * 本地修改与库内容冲突时禁止静默覆盖，取舍见进度台账）。CSS 热替换通道保留：written
@@ -113,14 +115,21 @@ export function HtmlCanvas({
   return (
     <div className="lt-html-canvas relative flex min-h-0 flex-1 flex-col">
       {/* 每 HTML 标签一个保活 iframe：激活可见、后台 display:none（撤销历史随文档保留）；
-          key=nodeId（会话身份），src 随 rename/move 更新触发导航（meta 由广播链新鲜化） */}
+          key=nodeId（会话身份），src 随 rename/move 更新触发导航（meta 由广播链新鲜化）
+          文档面基底 `bg-white`（保真修复，依据见设计系统 §十二）：浏览器对顶层文档恒以
+          白色为画布基底，而 Chromium 中子文档根元素背景为 transparent 时其画布对嵌入者
+          透明——文档自身未设 background（纯结构 HTML、外链 CSS 被 CSP 拦掉等）时应用底色
+          即透过文档显示（实测文档区主色逐一等于应用底色：亮 #f8fafc / 暗 #0f172a，即用户
+          所述「灰色遮罩层」）。基底落 iframe 元素而非文档内：不触碰用户文档（保存序列化
+          零污染），白即浏览器默认画布，「不注入 UA 样式」保真红线不破（暗色主题下文档面
+          亦为白，与浏览器一致） */}
       {tabs.map((tab) => (
         <iframe
           key={tab.meta.id}
           ref={(el) => {
             framesRef.current.set(tab.meta.id, el);
           }}
-          className={`lt-canvas-frame min-h-0 w-full flex-1${tab.meta.id === activeId ? '' : ' hidden'}`}
+          className={`lt-canvas-frame min-h-0 w-full flex-1 bg-white${tab.meta.id === activeId ? '' : ' hidden'}`}
           title={`编辑 ${tab.meta.name}`}
           sandbox="allow-scripts"
           referrerPolicy="no-referrer"

@@ -275,3 +275,25 @@ test('M7 文件导入渲染：导入落库的示例 HTML 文档（code.html）�
     .locator('iframe[title="编辑 code.html"]')
     .screenshot({ path: 'test-results/m7-code-html-render.png' });
 });
+
+test('画布文档面基底为浏览器白：文档未自设背景时文档区不透出应用底色（灰色遮罩缺陷回归守卫）', async () => {
+  // 用户实测缺陷面：文档自身不设 background（纯结构 HTML、外链 CSS 被 CSP 拦掉等）时，
+  // 子文档的透明画布令应用底色透出文档区——亮色主题 #f8fafc、暗色主题 #0f172a，观感即
+  // 「HTML 渲染出现莫名其妙的灰色遮罩层」（真机像素实证：文档区主色逐一等于应用底色，
+  // 容器改色即随之变色）。浏览器对顶层文档恒以白色为画布基底，故白底由 iframe 元素
+  // 自身承载（不触碰用户文档，保存序列化零污染），合成后文档面恒为白
+  const created = await page.evaluate(() =>
+    window.api.createNode({
+      parentId: 1,
+      name: '无底文档.html',
+      nodeType: 'file',
+      content: new TextEncoder().encode('<html><body><h1>透明底文档</h1></body></html>'),
+    }),
+  );
+  if (!created.ok) throw new Error('建无底文档失败');
+  await page.getByRole('button', { name: '无底文档.html' }).click();
+  const visible = page.locator('iframe.lt-canvas-frame:not(.hidden)');
+  await expect(visible).toHaveAttribute('title', '编辑 无底文档.html');
+  const background = await visible.evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(background).toBe('rgb(255, 255, 255)');
+});

@@ -133,6 +133,17 @@ describe('HtmlCanvas（HTML 所见即所得画布）', () => {
     view.unmount();
   });
 
+  it('画布 iframe 携带浏览器白底：文档未自设背景时不透出应用底色（灰色遮罩缺陷回归守卫）', () => {
+    const view = renderCanvas({ tabs: [tab(3, 'a.html')], activeId: 3, activeDirty: false }, []);
+    // 浏览器对顶层文档恒以白色为画布基底；子文档根背景 transparent 时 Chromium 画布对
+    // 嵌入者透明，文档无自设 background 时应用底色（亮 #f8fafc / 暗 #0f172a）会透出文档，
+    // 用户实测表述为「HTML 渲染出现莫名其妙的灰色遮罩层」——基底由 iframe 元素承载，
+    // 用户文档与保存序列化零改动（jsdom 不加载 Tailwind 产物，此处断言契约类名；
+    // 真机合成结果由 preview.spec「文档面基底」用例以 computed style 断言）
+    expect(view.frames()[0]?.className).toContain('bg-white');
+    view.unmount();
+  });
+
   it('激活 iframe 来源的 lt:doc-edit 消息 → onDocEdit 携正确 nodeId 与 html（反查路由）', () => {
     const onDocEdit = vi.fn();
     const view = renderCanvas(
