@@ -41,6 +41,7 @@ import type { NodeMeta } from '../../../../shared/vfs-contract';
 import { toLocalIsoTime } from '../../../../shared/time';
 import type { ShellCommand } from '../../../../shared/shell-contract';
 import type { DataDirInfo } from '../../../../shared/storage-contract';
+import type { UpdateState } from '../../../../shared/update-contract';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -151,6 +152,8 @@ export function Workspace(): React.JSX.Element {
   // 行内新建目录请求在途（确认防重复提交；ref 而非 state——见 confirmCreateDir 注：同任务
   // 连发提交时 state 闭包会读到旧值而穿透守卫）
   const createDirInFlightRef = useRef(false);
+  // 粘贴导入请求在途（Ctrl+V 连发防重复导入；ref 理由同上）
+  const pasteInFlightRef = useRef(false);
   // HTML 文件导入草稿（M7，FR-IO-01 文件形态）：io:pick-file 产出源路径 + 目标父目录
   // （确认浮层非模态，打开期间树中点选目录即改目标——dirPickMode 与 move 共用语义），
   // null=浮层关闭
@@ -221,6 +224,9 @@ export function Workspace(): React.JSX.Element {
   // 数据目录域（M6 批次③）：布局展示值（设置标签打开期间装载）与迁移确认弹层目标
   const [storageInfo, setStorageInfo] = useState<DataDirInfo | null>(null);
   const [storageChangeTarget, setStorageChangeTarget] = useState<string | null>(null);
+  // 更新域（M9 FR-UPDATE-01）：状态唯一事实源在主进程服务，本态为呈现镜像——挂载期
+  // getUpdateState 首拉 + update:state 广播增量，渲染层零状态机判定
+  const [updateState, setUpdateState] = useState<UpdateState | null>(null);
   // HTML 画布编辑缓存（M6 spec §3.3）：nodeId → 最新 lt:doc-edit 序列化 HTML——画布标签
   // 保存管线的事实源（SaveController.getDoc 消费）；无条目 = 加载后未编辑（flush no-op）
   const canvasDocsRef = useRef(new Map<number, string>());
@@ -510,6 +516,23 @@ export function Workspace(): React.JSX.Element {
         setExportProgress(progress);
       }
     });
+  }, []);
+
+  // 更新状态订阅（M9 FR-UPDATE-01，挂载期常驻 + cleanup 成对摘除）：getUpdateState 首拉
+  // （null 态 = 主进程服务尚未回话）+ update:state 广播增量；状态机在主进程服务侧，
+  // 渲染层只做标题栏标签与设置页「关于」呈现
+  useEffect(() => {
+    let alive = true;
+    void window.api.getUpdateState().then((result) => {
+      if (alive && result.ok) setUpdateState(result.value);
+    });
+    const unsubscribe = window.api.onUpdateState((state) => {
+      setUpdateState(state);
+    });
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
   }, []);
 
   function onToggle(id: number): void {
@@ -1052,6 +1075,59 @@ export function Workspace(): React.JSX.Element {
     void window.api.cancelImport({ importId: progress.importId });
   }
 
+  /**
+   * 粘贴导入（M9 批次 FR-IO-03）：主进程读系统剪贴板文件清单并直接导入当前树选中上下文
+   * 目录（清单不出主进程，渲染层只发目标与策略；冲突固定 rename——粘贴不打断，递增
+   * `name (2).ext`）。四态收口：IPC 失败 toast 原因；剪贴板无文件 toast 克制提示（非错误
+   * ——用户按 Ctrl+V 而剪贴板里没有文件是正常操作）；成功走与 confirmImport 同款收尾
+   * （计数 toast / 整树 stale / 目标父直调回写 / 进度面板收口），唯一导入的**文件**再走
+   * 「导入即打开」（confirmImportHtml 同款 getNode 反查链；目录与多文件不自动打开）。
+   * 在途守卫用 ref（createDirInFlightRef 同款理由：同任务内连发 Ctrl+V 时 state 闭包读旧值
+   * 会穿透守卫重复发起导入）。
+   */
+  function pasteImport(): void {
+    if (pasteInFlightRef.current) return;
+    pasteInFlightRef.current = true;
+    const targetParentId = deriveTreeContextParentId();
+    void window.api.importFromClipboard({ targetParentId, conflict: 'rename' }).then((result) => {
+      pasteInFlightRef.current = false;
+      if (!result.ok) {
+        showToast(`粘贴导入失败：${result.error.message}`);
+        return;
+      }
+      if (result.value.kind === 'empty') {
+        showToast('剪贴板中没有可导入的文件');
+        return;
+      }
+      setImportProgress(null);
+      const { imported, skipped, failed, importedNodeIds } = result.value.result;
+      showToast(`粘贴导入完成：新增 ${imported}、跳过 ${skipped}、失败 ${failed}`);
+      setRoots((prev) => markAllStale(prev));
+      // 盲区补口：目标父目录子级直调回写（confirmImport 同款 withChildren 形态）
+      void window.api.listChildren({ parentId: targetParentId }).then((children) => {
+        if (children.ok) {
+          setRoots((prev) =>
+            replaceNode(prev, targetParentId, (node) =>
+              withChildren(
+                node,
+                children.value.map((meta) => makeTreeRoot(meta)),
+              ),
+            ),
+          );
+        }
+      });
+      // 唯一导入的文件「导入即打开」：跳过名称反查（rename 策略可能递增改名），id 直寻
+      if (imported === 1 && importedNodeIds.length === 1) {
+        const newNodeId = importedNodeIds[0];
+        if (newNodeId !== undefined) {
+          void window.api.getNode({ nodeId: newNodeId }).then((meta) => {
+            if (meta.ok && meta.value.nodeType === 'file') void openFile(meta.value);
+          });
+        }
+      }
+    });
+  }
+
   // —— 导出链路（M5 批次⑥ Task 13，FR-IO-02）：选中子树 → 目录选择 → io:export → 完成动作 ——
 
   /**
@@ -1202,6 +1278,32 @@ export function Workspace(): React.JSX.Element {
   }
 
   /**
+   * 清除树选中（M9 FR-TREE-02「点空白失焦」）：仅清 reveal 覆盖选中——激活文档标签的行
+   * 高亮是「当前打开的文档」语义（另源 selectedTreeId 镜像），不受失焦影响；清空后
+   * deriveTreeContextParentId 自然回落根，新建/导入/粘贴落点即回落根
+   */
+  function clearTreeSelection(): void {
+    setRevealSelectionId(null);
+  }
+
+  /**
+   * 选中根目录（M9 FR-TREE-02「点路径条=聚焦根目录」）：路径条即根的代理行。点选模式语义
+   * 与目录行点选同构——move 模式下=目标定为根（移回根目录），HTML 导入浮层打开期间=改写
+   * 导入目标为根；常规模式=记账树选中根（reveal 覆盖，路径条 aria-current 高亮）
+   */
+  function selectTreeRoot(): void {
+    if (moveMode !== null) {
+      setMoveMode((prev) => (prev === null ? prev : { ...prev, targetId: ROOT_ID }));
+      return;
+    }
+    if (importHtmlDraft !== null) {
+      setImportHtmlDraft((prev) => (prev === null ? prev : { ...prev, targetParentId: ROOT_ID }));
+      return;
+    }
+    setRevealSelectionId(ROOT_ID);
+  }
+
+  /**
    * 进入 move 选择模式（树工具栏钮 / 行内「⋯」菜单共用）：源 = 入参 id 直传
    * （Task 10 起脱离 selectedId 锚），目标待点选
    */
@@ -1219,6 +1321,20 @@ export function Workspace(): React.JSX.Element {
         // 成功退出选择模式；树路径展示与标签 meta 由 moved 广播链刷新（spec §6.1）
         setMoveMode(null);
       } else {
+        showToast(`移动失败：${result.error.message}`);
+      }
+    });
+  }
+
+  /**
+   * 拖拽落定（M9 FR-TREE-01；TreePanel 已完成「目录且非自身/后代/原父级」的预判）：
+   * 发起 moveNode——成功由 moved 广播链刷新树与标签 meta（confirmMove 同源语义，无成功
+   * toast：树侧位置变化自证）；失败 toast 呈现原因（预判与服务层校验之间的竞态窗口：
+   * 重名/源或目标已被他处删除）
+   */
+  function dropMove(sourceId: number, targetDirId: number): void {
+    void window.api.moveNode({ nodeId: sourceId, targetDirId }).then((result) => {
+      if (!result.ok) {
         showToast(`移动失败：${result.error.message}`);
       }
     });
@@ -1260,6 +1376,56 @@ export function Workspace(): React.JSX.Element {
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [moveMode, importHtmlDraft]);
+
+  /**
+   * 粘贴导入快捷键（M9 FR-IO-03，Ctrl/Cmd+V 仅资源树视图生效）：原生菜单**不注册**
+   * accelerator（全局生效会劫持编辑器/画布内的原生粘贴语义），键位在此收敛。作用域守卫
+   * 四道——①非树视图/设置页激活不挂监听（effect 门）；②焦点位于可编辑面（输入框 /
+   * textarea / contenteditable，含 CM 编辑区）交还原生粘贴；③任意浮层/模态/选择模式打开
+   * 期间不触发（防误导入）；④在途守卫在 pasteImport 内。修饰键组合（Ctrl+Shift+V 等）
+   * 不拦截，留系统/应用其他语义
+   */
+  useEffect(() => {
+    if (view !== 'tree' || tabsOp.settingsOpen) return undefined;
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (!((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === 'v')) return;
+      const target = e.target;
+      if (
+        target instanceof Element &&
+        target.closest('input, textarea, [contenteditable="true"], [contenteditable=""]')
+      ) {
+        return;
+      }
+      if (
+        moveMode !== null ||
+        importHtmlDraft !== null ||
+        importDraft !== null ||
+        renameTarget !== null ||
+        confirmRequest !== null ||
+        storageChangeTarget !== null ||
+        quickOpen
+      ) {
+        return;
+      }
+      e.preventDefault();
+      pasteImport();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+    // 依赖为全部守卫读取的态（闭包持稳语义，快捷键监听随守卫态变化重挂——低频路径）
+  }, [
+    view,
+    tabsOp.settingsOpen,
+    moveMode,
+    importHtmlDraft,
+    importDraft,
+    renameTarget,
+    confirmRequest,
+    storageChangeTarget,
+    quickOpen,
+  ]);
 
   /**
    * 视图切离统一入口（Task 4 deferred Esc 双监听耦合的顺手闭环，M5 批次④ Task 10）：
@@ -1486,6 +1652,51 @@ export function Workspace(): React.JSX.Element {
     window.addEventListener('pointercancel', onUp);
   }
 
+  // —— 更新域（M9 FR-UPDATE-01，蓝图 §五.1）：检查 / 下载 / 重启安装 ——
+
+  /** 立即检查更新（设置页「检查更新」钮；终态经 update:state 广播到达，invoke 失败 toast） */
+  function checkUpdateNow(): void {
+    void window.api.checkForUpdates().then((result) => {
+      if (!result.ok) {
+        showToast(`检查更新失败：${result.error.message}`);
+      }
+    });
+  }
+
+  /** 下载已发现的新版本（标题栏标签与设置页共用；进度经 update:state 广播驱动呈现） */
+  function downloadUpdateNow(): void {
+    void window.api.downloadUpdate();
+  }
+
+  /**
+   * 重启并安装（蓝图 §五.1 收口）：先冲刷全部脏标签（关窗 flush 语义复用）→ 有脏时经
+   * 既有「退出应用」确认链（复用 ConfirmDialog，不新增弹窗语言）→ 确认后有界等待落库
+   * 清脏（onDirtyChange → tabs 镜像轮询，3s 上限；超时按已尽力保存重启）→ quitAndInstall。
+   * install 调用后进程随即退出，续体不落地（backup:restore 同款语义）
+   */
+  async function installUpdateNow(): Promise<void> {
+    const dirtyIds = tabsRef.current.tabs.filter((t) => t.dirty).map((t) => t.meta.id);
+    for (const id of dirtyIds) saveController.flush(id);
+    if (dirtyIds.length > 0) {
+      const confirmed = await askConfirm({
+        title: '重启以完成更新',
+        description: '有未保存的更改，将先保存并重启应用。',
+        confirmLabel: '重启并安装',
+        destructive: false,
+      });
+      if (!confirmed) return;
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const stillDirty = tabsRef.current.tabs.some(
+          (t) => dirtyIds.includes(t.meta.id) && t.dirty,
+        );
+        if (!stillDirty) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    void window.api.installUpdate();
+  }
+
   // 激活标签同步给控制器（flushActive 语义基准；tabModel 补位/聚焦后随 activeId 联动）。
   // 激活态为设置哨兵（'settings'）时同步 null——设置页无保存管线语义，flushActive no-op
   useEffect(() => {
@@ -1540,6 +1751,11 @@ export function Workspace(): React.JSX.Element {
       case 'export':
         // 菜单「导出…」（M5 批次⑥ Task 13）：选中子树 → 目录选择 → io:export 链入口
         beginExport();
+        break;
+      case 'paste-import':
+        // 菜单「粘贴导入」（M9 FR-IO-03）：主进程读剪贴板直接导入当前落点；Ctrl/Cmd+V 由
+        // 渲染层作用域监听承载（原生 accelerator 会劫持编辑器粘贴，菜单项不注册键位）
+        pasteImport();
         break;
       case 'confirm-close':
         // 关窗确认链（spec §2.3 修订版）：无脏直接放行 forceClose；有脏弹**应用内确认弹窗**
@@ -1638,7 +1854,15 @@ export function Workspace(): React.JSX.Element {
   return (
     // 工作台容器：标题栏 + 主体行（活动栏|侧栏|分隔条|画布区）+ 状态栏（M6 spec §2 结构）
     <div className="lt-workspace flex min-h-0 flex-1 flex-col">
-      <TitleBar platform={window.api.platform} onCommand={handleShellCommand} />
+      <TitleBar
+        platform={window.api.platform}
+        update={updateState}
+        onCommand={handleShellCommand}
+        onUpdateDownload={downloadUpdateNow}
+        onUpdateInstall={() => {
+          void installUpdateNow();
+        }}
+      />
       <div
         className="group/drag flex min-h-0 flex-1 overflow-hidden"
         data-dragging={sidebarDragging ? 'true' : undefined}
@@ -1758,8 +1982,12 @@ export function Workspace(): React.JSX.Element {
                       pickTargetId={pickTargetId}
                       creatingDirParentId={creatingDirParentId}
                       rootPath={storageInfo === null ? null : storageInfo.root}
+                      rootSelected={selectedTreeId === ROOT_ID}
                       onToggle={onToggle}
                       onSelect={onSelectNode}
+                      onClearSelection={clearTreeSelection}
+                      onSelectRoot={selectTreeRoot}
+                      onDropMove={dropMove}
                       onStartCreateDir={startCreateDir}
                       onConfirmCreateDir={confirmCreateDir}
                       onCancelCreateDir={cancelCreateDir}
@@ -1880,15 +2108,25 @@ export function Workspace(): React.JSX.Element {
               storageInfo={storageInfo}
               onOpenStorageDir={openStorageDir}
               onChangeStorageDir={beginChangeStorageDir}
+              update={updateState}
+              onCheckUpdate={checkUpdateNow}
+              onDownloadUpdate={downloadUpdateNow}
+              onInstallUpdate={() => {
+                void installUpdateNow();
+              }}
             />
           ) : activeTabKind === 'html' ? (
-            // 所见即所得画布（spec §3.3）：全部 HTML 标签保活渲染，激活可见后台隐藏；
-            // 编辑经 lt:doc-edit → handleDocEdit 进保存管线；无预览面板（编辑面=渲染面）
+            // 所见即所得画布（spec §3.3 → M9 交互优先）：全部 HTML 标签保活渲染，激活可见
+            // 后台隐藏；编辑经 lt:doc-edit → handleDocEdit 进保存管线；交互态站内链接经
+            // 导航闸门转交 openFile 开新标签（与树点选同入口，防标签↔文档绑定错配）
             <HtmlCanvas
               tabs={htmlTabs}
               activeId={typeof tabsOp.activeId === 'number' ? tabsOp.activeId : null}
               activeDirty={activeTab?.dirty ?? false}
               onDocEdit={handleDocEdit}
+              onOpenVfsNode={(node) => {
+                void openFile(node);
+              }}
             />
           ) : activeTabKind === 'media' && activeTab !== null ? (
             <MediaCanvas node={activeTab.meta} />

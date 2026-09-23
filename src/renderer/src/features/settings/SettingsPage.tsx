@@ -15,6 +15,7 @@ import {
   FolderOpen,
   HardDrive,
   History,
+  Info,
   Palette,
   SlidersHorizontal,
 } from 'lucide-react';
@@ -37,6 +38,7 @@ import {
 } from '@components/ui/alert-dialog';
 import type { BackupEntry } from '../../../../shared/backup-contract';
 import type { DataDirInfo } from '../../../../shared/storage-contract';
+import type { UpdateState } from '../../../../shared/update-contract';
 import { TOOL_BUTTON } from '../ui/classStrings';
 import { clampAutoSave, clampDebounce, clampFontSize } from './settingsFormModel';
 import type { ThemeIntent } from './themeResolver';
@@ -78,10 +80,18 @@ export interface SettingsPageProps {
   readonly onOpenStorageDir: () => void;
   /** 发起更改数据位置（Workspace 收口：目录选择 → 强确认 → 迁移 → 重启） */
   readonly onChangeStorageDir: () => void;
+  /** 更新状态（M9 FR-UPDATE-01，蓝图 §五.3；null = 尚未装载，null 态显示读取中） */
+  readonly update: UpdateState | null;
+  /** 立即检查更新（静默周期检查在主进程服务侧自带，此为手动入口） */
+  readonly onCheckUpdate: () => void;
+  /** 下载已发现的新版本（与标题栏标签同一动作） */
+  readonly onDownloadUpdate: () => void;
+  /** 重启并安装已下载的新版本（冲刷/确认链归 Workspace） */
+  readonly onInstallUpdate: () => void;
 }
 
-/** 表单分区：外观/编辑与预览/备份/数据与存储/工作区 */
-type SettingsSection = 'appearance' | 'editor' | 'backup' | 'storage' | 'workspace';
+/** 表单分区：外观/编辑与预览/备份/数据与存储/工作区/关于 */
+type SettingsSection = 'appearance' | 'editor' | 'backup' | 'storage' | 'workspace' | 'about';
 
 /** 导航分区元数据（图标 + 中文名） */
 const SECTIONS: readonly { key: SettingsSection; label: string; icon: typeof Palette }[] = [
@@ -90,6 +100,7 @@ const SECTIONS: readonly { key: SettingsSection; label: string; icon: typeof Pal
   { key: 'backup', label: '备份', icon: DatabaseBackup },
   { key: 'storage', label: '数据与存储', icon: HardDrive },
   { key: 'workspace', label: '工作区', icon: History },
+  { key: 'about', label: '关于', icon: Info },
 ];
 
 /** 导航项标准类串（树行同款形态：整行可点 + aria-current 高亮，图标 + 文字） */
@@ -105,6 +116,60 @@ const RANGE_VALUE_CLASS = 'text-xs text-muted-foreground tabular-nums';
 /** 备份文件大小展示格式：<1KB 按字节，其余按 KB（一位小数） */
 function formatBackupSize(sizeBytes: number): string {
   return sizeBytes >= 1024 ? `${(sizeBytes / 1024).toFixed(1)}KB` : `${String(sizeBytes)}B`;
+}
+
+/**
+ * 更新状态行文案（蓝图 §五.1 文案表）：失败与不支持一律 muted 说明而非破坏色——更新检查
+ * 失败不影响使用（NFR-12）且主进程会周期重试，破坏色会把「自愈的暂时态」渲染成「用户犯了错」
+ */
+function updateStatusText(update: UpdateState): string {
+  switch (update.kind) {
+    case 'idle':
+      return '尚未检查更新';
+    case 'checking':
+      return '正在检查更新…';
+    case 'up-to-date':
+      return '已是最新版本';
+    case 'available':
+      return `发现新版本 v${update.version}`;
+    case 'downloading':
+      return `正在下载 ${update.percent}%`;
+    case 'downloaded':
+      return '新版本已就绪，重启后生效';
+    case 'error':
+      return update.message === ''
+        ? '检查更新失败，可稍后重试'
+        : `检查更新失败，可稍后重试 · ${update.message}`;
+    case 'unsupported':
+      return update.reason === 'dev'
+        ? '开发形态不支持应用内更新'
+        : '当前平台形态不支持应用内更新（未签名 macOS / 非 AppImage 的 Linux）';
+  }
+}
+
+/** 更新动作钮文案与可用态（蓝图 §五.1 动作列）：checking/downloading 进行中禁用（不可重复触发） */
+function updateActionFor(update: UpdateState): {
+  readonly label: string | null;
+  readonly disabled: boolean;
+  readonly action: 'check' | 'download' | 'install' | null;
+} {
+  switch (update.kind) {
+    case 'checking':
+      return { label: '检查更新', disabled: true, action: null };
+    case 'downloading':
+      return { label: null, disabled: true, action: null };
+    case 'available':
+      return { label: '下载', disabled: false, action: 'download' };
+    case 'downloaded':
+      return { label: '重启并安装', disabled: false, action: 'install' };
+    case 'error':
+      return { label: '重试', disabled: false, action: 'check' };
+    case 'idle':
+    case 'up-to-date':
+      return { label: '检查更新', disabled: false, action: 'check' };
+    case 'unsupported':
+      return { label: null, disabled: true, action: null };
+  }
 }
 
 export function SettingsPage({
@@ -126,6 +191,10 @@ export function SettingsPage({
   storageInfo,
   onOpenStorageDir,
   onChangeStorageDir,
+  update,
+  onCheckUpdate,
+  onDownloadUpdate,
+  onInstallUpdate,
 }: SettingsPageProps): React.JSX.Element {
   const [section, setSection] = useState<SettingsSection>('appearance');
   // 还原强确认目标（备份文件名）：null=浮层收起；确认/取消均收起，确认侧才上抛还原
@@ -396,7 +465,7 @@ export function SettingsPage({
                 )}
               </div>
             </>
-          ) : (
+          ) : section === 'workspace' ? (
             <>
               <div className="mb-4">
                 <p className="m-0 mb-1 text-sm font-medium">启动时恢复工作区</p>
@@ -415,6 +484,52 @@ export function SettingsPage({
                 </label>
               </div>
             </>
+          ) : (
+            // 关于（M9 FR-UPDATE-01，蓝图 §五.3）：版本 + 更新状态行 + 动作钮；
+            // 失败/不支持为 muted 说明（无动作可做时不渲染按钮，不留无效入口）
+            <div className="lt-settings-about">
+              <div className="lt-settings-version mb-4">
+                <p className="m-0 mb-1 text-sm font-medium">版本</p>
+                {update === null ? (
+                  <p className="m-0 text-xs text-muted-foreground">正在读取…</p>
+                ) : (
+                  <p className="m-0 text-sm text-foreground">v{update.currentVersion}</p>
+                )}
+              </div>
+              <div className="lt-settings-update">
+                <p className="m-0 mb-1 text-sm font-medium">更新</p>
+                {update === null ? (
+                  <p className="m-0 text-xs text-muted-foreground">正在读取…</p>
+                ) : (
+                  <>
+                    <p className="m-0 mb-2 text-xs text-muted-foreground" role="status">
+                      {updateStatusText(update)}
+                    </p>
+                    {(() => {
+                      const action = updateActionFor(update);
+                      if (action.label === null || action.action === null) return null;
+                      const onClick =
+                        action.action === 'check'
+                          ? onCheckUpdate
+                          : action.action === 'download'
+                            ? onDownloadUpdate
+                            : onInstallUpdate;
+                      return (
+                        <button
+                          type="button"
+                          title="从 GitHub Releases 检查新版本（不采集任何遥测）"
+                          disabled={action.disabled}
+                          className={TOOL_BUTTON}
+                          onClick={onClick}
+                        >
+                          {action.label}
+                        </button>
+                      );
+                    })()}
+                  </>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>

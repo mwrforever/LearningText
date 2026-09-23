@@ -71,6 +71,14 @@ function stubApi(overrides: Partial<Record<string, unknown>> = {}): Record<strin
         },
       }),
     ),
+    // M9 更新域与粘贴导入桩（FR-UPDATE-01/FR-IO-03）：状态首拉返回 idle、订阅退订空函数；
+    // 粘贴导入默认空清单（kind:'empty'，非错误）
+    importFromClipboard: vi.fn(() => Promise.resolve({ ok: true, value: { kind: 'empty' } })),
+    getUpdateState: vi.fn(() =>
+      Promise.resolve({ ok: true, value: { kind: 'idle', currentVersion: '0.0.0' } }),
+    ),
+    onUpdateState: vi.fn(() => () => undefined),
+
     platform: 'win32',
     onShellCommand: vi.fn((callback: (command: ShellCommand) => void) => {
       // 退订函数为 vi.fn 桩，卸载后可断言 cleanup 确实调用（同 onVfsChanged 强化先例）
@@ -758,6 +766,37 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
       await new Promise((resolve) => setTimeout(resolve, 400));
     });
     expect(api.writeFile).toHaveBeenCalledTimes(1);
+    act(() => {
+      tree.unmount();
+    });
+  });
+
+  it('paste-import 命令（M9 FR-IO-03）：主进程读剪贴板直接导入——空清单 toast 克制提示（非错误），导入成功走计数 toast + 目标父回写 + 唯一文件即打开', async () => {
+    // 空清单分支：importFromClipboard 返回 { kind: 'empty' } → 不发起导入、不弹进度面板
+    const empty = captureShell({
+      importFromClipboard: vi.fn(() => Promise.resolve({ ok: true, value: { kind: 'empty' } })),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(
+        <>
+          <Workspace />
+          <ToastHost />
+        </>,
+      );
+    });
+    await act(async () => {
+      empty.handlers[0]?.({ type: 'paste-import' });
+    });
+    // 续体再冲一拍：toast 宿主为独立 createRoot，setState 经宏任务才提交（jsdom 时序）
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(empty.api.importFromClipboard).toHaveBeenCalledTimes(1);
+    expect(empty.api.importNodes).not.toHaveBeenCalled();
+    expect([...document.querySelectorAll('.lt-toast')].at(-1)?.textContent).toContain(
+      '剪贴板中没有可导入的文件',
+    );
     act(() => {
       tree.unmount();
     });

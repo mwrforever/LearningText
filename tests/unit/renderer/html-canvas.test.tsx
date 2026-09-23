@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
-// HTML 所见即所得画布冒烟（M6 spec §3.3，批次②）：保活 iframe 集（sandbox 逐字/激活可见
-// 后台 hidden）、lt:doc-edit 消息路由（来源精确比对 + 形态收窄）、从库重新加载钮
-// （脏态禁用 = 批次②落地修正，防静默覆盖本地修改；净态 replace 直载库内容）、CSS 热替换
-// 广播（written 命中 text/css → fetch 拉新文本 postMessage lt:css-swap，M4 spec §5.4
-// 通道自 PreviewPanel 迁入）与卸载退订成对。jsdom 对 iframe 仅提供 about:blank 内容窗
-// （vfs:// 不实际加载），消息路由以同引用 source 满足精确比对，无需产品代码加测试钩子。
+// HTML 画布冒烟（M6 spec §3.3 → M9「交互优先」重构）：保活 iframe 集（sandbox 逐字/激活可见
+// 后台 hidden）、lt:doc-edit 消息路由（来源精确比对 + 形态收窄）、编辑态切换（工具条唯一
+// 程序化入口 → lt:edit-enter/exit 下发 + aria-pressed 双态 + 桥内 lt:edit-state 回执同步）、
+// 从库重新加载钮（脏态禁用 = 批次②落地修正，防静默覆盖本地修改；净态 replace 直载库内容）、
+// CSS 热替换广播（written 命中 text/css → fetch 拉新文本 postMessage lt:css-swap，M4 spec
+// §5.4 通道自 PreviewPanel 迁入）与卸载退订成对。jsdom 对 iframe 仅提供 about:blank 内容窗
+// （vfs:// 不实际加载），消息路由以同引用 source 满足精确比对，无需产品代码加测试钩子；
+// 桥内交互语义（元素激活/序列化剥离）在沙箱真机由 E2E 覆盖。
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -83,6 +85,8 @@ function renderCanvas(
   const stub = stubApi();
   const tree = createRoot(container);
   let current = initial;
+  // 站内链接打开记账（M9 导航闸门路由断言用）
+  const opened: number[] = [];
   const render = (): void => {
     act(() => {
       tree.render(
@@ -92,6 +96,9 @@ function renderCanvas(
           activeDirty={current.activeDirty}
           onDocEdit={(nodeId, html) => {
             for (const edit of edits) edit(nodeId, html);
+          }}
+          onOpenVfsNode={(node) => {
+            opened.push(node.id);
           }}
         />,
       );
@@ -116,6 +123,14 @@ function renderCanvas(
 }
 
 describe('HtmlCanvas（HTML 所见即所得画布）', () => {
+  /** 派发 iframe load（jsdom 不触发 load 事件；装载门 onLoad → loadedIds 置位后 enter 才下发） */
+  function fireLoad(view: RenderResult): void {
+    for (const frame of view.frames()) {
+      act(() => {
+        frame.dispatchEvent(new Event('load'));
+      });
+    }
+  }
   it('两个 HTML 标签渲染两个保活 iframe：sandbox/referrerpolicy 逐字、src=vfs 直载，激活可见非激活 hidden', () => {
     const view = renderCanvas(
       { tabs: [tab(3, 'a.html'), tab(4, 'b.html')], activeId: 3, activeDirty: false },
@@ -289,5 +304,98 @@ describe('HtmlCanvas（HTML 所见即所得画布）', () => {
       );
     });
     expect(onDocEdit).not.toHaveBeenCalled();
+  });
+
+  it('编辑态切换：工具条「编辑」钮 → 激活 iframe 收 lt:edit-enter 且 aria-pressed 翻转；再点收 lt:edit-exit', () => {
+    const view = renderCanvas({ tabs: [tab(3, 'a.html')], activeId: 3, activeDirty: false }, []);
+    fireLoad(view);
+    const frame = view.frames()[0];
+    const post = vi.spyOn(frame?.contentWindow as Window, 'postMessage');
+    const toggle = (): HTMLButtonElement | null =>
+      container.querySelector<HTMLButtonElement>('button.lt-canvas-edit-toggle');
+    // M9 交互优先：初始为交互态（无激活编辑），工具条为唯一程序化编辑入口；
+    // aria-label 恒为「编辑」（蓝图 §1.4：开关语义下随态改名与 aria-pressed 并存自相矛盾）
+    expect(toggle()?.getAttribute('aria-label')).toBe('编辑');
+    expect(toggle()?.getAttribute('aria-pressed')).toBe('false');
+    act(() => {
+      toggle()?.click();
+    });
+    expect(post).toHaveBeenCalledWith({ type: 'lt:edit-enter' }, '*');
+    expect(toggle()?.getAttribute('aria-pressed')).toBe('true');
+    act(() => {
+      toggle()?.click();
+    });
+    expect(post).toHaveBeenLastCalledWith({ type: 'lt:edit-exit' }, '*');
+    expect(toggle()?.getAttribute('aria-pressed')).toBe('false');
+    view.unmount();
+  });
+
+  it('桥内 lt:edit-state 回执同步工具条：双击进入（editing=true）与 Esc 退出（editing=false）；伪造来源不可达', () => {
+    const view = renderCanvas({ tabs: [tab(3, 'a.html')], activeId: 3, activeDirty: false }, []);
+    const frame = view.frames()[0];
+    const toggle = (): HTMLButtonElement | null =>
+      container.querySelector<HTMLButtonElement>('button.lt-canvas-edit-toggle');
+    // 桥内双击文本元素直达编辑态：回执 editing=true → 工具条进入编辑态
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          source: frame?.contentWindow ?? null,
+          data: { type: 'lt:edit-state', editing: true },
+        }),
+      );
+    });
+    expect(toggle()?.getAttribute('aria-pressed')).toBe('true');
+    // Esc 退出回执 → 复位交互态
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          source: frame?.contentWindow ?? null,
+          data: { type: 'lt:edit-state', editing: false },
+        }),
+      );
+    });
+    expect(toggle()?.getAttribute('aria-pressed')).toBe('false');
+    // 伪造来源（非画布 iframe）与畸形载荷：工具条态不受影响
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          source: window,
+          data: { type: 'lt:edit-state', editing: true },
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          source: frame?.contentWindow ?? null,
+          data: { type: 'lt:edit-state', editing: 'yes' },
+        }),
+      );
+    });
+    expect(toggle()?.getAttribute('aria-pressed')).toBe('false');
+    view.unmount();
+  });
+
+  it('编辑节点切换：对旧 iframe 发 lt:edit-exit、新 iframe 发 lt:edit-enter（同一时刻至多一个编辑会话）', () => {
+    const view = renderCanvas(
+      { tabs: [tab(3, 'a.html'), tab(4, 'b.html')], activeId: 3, activeDirty: false },
+      [],
+    );
+    fireLoad(view);
+    const [frameA, frameB] = view.frames();
+    const postA = vi.spyOn(frameA?.contentWindow as Window, 'postMessage');
+    const postB = vi.spyOn(frameB?.contentWindow as Window, 'postMessage');
+    const toggle = (): HTMLButtonElement | null =>
+      container.querySelector<HTMLButtonElement>('button.lt-canvas-edit-toggle');
+    act(() => {
+      toggle()?.click();
+    });
+    expect(postA).toHaveBeenCalledWith({ type: 'lt:edit-enter' }, '*');
+    // 切换激活签后对 b.html 进入编辑：a.html 收 exit（编辑会话随焦点迁移）
+    view.rerender({ activeId: 4 });
+    act(() => {
+      toggle()?.click();
+    });
+    expect(postA).toHaveBeenLastCalledWith({ type: 'lt:edit-exit' }, '*');
+    expect(postB).toHaveBeenLastCalledWith({ type: 'lt:edit-enter' }, '*');
+    view.unmount();
   });
 });

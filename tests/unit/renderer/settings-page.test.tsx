@@ -15,6 +15,7 @@ import type { SettingsData } from '../../../src/shared/settings-contract';
 import type { ShellCommand } from '../../../src/shared/shell-contract';
 import type { BackupEntry } from '../../../src/shared/backup-contract';
 import type { DataDirInfo } from '../../../src/shared/storage-contract';
+import type { UpdateState } from '../../../src/shared/update-contract';
 import { SettingsPage } from '../../../src/renderer/src/features/settings/SettingsPage';
 import { ToastHost } from '../../../src/renderer/src/features/ui/Toast';
 import { Workspace } from '../../../src/renderer/src/features/workspace/Workspace';
@@ -164,6 +165,13 @@ function stubWorkspaceApi(
     changeDataDir: vi.fn(() => Promise.resolve({ ok: true as const, value: { relaunch: true } })),
     // 状态栏文档计数与平台标识（M6 壳层装配路径）：挂载即查 countNodes，TitleBar 消费 platform
     countNodes: vi.fn(() => Promise.resolve({ ok: true as const, value: 0 })),
+    // M9 更新域与粘贴导入桩（FR-UPDATE-01/FR-IO-03）：状态首拉返回 idle、订阅退订空函数；
+    // 粘贴导入默认空清单（kind:'empty'，非错误）
+    importFromClipboard: vi.fn(() => Promise.resolve({ ok: true, value: { kind: 'empty' } })),
+    getUpdateState: vi.fn(() =>
+      Promise.resolve({ ok: true, value: { kind: 'idle', currentVersion: '0.0.0' } }),
+    ),
+    onUpdateState: vi.fn(() => () => undefined),
     platform: 'win32',
   };
   Object.defineProperty(window, 'api', { value: api, configurable: true, writable: true });
@@ -260,6 +268,11 @@ beforeEach(() => {
   currentStorageInfo = stubStorageInfo(false);
   onOpenStorageDir = vi.fn();
   onChangeStorageDir = vi.fn();
+  // 关于分区桩初值（M9）：idle 态 + 当前版本（用例可覆写）
+  currentUpdate = { kind: 'idle', currentVersion: '0.1.1' };
+  onCheckUpdate = vi.fn();
+  onDownloadUpdate = vi.fn();
+  onInstallUpdate = vi.fn();
 });
 
 afterEach(() => {
@@ -294,6 +307,11 @@ let onRestoreBackup: Mock<(fileName: string) => void>;
 let currentStorageInfo: DataDirInfo | null;
 let onOpenStorageDir: Mock<() => void>;
 let onChangeStorageDir: Mock<() => void>;
+// 关于分区（M9 FR-UPDATE-01）：更新状态受控值与动作回调桩
+let currentUpdate: UpdateState | null;
+let onCheckUpdate: Mock<() => void>;
+let onDownloadUpdate: Mock<() => void>;
+let onInstallUpdate: Mock<() => void>;
 
 /** 以受控 props 渲染设置页（默认外观区；主题/备份/恢复开关/存储布局显示值随各桩联动） */
 function renderPage(): void {
@@ -318,6 +336,10 @@ function renderPage(): void {
         storageInfo={currentStorageInfo}
         onOpenStorageDir={onOpenStorageDir}
         onChangeStorageDir={onChangeStorageDir}
+        update={currentUpdate}
+        onCheckUpdate={onCheckUpdate}
+        onDownloadUpdate={onDownloadUpdate}
+        onInstallUpdate={onInstallUpdate}
       />,
     );
   });
@@ -378,6 +400,17 @@ async function pickThemeOption(label: string): Promise<void> {
     target?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   });
   await flushMicrotasks();
+}
+
+/** 关于区动作钮（可访问名=可见文案，随态为 检查更新/下载/重启并安装/重试） */
+function updateActionButton(): HTMLButtonElement | null {
+  const section = document.querySelector('.lt-settings-update');
+  if (section === null) return null;
+  return (
+    Array.from(section.querySelectorAll<HTMLButtonElement>('button')).find(
+      (b) => typeof b.textContent === 'string' && b.textContent.length > 0,
+    ) ?? null
+  );
 }
 
 describe('SettingsPage 设置页表单', () => {
@@ -965,5 +998,81 @@ describe('Workspace 数据与存储接线（M6 批次③）', () => {
     expect(latestToastText()).toContain('目标目录不可写');
     // 失败清确认态：弹层收起（用户可改道重试）
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+  });
+
+  // —— 关于分区（M9 FR-UPDATE-01，FR-UPDATE 状态行文案表）——
+
+  it('关于分区：版本呈现 currentVersion；idle/up-to-date 呈「检查更新」钮，available 换「下载」并回调 onDownloadUpdate', () => {
+    renderPage();
+    act(() => {
+      navButton('关于')?.click();
+    });
+    expect(document.querySelector('.lt-settings-version')?.textContent).toContain('v0.1.1');
+    expect(document.querySelector('.lt-settings-update')?.textContent).toContain('尚未检查更新');
+    const check = updateActionButton();
+    expect(check?.textContent).toBe('检查更新');
+    act(() => {
+      check?.click();
+    });
+    expect(onCheckUpdate).toHaveBeenCalledTimes(1);
+    // available：状态行换「发现新版本」，动作钮换「下载」
+    currentUpdate = { kind: 'available', currentVersion: '0.1.1', version: '0.2.0' };
+    renderPage();
+    act(() => {
+      navButton('关于')?.click();
+    });
+    expect(document.querySelector('.lt-settings-update')?.textContent).toContain(
+      '发现新版本 v0.2.0',
+    );
+    const download = updateActionButton();
+    expect(download?.textContent).toBe('下载');
+    act(() => {
+      download?.click();
+    });
+    expect(onDownloadUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('关于分区：downloaded 呈「重启并安装」回调 onInstallUpdate；error 呈 muted 重试；unsupported 无动作钮（不留无效入口）', () => {
+    currentUpdate = { kind: 'downloaded', currentVersion: '0.1.1', version: '0.2.0' };
+    renderPage();
+    act(() => {
+      navButton('关于')?.click();
+    });
+    expect(document.querySelector('.lt-settings-update')?.textContent).toContain(
+      '新版本已就绪，重启后生效',
+    );
+    const install = updateActionButton();
+    expect(install?.textContent).toBe('重启并安装');
+    act(() => {
+      install?.click();
+    });
+    expect(onInstallUpdate).toHaveBeenCalledTimes(1);
+    // error：状态行携带 muted 说明（message 追加），动作钮换「重试」
+    currentUpdate = {
+      kind: 'error',
+      currentVersion: '0.1.1',
+      message: '网络不可达',
+    };
+    renderPage();
+    act(() => {
+      navButton('关于')?.click();
+    });
+    expect(document.querySelector('.lt-settings-update [role="status"]')?.textContent).toContain(
+      '检查更新失败',
+    );
+    expect(document.querySelector('.lt-settings-update [role="status"]')?.textContent).toContain(
+      '网络不可达',
+    );
+    expect(updateActionButton()?.textContent).toBe('重试');
+    // unsupported（platform）：说明行呈现、无动作钮
+    currentUpdate = { kind: 'unsupported', currentVersion: '0.1.1', reason: 'platform' };
+    renderPage();
+    act(() => {
+      navButton('关于')?.click();
+    });
+    expect(document.querySelector('.lt-settings-update')?.textContent).toContain(
+      '当前平台形态不支持应用内更新',
+    );
+    expect(updateActionButton()).toBeNull();
   });
 });

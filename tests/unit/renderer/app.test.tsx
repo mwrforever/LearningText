@@ -33,6 +33,14 @@ describe('App 根组件', () => {
             },
           }),
         ),
+        // M9 更新域与粘贴导入桩（FR-UPDATE-01/FR-IO-03）：状态首拉返回 idle、订阅退订空函数；
+        // 粘贴导入默认空清单（kind:'empty'，非错误）
+        importFromClipboard: vi.fn(() => Promise.resolve({ ok: true, value: { kind: 'empty' } })),
+        getUpdateState: vi.fn(() =>
+          Promise.resolve({ ok: true, value: { kind: 'idle', currentVersion: '0.0.0' } }),
+        ),
+        onUpdateState: vi.fn(() => () => undefined),
+
         platform: 'win32',
         getNode: vi.fn(() =>
           Promise.resolve({

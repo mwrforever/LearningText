@@ -12,6 +12,7 @@ import { ActivityBar } from '../../../src/renderer/src/features/shell/ActivityBa
 import { StatusBar } from '../../../src/renderer/src/features/shell/StatusBar';
 import { TitleBar } from '../../../src/renderer/src/features/shell/TitleBar';
 import { WelcomePage } from '../../../src/renderer/src/features/shell/WelcomePage';
+import type { UpdateState } from '../../../src/shared/update-contract';
 import type { ShellCommand } from '../../../src/shared/shell-contract';
 
 let container: HTMLElement;
@@ -172,7 +173,15 @@ describe('ActivityBar 活动栏', () => {
 describe('TitleBar 自绘标题栏', () => {
   it('渲染 h1 应用标识（E2E 锚点）；win/linux 渲染应用内菜单', () => {
     act(() => {
-      tree.render(<TitleBar platform="win32" onCommand={vi.fn()} />);
+      tree.render(
+        <TitleBar
+          platform="win32"
+          update={null}
+          onCommand={vi.fn()}
+          onUpdateDownload={vi.fn()}
+          onUpdateInstall={vi.fn()}
+        />,
+      );
     });
     expect(container.querySelector('h1')?.textContent).toBe('LearningText');
     expect(container.querySelector('nav[aria-label="应用菜单"]')).not.toBeNull();
@@ -181,7 +190,15 @@ describe('TitleBar 自绘标题栏', () => {
 
   it('darwin 平台不渲染应用内菜单（系统菜单栏承载），h1 保留', () => {
     act(() => {
-      tree.render(<TitleBar platform="darwin" onCommand={vi.fn()} />);
+      tree.render(
+        <TitleBar
+          platform="darwin"
+          update={null}
+          onCommand={vi.fn()}
+          onUpdateDownload={vi.fn()}
+          onUpdateInstall={vi.fn()}
+        />,
+      );
     });
     expect(container.querySelector('h1')?.textContent).toBe('LearningText');
     expect(container.querySelector('nav[aria-label="应用菜单"]')).toBeNull();
@@ -190,7 +207,15 @@ describe('TitleBar 自绘标题栏', () => {
   it('菜单项命令经 onCommand 分发（radix menubar 键盘驱动：触发器 Enter 开启 → 菜单项 Enter）', () => {
     const onCommand = vi.fn<(command: ShellCommand) => void>();
     act(() => {
-      tree.render(<TitleBar platform="win32" onCommand={onCommand} />);
+      tree.render(
+        <TitleBar
+          platform="win32"
+          update={null}
+          onCommand={onCommand}
+          onUpdateDownload={vi.fn()}
+          onUpdateInstall={vi.fn()}
+        />,
+      );
     });
     const trigger = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[data-slot="menubar-trigger"]'),
@@ -280,5 +305,89 @@ describe('WelcomePage 欢迎页', () => {
       row.click();
     });
     expect(onOpenRecent).toHaveBeenCalledWith(7);
+  });
+});
+
+describe('TitleBar 更新标签（M9 FR-UPDATE-01，蓝图 §五.2）', () => {
+  it('idle/up-to-date/checking/error/unsupported 不渲染标签（静默检查零存在感）；三态才渲染', () => {
+    for (const state of [
+      { kind: 'idle', currentVersion: '0.1.1' },
+      { kind: 'checking', currentVersion: '0.1.1' },
+      { kind: 'up-to-date', currentVersion: '0.1.1', checkedAt: '2026-09-24T00:00:00+08:00' },
+      { kind: 'error', currentVersion: '0.1.1', message: 'x' },
+      { kind: 'unsupported', currentVersion: '0.1.1', reason: 'dev' },
+    ]) {
+      act(() => {
+        tree.render(
+          <TitleBar
+            platform="win32"
+            update={state as UpdateState}
+            onCommand={vi.fn()}
+            onUpdateDownload={vi.fn()}
+            onUpdateInstall={vi.fn()}
+          />,
+        );
+      });
+      expect(container.querySelector('.lt-update-chip')).toBeNull();
+    }
+  });
+
+  it('available：实心主色标签「更新到 v0.2.0」，点击回调 onUpdateDownload', () => {
+    const onDownload = vi.fn();
+    act(() => {
+      tree.render(
+        <TitleBar
+          platform="win32"
+          update={{ kind: 'available', currentVersion: '0.1.1', version: '0.2.0' }}
+          onCommand={vi.fn()}
+          onUpdateDownload={onDownload}
+          onUpdateInstall={vi.fn()}
+        />,
+      );
+    });
+    const chip = container.querySelector<HTMLButtonElement>('button.lt-update-chip');
+    expect(chip?.textContent).toBe('更新到 v0.2.0');
+    act(() => {
+      chip?.click();
+    });
+    expect(onDownload).toHaveBeenCalledTimes(1);
+  });
+
+  it('downloading：中性 chip 为 role=progressbar 携 aria-valuenow（只给百分比文本）', () => {
+    act(() => {
+      tree.render(
+        <TitleBar
+          platform="win32"
+          update={{ kind: 'downloading', currentVersion: '0.1.1', version: '0.2.0', percent: 42 }}
+          onCommand={vi.fn()}
+          onUpdateDownload={vi.fn()}
+          onUpdateInstall={vi.fn()}
+        />,
+      );
+    });
+    const bar = container.querySelector<HTMLElement>('.lt-update-chip[role="progressbar"]');
+    expect(bar?.textContent).toBe('下载中 42%');
+    expect(bar?.getAttribute('aria-valuenow')).toBe('42');
+  });
+
+  it('downloaded：标签换「重启以完成更新」，点击回调 onUpdateInstall', () => {
+    const onInstall = vi.fn();
+    act(() => {
+      tree.render(
+        <TitleBar
+          platform="win32"
+          update={{ kind: 'downloaded', currentVersion: '0.1.1', version: '0.2.0' }}
+          onCommand={vi.fn()}
+          onUpdateDownload={vi.fn()}
+          onUpdateInstall={onInstall}
+        />,
+      );
+    });
+    const chip = container.querySelector<HTMLButtonElement>('button.lt-update-chip');
+    expect(chip?.textContent).toBe('重启以完成更新');
+    act(() => {
+      chip?.click();
+    });
+    expect(onInstall).toHaveBeenCalledTimes(1);
   });
 });

@@ -35,6 +35,9 @@
   --destructive-foreground: #ffffff;
   --border: #e2e8f0;
   --input: #e2e8f0;
+  /* 同源约束（M9 蓝图 A.2-3）：vfs 注入桥的编辑目标高亮色 #64748B 取本变量 light 档字面
+     （src/main/protocol/vfsProtocol.ts），沙箱子文档 opaque origin 读不到本变量，两侧
+     改值必须同步；dark 档 #94a3b8 对白底不达标，注入色刻意不随主题切换 */
   --ring: #64748b;
   --radius: 0.25rem;
 }
@@ -132,6 +135,19 @@
   body.lt-col-dragging * {
     cursor: col-resize !important;
     user-select: none !important;
+  }
+  /* 树内拖拽期全局接管（M9 批次，蓝图 C.5）：与分隔条拖拽同源纪律——拖拽中指针会离开
+     树行、越过工具栏与画布 iframe，光标固化 grabbing + 禁选；画布 pointer-events 穿透
+     确保指针越过 iframe 时事件归属壳层（iframe 收不到指针事件）。body 类由 TreePanel
+     拖拽会话挂摘（pointercancel/卸载兜底同 M8 分隔条），不复用 data-dragging
+     （其语义专指侧栏宽度拖拽的 E2E 锚点，不拓宽）。 */
+  body.lt-tree-dragging,
+  body.lt-tree-dragging * {
+    cursor: grabbing !important;
+    user-select: none !important;
+  }
+  body.lt-tree-dragging .lt-canvas {
+    pointer-events: none;
   }
   /* 键盘焦点环基线（M5 打磨增量）：未自带焦点样式的自研控件（工具钮/树行/标签/「⋯」
      触发钮/关闭钮）统一 2px 实线 ring——原先仅 UA auto 轮廓叠加 50% 透明 ring 色，

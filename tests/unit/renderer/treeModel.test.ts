@@ -9,6 +9,7 @@ import {
   isDescendant,
   makeTreeRoot,
   withChildren,
+  canDropOn,
 } from '../../../src/renderer/src/features/tree/treeModel';
 
 function meta(id: number, parentId: number, name: string): NodeMeta {
@@ -115,5 +116,44 @@ describe('treeModel isDescendant', () => {
     expect(isDescendant(tree, 2, 5)).toBe(false); // 兄弟
     expect(isDescendant(tree, 4, 2)).toBe(false); // 祖先非后代
     expect(isDescendant(tree, 99, 3)).toBe(false); // 祖先 id 不存在
+  });
+});
+
+// 拖拽落点合法性（M9 FR-TREE-01，canDropOn）：目录且非自身/非当前父/非后代为合法；
+// 文件行、自身、同父（无动作不伪装可放置）、后代、目标类型缺失均非法——TreePanel
+// 拖拽落点高亮与放行落库的唯一判定来源（与 isDescendant 同树结构复用）
+describe('treeModel canDropOn', () => {
+  it('目录兄弟目标合法；文件行/自身/当前父/后代/类型缺失非法；根父兜底判同父', () => {
+    // 结构：根(1) → 笔记(2) → 年度(4) → a.html(3)；兄弟目录(5)；根层文件 b.html(6)。
+    // dirMeta 局部助手：注解 NodeMeta 使字面量收敛（nodeType 不放宽为 string）
+    const dirMeta = (id: number, parentId: number, name: string): NodeMeta => ({
+      ...meta(id, parentId, name),
+      nodeType: 'dir',
+    });
+    const tree = [
+      withChildren(makeTreeRoot(dirMeta(2, 1, '笔记')), [
+        withChildren(makeTreeRoot(dirMeta(4, 2, '年度')), [makeTreeRoot(meta(3, 4, 'a.html'))]),
+      ]),
+      makeTreeRoot(dirMeta(5, 1, '兄弟')),
+      makeTreeRoot(meta(6, 1, 'b.html')),
+    ];
+    const source = dirMeta(4, 2, '年度');
+    // 合法：兄弟目录（非自身/非后代/非当前父）
+    expect(canDropOn(tree, source, 5, 'dir')).toBe(true);
+    // 非法：文件行（targetType file）
+    expect(canDropOn(tree, source, 6, 'file')).toBe(false);
+    // 非法：自身
+    expect(canDropOn(tree, source, 4, 'dir')).toBe(false);
+    // 非法：当前父（source.parentId=2 → 同父移动=无动作）
+    expect(canDropOn(tree, source, 2, 'dir')).toBe(false);
+    // 非法：自身后代
+    expect(canDropOn(tree, source, 3, 'dir')).toBe(false);
+    // 非法：类型锚缺失（命中未携带 data-tree-node-type）
+    expect(canDropOn(tree, source, 5, undefined)).toBe(false);
+    // 根父兜底：parentId 为 null 的源（构造性不可拖，契约兜底分支）以根(1)为目标=同父非法
+    const rootLevel: NodeMeta = { ...meta(6, 1, 'b.html'), parentId: null };
+    expect(canDropOn(tree, rootLevel, 1, 'dir')).toBe(false);
+    // 根父兜底合法侧：根层文件拖入兄弟目录仍合法
+    expect(canDropOn(tree, rootLevel, 5, 'dir')).toBe(true);
   });
 });

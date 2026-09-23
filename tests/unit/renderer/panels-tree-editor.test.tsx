@@ -59,6 +59,10 @@ describe('TreePanel', () => {
           pickTargetId={null}
           creatingDirParentId={null}
           rootPath={null}
+          rootSelected={false}
+          onClearSelection={vi.fn()}
+          onSelectRoot={vi.fn()}
+          onDropMove={vi.fn()}
 
           onToggle={vi.fn()}
           onSelect={onSelect}
@@ -109,6 +113,10 @@ describe('TreePanel', () => {
           pickTargetId={null}
           creatingDirParentId={null}
           rootPath={null}
+          rootSelected={false}
+          onClearSelection={vi.fn()}
+          onSelectRoot={vi.fn()}
+          onDropMove={vi.fn()}
 
           onToggle={onToggle}
           onSelect={vi.fn()}
@@ -144,6 +152,10 @@ describe('TreePanel', () => {
           pickTargetId={null}
           creatingDirParentId={null}
           rootPath={null}
+          rootSelected={false}
+          onClearSelection={vi.fn()}
+          onSelectRoot={vi.fn()}
+          onDropMove={vi.fn()}
 
           onToggle={onToggle}
           onSelect={vi.fn()}
@@ -183,6 +195,10 @@ describe('TreePanel', () => {
           pickTargetId={null}
           creatingDirParentId={2}
           rootPath={null}
+          rootSelected={false}
+          onClearSelection={vi.fn()}
+          onSelectRoot={vi.fn()}
+          onDropMove={vi.fn()}
 
           onToggle={vi.fn()}
           onSelect={vi.fn()}
@@ -226,6 +242,10 @@ describe('TreePanel', () => {
           pickTargetId={null}
           creatingDirParentId={null}
           rootPath={null}
+          rootSelected={false}
+          onClearSelection={vi.fn()}
+          onSelectRoot={vi.fn()}
+          onDropMove={vi.fn()}
 
           onToggle={vi.fn()}
           onSelect={vi.fn()}
@@ -261,6 +281,10 @@ describe('TreePanel', () => {
           pickTargetId={null}
           creatingDirParentId={2}
           rootPath={null}
+          rootSelected={false}
+          onClearSelection={vi.fn()}
+          onSelectRoot={vi.fn()}
+          onDropMove={vi.fn()}
           onToggle={vi.fn()}
           onSelect={vi.fn()}
           onStartCreateDir={vi.fn()}
@@ -330,6 +354,10 @@ describe('TreePanel', () => {
             pickTargetId={null}
             creatingDirParentId={null}
             rootPath={null}
+            rootSelected={false}
+            onClearSelection={vi.fn()}
+            onSelectRoot={vi.fn()}
+            onDropMove={vi.fn()}
             onToggle={vi.fn()}
             onSelect={vi.fn()}
             onStartCreateDir={vi.fn()}
@@ -371,6 +399,10 @@ describe('TreePanel', () => {
           pickTargetId={null}
           creatingDirParentId={1}
           rootPath={null}
+          rootSelected={false}
+          onClearSelection={vi.fn()}
+          onSelectRoot={vi.fn()}
+          onDropMove={vi.fn()}
           onToggle={vi.fn()}
           onSelect={vi.fn()}
           onStartCreateDir={vi.fn()}
@@ -409,6 +441,10 @@ describe('TreePanel', () => {
             pickTargetId={null}
             creatingDirParentId={null}
             rootPath={rootPath}
+            rootSelected={false}
+            onClearSelection={vi.fn()}
+            onSelectRoot={vi.fn()}
+            onDropMove={vi.fn()}
             onToggle={vi.fn()}
             onSelect={vi.fn()}
             onStartCreateDir={vi.fn()}
@@ -449,6 +485,10 @@ describe('TreePanel', () => {
             pickTargetId={null}
             creatingDirParentId={null}
             rootPath={null}
+            rootSelected={false}
+            onClearSelection={vi.fn()}
+            onSelectRoot={vi.fn()}
+            onDropMove={vi.fn()}
             onToggle={vi.fn()}
             onSelect={vi.fn()}
             onStartCreateDir={vi.fn()}
@@ -494,6 +534,10 @@ describe('TreePanel', () => {
             pickTargetId={null}
             creatingDirParentId={null}
             rootPath={null}
+            rootSelected={false}
+            onClearSelection={vi.fn()}
+            onSelectRoot={vi.fn()}
+            onDropMove={vi.fn()}
             onToggle={onToggle}
             onSelect={onSelect}
             onStartCreateDir={vi.fn()}
@@ -566,6 +610,10 @@ describe('TreePanel 行内「⋯」菜单（M5 批次④）', () => {
           pickTargetId={null}
           creatingDirParentId={null}
           rootPath={null}
+          rootSelected={false}
+          onClearSelection={vi.fn()}
+          onSelectRoot={vi.fn()}
+          onDropMove={vi.fn()}
 
           onToggle={vi.fn()}
           onSelect={vi.fn()}
@@ -642,5 +690,147 @@ describe('TreePanel 行内「⋯」菜单（M5 批次④）', () => {
     openRowMenu(3);
     pickMenuItem('删除');
     expect(onTrash).toHaveBeenCalledWith(3);
+  });
+});
+
+// —— M9 面 B/C（FR-TREE-01/02）：根目录入口、空白区失焦、拖拽命中锚 ——
+describe('TreePanel M9 面B：路径条根目录入口与空白区失焦', () => {
+  function rootStripRoots(): readonly TreeNode[] {
+    return [
+      withChildren(makeTreeRoot({ ...meta(1, '根', 'dir'), parentId: null, virtualPath: '/' }), [
+        makeTreeRoot(meta(2, 'a.html')),
+      ]),
+    ];
+  }
+
+  function renderWithRootPath(overrides: {
+    rootSelected?: boolean;
+    dirPickMode?: boolean;
+    pickTargetId?: number | null;
+  }): { onClearSelection: ReturnType<typeof vi.fn>; onSelectRoot: ReturnType<typeof vi.fn> } {
+    const onClearSelection = vi.fn();
+    const onSelectRoot = vi.fn();
+    const tree = createRoot(container);
+    act(() => {
+      tree.render(
+        <TreePanel
+          roots={rootStripRoots()}
+          selectedId={null}
+          expanded={new Set()}
+          dirPickMode={overrides.dirPickMode ?? false}
+          pickTargetId={overrides.pickTargetId ?? null}
+          creatingDirParentId={null}
+          rootPath={'D:/lt-user-data/LearningText'}
+          rootSelected={overrides.rootSelected ?? false}
+          onToggle={vi.fn()}
+          onSelect={vi.fn()}
+          onClearSelection={onClearSelection}
+          onSelectRoot={onSelectRoot}
+          onDropMove={vi.fn()}
+          onStartCreateDir={vi.fn()}
+          onConfirmCreateDir={vi.fn()}
+          onCancelCreateDir={vi.fn()}
+          onTrash={vi.fn()}
+          onRename={vi.fn()}
+          onStartMove={vi.fn()}
+          onImportHtml={vi.fn()}
+        />,
+      );
+    });
+    return { onClearSelection, onSelectRoot };
+  }
+
+  it('路径条升为根目录入口（button.lt-tree-root-path）：aria-label 前缀「根目录：」、data-tree-node-id=1、点击上抛 onSelectRoot；rootSelected 点亮 aria-current', () => {
+    const { onSelectRoot } = renderWithRootPath({});
+    const strip = container.querySelector<HTMLButtonElement>('button.lt-tree-root-path');
+    expect(strip).not.toBeNull();
+    expect(strip?.getAttribute('aria-label')).toBe('根目录：D:/lt-user-data/LearningText');
+    expect(strip?.getAttribute('data-tree-node-id')).toBe('1');
+    expect(strip?.getAttribute('data-tree-node-type')).toBe('dir');
+    expect(strip?.getAttribute('aria-current')).toBeNull();
+    act(() => {
+      strip?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(onSelectRoot).toHaveBeenCalledTimes(1);
+    // 显式选中根：aria-current 点亮（单一事实来源，不因「落点恰为根」误亮）
+    renderWithRootPath({ rootSelected: true });
+    expect(
+      container
+        .querySelector<HTMLButtonElement>('button.lt-tree-root-path')
+        ?.getAttribute('aria-current'),
+    ).toBe('true');
+  });
+
+  it('pick 模式下根为目标：路径条 data-pick-target 点亮（目录行同款视觉语言）', () => {
+    renderWithRootPath({ dirPickMode: true, pickTargetId: 1 });
+    expect(
+      container
+        .querySelector<HTMLButtonElement>('button.lt-tree-root-path')
+        ?.getAttribute('data-pick-target'),
+    ).toBe('true');
+  });
+
+  it('树列表空白区 pointerdown 清除选中（落点回落根）；行内交互元素命中不触发', () => {
+    const { onClearSelection } = renderWithRootPath({});
+    const list = container.querySelector<HTMLUListElement>('ul.lt-tree-list');
+    expect(list).not.toBeNull();
+    // 空白（目标=列表自身）：清除选中
+    act(() => {
+      list?.dispatchEvent(new MouseEvent('pointerdown', { button: 0, bubbles: true }));
+    });
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
+    // 命中行内交互元素（行钮）：不触发（交由行点选语义）
+    const row = container.querySelector<HTMLButtonElement>(
+      'button[aria-current], .lt-tree-list button',
+    );
+    act(() => {
+      row?.dispatchEvent(new MouseEvent('pointerdown', { button: 0, bubbles: true }));
+    });
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TreePanel M9 面C：拖拽命中锚', () => {
+  it('行容器暴露 data-tree-node-id / data-tree-node-type（elementFromPoint 命中判定锚，与 ⋯ 触发钮 data-node-id 不串扰）', () => {
+    const tree = createRoot(container);
+    const roots = [
+      withChildren(makeTreeRoot({ ...meta(1, '根', 'dir'), parentId: null, virtualPath: '/' }), [
+        makeTreeRoot({ ...meta(2, '笔记', 'dir'), parentId: 1 }),
+        makeTreeRoot(meta(3, 'a.html')),
+      ]),
+    ];
+    act(() => {
+      tree.render(
+        <TreePanel
+          roots={roots}
+          selectedId={null}
+          expanded={new Set()}
+          dirPickMode={false}
+          pickTargetId={null}
+          creatingDirParentId={null}
+          rootPath={null}
+          rootSelected={false}
+          onToggle={vi.fn()}
+          onSelect={vi.fn()}
+          onClearSelection={vi.fn()}
+          onSelectRoot={vi.fn()}
+          onDropMove={vi.fn()}
+          onStartCreateDir={vi.fn()}
+          onConfirmCreateDir={vi.fn()}
+          onCancelCreateDir={vi.fn()}
+          onTrash={vi.fn()}
+          onRename={vi.fn()}
+          onStartMove={vi.fn()}
+          onImportHtml={vi.fn()}
+        />,
+      );
+    });
+    const dirRow = container.querySelector<HTMLElement>('[data-tree-node-id="2"]');
+    expect(dirRow?.getAttribute('data-tree-node-type')).toBe('dir');
+    const fileRow = container.querySelector<HTMLElement>('[data-tree-node-id="3"]');
+    expect(fileRow?.getAttribute('data-tree-node-type')).toBe('file');
+    // 无拖拽会话：落点/源行变体不挂（dragging 门控）
+    expect(dirRow?.getAttribute('data-drop-target')).toBeNull();
+    expect(dirRow?.getAttribute('data-drag-source')).toBeNull();
   });
 });

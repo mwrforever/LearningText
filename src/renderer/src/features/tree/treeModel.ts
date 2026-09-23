@@ -54,6 +54,26 @@ export function isDescendant(
   return walk(ancestor.children);
 }
 
+/** 根节点约定 id=1（M1 v1 种子，与 Workspace/TreePanel 同源字面）：parentId 为 null 的只有根 */
+const ROOT_ID = 1;
+
+/**
+ * 拖拽落点合法性（M9 FR-TREE-01，纯函数供 TreePanel 与单测共用）：目标须为目录
+ * （targetType 来自行容器 data-tree-node-type 锚）且非源自身、非源当前父级（同父移动=
+ * 无动作，moveNode 亦会撞同名约束——「无动作」不伪装成可放置）、非源后代。后代判定
+ * 复用 isDescendant 保守语义：祖先不在树中（未加载）放行，越界由主进程兜底拒绝
+ */
+export function canDropOn(
+  roots: readonly TreeNode[],
+  source: NodeMeta,
+  targetId: number,
+  targetType: string | undefined,
+): boolean {
+  if (targetType !== 'dir' || targetId === source.id) return false;
+  if (targetId === (source.parentId ?? ROOT_ID)) return false;
+  return !isDescendant(roots, source.id, targetId);
+}
+
 /** 收集「stale 且已展开」的节点 id——组件据此重取 children（expanded 集合 UI 态外部传入） */
 export function collectStaleExpanded(
   roots: readonly TreeNode[],

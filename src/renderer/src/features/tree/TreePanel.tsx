@@ -1,29 +1,28 @@
 /**
- * 树面板（M3 spec §6 → M7 树体验批次重制）：递归渲染 TreeNode（仅呈现/事件，数据归
- * Workspace+treeModel）。M7 交互升级（用户需求 1/3/4/5）：
- * —— 折叠可见化 ——目录行前置 chevron 指示器（折叠 ▸ / 展开 ▾，旋转 90° transform 过渡，
- * 禁高度动画——设计系统 §6「仅 transform/opacity 合成器路径」红线）；展开态目录图标
- * FolderOpen（展开集经 props 下传，M6 纯呈现批次的接口红线随功能批次解除）。
- * —— 图标区分 ——类型图标按类型着色（低饱和双主题色板，映射见 treeIconClassFor），
- * 尺寸升 16px（size-4）。
- * —— 行内新建 ——目录新建进入行内命名：目标父的子级首位渲染命名输入行
- * （CreateDirRow，Enter / 失焦提交、空草稿与 Esc 取消），确认经 onConfirmCreateDir 走
- * createNode，失败保留行内编辑态并重新聚焦可改名重试；原「固定名直接入库」路径退役。
- * 失焦提交与「新建动作一次性收口」为用户实测反馈修复（原「失焦不取消」致命名行永久
- * 滞留、空目录看似长期处于新建态；现语义与 Windows 资源管理器一致：行只承载本次新建
- * 动作，提交后即为普通目录行，重命名须显式走工具栏/行内菜单）。
- * —— 导入入口 ——「新建文件」钮升级为「导入 HTML 文件」（onImportHtml，流程归 Workspace）。
- * 目录点选模式（dirPickMode）由 move / import-html 两流程共用：dir 点选=选定目标
- * （data-pick-target 高亮），file 点选禁用——合法性判定与确认归各流程自身。
- * 行内「⋯」菜单（M5 批次④ Task 10）：每行 dropdown-menu 提供重命名/移动到…/删除（M6 起带
- * 图标），dir 与 file 均有，操作以节点 id 直传（脱离 selectedId 选中锚——目录不开标签即可
- * 操作；根为唯一例外，不渲染入口）。
- * 树交互修复批次（用户实测反馈②④⑤）：②隐藏合成根行——用户数据目录即默认根，根子级顶层
- * 直出，工具栏下方以小字展示保存路径（lt-tree-root-path）；nav data-ready 为装配完成信号锚
- * （替代原「根按钮出现」等待语义）。④目录点选 = 选中 + 展开/折叠（VS Code 同构：点选目录
- * 同时上抛 onSelect 与 onToggle，新建/导入落点随点选目录）。⑤子级渲染条件改展开判定
- * （isExpandedNode）——修复 M3 起「装载即恒可见、折叠从未真正收起子级」的存量缺陷
- * （chevron M7 落地后才显形为「收起无反应」）。
+ * 树面板（M3 spec §6 → M7 树体验批次重制 → M9 交互增强批次，FR-TREE-01/02；设计依据
+ * `docs/design/2026-09-23-M9交互蓝图.md` 面 B/C）：递归渲染 TreeNode（仅呈现/事件，数据归
+ * Workspace+treeModel）。
+ * —— 折叠可见化（M7）——目录行前置 chevron 指示器（旋转 90° transform 过渡，禁高度动画）；
+ * 展开态目录图标 FolderOpen。
+ * —— 行内新建（M7→M8 收口）——目录新建进入行内命名（Enter / 失焦提交、空草稿与 Esc 取消），
+ * 失败 toast 并同样收口命名行（不留在编辑态，避免焦点陷阱）。
+ * —— 导入入口（M7）——「导入 HTML 文件」钮；目录点选模式（dirPickMode）由 move /
+ * import-html 两流程共用：dir 点选=选定目标（data-pick-target 高亮），file 点选禁用。
+ * —— 根目录入口（M9 面 B）——保存路径小字升为「根目录」可点选入口（根行隐藏后本条即根的
+ * 代理行）：点击上抛 onSelectRoot（常规模式=树选中根；pick 模式=目标定为根），命中态经
+ * aria-current 高亮；同时承载拖拽落点（data-tree-node-id="1"）。
+ * —— 空白区失焦（M9 面 B）——树列表空白区 pointerdown（左键、非交互元素、非 pick 模式）
+ * = 清除树选中（新建/导入/粘贴落点回落根）；Esc 为键盘等价（焦点在 nav 内且未被消费）。
+ * —— 拖拽移动（M9 面 C）——pointer 事件自制拖拽（非 HTML5 DnD：幽灵与微交互完全可控、
+ * 与侧栏分隔条拖拽同构、真机 E2E 可确定性驱动）：阈值 5px 起拖（未越阈交还原点击语义，
+ * 越阈置 engaged 抑制 click 防误选中）；幽灵两层结构 portal 到 body（跟随层 inline
+ * transform 直写零过渡零 React 渲染 + 动画层入场/收场 keyframes）；命中判定
+ * elementFromPoint → 最近 [data-tree-node-id]（目标变化才进 state）；合法落点复用
+ * data-pick-target 视觉语言（data-drop-target），自身/后代/原父级/文件行为非法
+ * （data-drop-invalid 破坏色弱面）；合法折叠目录悬停 600ms 自动展开（单层，不级联）；
+ * 抬起合法 → onDropMove（drop 收场：跟随层 180ms 过渡飞向落点行中心 + 卡片退场），
+ * 取消/pointercancel/Esc → 原位退场；两路收场均 fill-mode-forwards（reduced-motion
+ * 下防回弹滞留）。
  */
 import {
   ChevronRight,
@@ -41,6 +40,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { NodeMeta } from '../../../../shared/vfs-contract';
 import {
   DropdownMenu,
@@ -50,13 +50,22 @@ import {
   DropdownMenuTrigger,
 } from '@components/ui/dropdown-menu';
 import { ICON_BUTTON } from '../ui/classStrings';
-import type { TreeNode } from '../tree/treeModel';
+import { canDropOn, findNode, type TreeNode } from '../tree/treeModel';
 
 /** 树栏视图态（M5 三态容器）：资源树 / 全局搜索（Task 7）/ 回收站（M5 批次②） */
 export type TreePaneView = 'tree' | 'search' | 'trash';
 
-/** 根节点约定 id=1（M1 v1 种子）：根不可重命名/移动（UI 禁用入口） */
+/** 根节点约定 id=1（M1 v1 种子）：根不可重命名/移动（UI 禁用入口），但可作为拖拽落点 */
 const ROOT_ID = 1;
+
+/** 拖拽起拖位移阈值（px，输入容差非布局间距，蓝图 C.1）：未越阈抬起=还原点击语义 */
+const TREE_DRAG_THRESHOLD_PX = 5;
+/** 合法折叠目录悬停自动展开驻留时长（毫秒，蓝图 C.1）：单层展开，不级联 */
+const TREE_DRAG_EXPAND_DWELL_MS = 600;
+/** 幽灵相对指针的偏移（px）：左上角=指针+(8,8)「提在手里」姿态（蓝图 C.2） */
+const GHOST_OFFSET_PX = 8;
+/** 幽灵收场动画时长（毫秒）：与收场类串 `duration-180` 两处同步修改（蓝图 C.4 fast 档） */
+const GHOST_EXIT_MS = 180;
 
 /**
  * 树节点类型图标（映射与设计系统 §九-9 同族）：dir → Folder/FolderOpen（按展开态）；
@@ -87,6 +96,33 @@ function treeIconClassFor(meta: NodeMeta): string {
   return 'text-sky-500 dark:text-sky-400';
 }
 
+/** 拖拽命中结果（elementFromPoint → 最近 [data-tree-node-id] 的行身份） */
+interface DragHit {
+  readonly id: number;
+  readonly type: string;
+}
+
+/** 拖拽会话呈现态（React 承载：源行弱化/落点高亮/幽灵形态派生；指针位置走 ref 直写不进 state） */
+interface DragView {
+  readonly source: NodeMeta;
+  readonly startX: number;
+  readonly startY: number;
+  readonly targetId: number | null;
+  readonly targetValid: boolean;
+  readonly phase: 'drag' | 'drop' | 'cancel';
+}
+
+/** 拖拽会话命令态（ref 承载：pointermove 高频路径零 React 渲染，收口读「此刻」值） */
+interface DragSession {
+  readonly source: NodeMeta;
+  readonly startX: number;
+  readonly startY: number;
+  active: boolean;
+  targetId: number | null;
+  targetValid: boolean;
+  dwellTimer: number | null;
+}
+
 export interface TreePanelProps {
   readonly roots: readonly TreeNode[];
   readonly selectedId: number | null;
@@ -103,8 +139,16 @@ export interface TreePanelProps {
    * 不渲染该行。数据目录仅经设置迁移变更且迁移即重启，挂载期快照恒有效
    */
   readonly rootPath: string | null;
+  /** 根目录是否处于树选中态（M9：路径条命中高亮；选中可经点空白回退——见 onClearSelection） */
+  readonly rootSelected: boolean;
   onToggle(id: number): void;
   onSelect(node: NodeMeta): void;
+  /** 清除树选中（M9：点树空白区=失焦回落，新建/导入/粘贴落点随之回落根） */
+  onClearSelection(): void;
+  /** 选中根目录（M9：路径条即根目录入口；move/import-html 点选模式下同义为「目标=根」） */
+  onSelectRoot(): void;
+  /** 拖拽落定（M9 面 C）：合法性已在面板内判定，落库与结果呈现归 Workspace（moveNode 链） */
+  onDropMove(sourceId: number, targetDirId: number): void;
   /** 进入行内新建目录流程（工具栏钮入口；上下文父在面板内推导） */
   onStartCreateDir(parentId: number): void;
   /** 行内命名提交（Enter / 失焦）：落库成功清命名行、失败 toast 并同样清行（不留在编辑态） */
@@ -136,13 +180,18 @@ const ROW_MENU_TRIGGER_CLASS =
  * 行级元素不加按压态（宽行缩放即抖动，且行点击结果由选中态自证）——按压纪律见 classStrings
  */
 const TREE_ROW_BUTTON_CLASS =
-  'min-w-0 flex-1 flex items-center gap-1.5 rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40 aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground data-[pick-target=true]:bg-primary/10 data-[pick-target=true]:ring-1 data-[pick-target=true]:ring-ring';
+  'min-w-0 flex-1 flex items-center gap-1.5 rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40 aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground data-[pick-target=true]:bg-primary/10 data-[pick-target=true]:ring-1 data-[pick-target=true]:ring-ring group-data-[drop-target=true]:bg-primary/10 group-data-[drop-target=true]:ring-1 group-data-[drop-target=true]:ring-ring group-data-[drop-invalid=true]:bg-destructive/10 group-data-[drop-invalid=true]:ring-1 group-data-[drop-invalid=true]:ring-destructive';
+
+/** 行容器拖拽变体（M9 面 C 落点反馈，蓝图 C.3）：合法落点与 data-pick-target 逐字节同形
+ * （同一套「这是落点」语言），非法落点走破坏色弱面（不给两套「不可」语言）；源行弱化
+ * opacity-40 + 100ms opacity 过渡 */
+const TREE_ROW_DRAG_CLASS =
+  'transition-opacity duration-100 data-[drag-source=true]:opacity-40 data-[drop-target=true]:bg-primary/10 data-[drop-target=true]:ring-1 data-[drop-target=true]:ring-ring data-[drop-invalid=true]:bg-destructive/10 data-[drop-invalid=true]:ring-1 data-[drop-invalid=true]:ring-destructive';
 
 /**
  * 行内新建目录命名行（用户实测反馈后的文件系统语义版）：自持草稿态（预填「新建目录」、
  * 挂载即聚焦全选，键入即覆盖）。**本次新建动作内一次性收口**——Enter 提交、Esc 取消、
- * 失焦提交三路都以「提交受理 / 取消」终结行内态，不存在悬空的命名行（原「失焦不取消」
- * 曾使失焦后的行永久滞留树中，用户实测为「一直处于新建状态」，已推翻）。
+ * 失焦提交三路都以「提交受理 / 取消」终结行内态，不存在悬空的命名行。
  * 失焦语义（与 Windows 资源管理器同构）：草稿 trim 非空 → 以该名提交；trim 为空 → 视同
  * 取消（不留无名目录）。提交结果（落库成功/失败）由 Workspace 收口：失败 toast 原因并
  * **同时关闭命名行**——失败不留在编辑态，故不存在「用户已离开却每次点击都重发一次失败
@@ -215,7 +264,9 @@ function isExpandedNode(node: TreeNode, expanded: ReadonlySet<number>): boolean 
 /**
  * 树节点行（行内菜单承载容器 + 主按钮 + 子级容器）：主按钮占余宽，行尾「⋯」触发钮
  * 20px 独立成钮；目录行前置 chevron（展开旋转 90°，transform 合成器路径），文件行以
- * 等宽占位保持类型图标纵向对齐
+ * 等宽占位保持类型图标纵向对齐。行容器持有 data-tree-node-id / data-tree-node-type
+ * （拖拽命中判定锚；不复用 ⋯ 触发钮的 button[data-node-id]——E2E 定位锚语义不拓宽），
+ * 并承载拖拽三变体（源行弱化 / 合法落点 / 非法落点，蓝图 C.3）
  */
 function TreeItem({
   node,
@@ -224,6 +275,10 @@ function TreeItem({
   dirPickMode,
   pickTargetId,
   creatingDirParentId,
+  dragSourceId,
+  dropTargetId,
+  dropTargetValid,
+  dragging,
   onToggle,
   onSelect,
   onConfirmCreateDir,
@@ -231,6 +286,8 @@ function TreeItem({
   onRename,
   onStartMove,
   onTrash,
+  onRowPointerDown,
+  consumeDragClick,
 }: {
   readonly node: TreeNode;
   readonly selectedId: number | null;
@@ -238,6 +295,14 @@ function TreeItem({
   readonly dirPickMode: boolean;
   readonly pickTargetId: number | null;
   readonly creatingDirParentId: number | null;
+  /** 拖拽源行 id（null=无拖拽会话）：源行弱化 opacity-40 */
+  readonly dragSourceId: number | null;
+  /** 当前命中落点行 id（null=无命中） */
+  readonly dropTargetId: number | null;
+  /** 命中落点是否合法（false 且命中本行=非法落点破坏色提示） */
+  readonly dropTargetValid: boolean;
+  /** 拖拽会话进行中（本行命中判定仅在进行中呈现） */
+  readonly dragging: boolean;
   onToggle(id: number): void;
   onSelect(node: NodeMeta): void;
   onConfirmCreateDir(parentId: number, name: string): void;
@@ -245,6 +310,10 @@ function TreeItem({
   onRename(id: number): void;
   onStartMove(id: number): void;
   onTrash(nodeId: number): void;
+  /** 行主按钮 pointerdown（拖拽手势入口，判定归 TreePanel） */
+  onRowPointerDown(e: React.PointerEvent<HTMLButtonElement>, meta: NodeMeta): void;
+  /** 点击前消费拖拽残留（越阈拖拽后落回源行的 click 不作点选/开签，蓝图 C.1） */
+  consumeDragClick(): boolean;
 }): React.JSX.Element {
   const isDir = node.meta.nodeType === 'dir';
   const expandedNode = isExpandedNode(node, expanded);
@@ -253,7 +322,20 @@ function TreeItem({
   return (
     // 行容器为 group：「⋯」触发钮的悬停/焦点显形作用域（见 ROW_MENU_TRIGGER_CLASS 注）
     <li className="list-none">
-      <div className="group flex items-center">
+      <div
+        className={`group flex items-center ${TREE_ROW_DRAG_CLASS}`}
+        data-tree-node-id={node.meta.id}
+        data-tree-node-type={node.meta.nodeType}
+        data-drag-source={
+          dragging && dragSourceId === node.meta.id && node.meta.id !== ROOT_ID ? 'true' : undefined
+        }
+        data-drop-target={
+          dragging && dropTargetValid && dropTargetId === node.meta.id ? 'true' : undefined
+        }
+        data-drop-invalid={
+          dragging && !dropTargetValid && dropTargetId === node.meta.id ? 'true' : undefined
+        }
+      >
         <button
           type="button"
           aria-current={node.meta.id === selectedId ? 'true' : undefined}
@@ -262,7 +344,12 @@ function TreeItem({
           }
           disabled={dirPickMode && !isDir}
           className={TREE_ROW_BUTTON_CLASS}
+          onPointerDown={(e) => {
+            onRowPointerDown(e, node.meta);
+          }}
           onClick={() => {
+            // 拖拽残留消费（蓝图 C.1）：越阈拖拽取消后落回源行的 click 不作点选/开签
+            if (consumeDragClick()) return;
             // 目录点选模式：dir 点选上抛（Workspace 按流程记账目标），file 点选已被 disabled 拦截
             if (dirPickMode) {
               if (isDir) onSelect(node.meta);
@@ -296,7 +383,8 @@ function TreeItem({
         </button>
         {/* 行内「⋯」菜单（Task 10）：根不渲染（根不可 rename/move/trash）；移动项与工具栏
             同款在点选模式期间禁用（防模式内再进模式）。键盘管理（方向键/Enter/Esc/焦点
-            回落）由 radix dropdown-menu 自带 */}
+            回落）由 radix dropdown-menu 自带；拖拽等价路径=「移动到…」（WCAG 2.5.7：
+            拖拽不是唯一方式，蓝图 C.6） */}
         {node.meta.id !== ROOT_ID ? (
           <DropdownMenu>
             {/* 可访问名恒为「更多操作」（不含节点名）：既有 E2E 以 getByRole name 子串匹配
@@ -356,6 +444,10 @@ function TreeItem({
               dirPickMode={dirPickMode}
               pickTargetId={pickTargetId}
               creatingDirParentId={creatingDirParentId}
+              dragSourceId={dragSourceId}
+              dropTargetId={dropTargetId}
+              dropTargetValid={dropTargetValid}
+              dragging={dragging}
               onToggle={onToggle}
               onSelect={onSelect}
               onConfirmCreateDir={onConfirmCreateDir}
@@ -363,6 +455,8 @@ function TreeItem({
               onRename={onRename}
               onStartMove={onStartMove}
               onTrash={onTrash}
+              onRowPointerDown={onRowPointerDown}
+              consumeDragClick={consumeDragClick}
             />
           ))}
         </ul>
@@ -387,8 +481,271 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
     props.roots.length === 1 && firstRoot !== undefined && firstRoot.meta.id === ROOT_ID
       ? firstRoot.children
       : props.roots;
+  // —— M9 面 B：树导航引用（Esc 清除选中的焦点域判定）——
+  const navRef = useRef<HTMLElement | null>(null);
+  // —— M9 面 C：拖拽会话——命令态 ref（高频路径）+ 呈现态 state（源行弱化/落点/幽灵形态）
+  const dragRef = useRef<DragSession | null>(null);
+  const [dragView, setDragView] = useState<DragView | null>(null);
+  // 幽灵跟随层 ref：pointermove 直写 transform（零过渡零 React 渲染，蓝图 C.2 红线）
+  const ghostRef = useRef<HTMLDivElement | null>(null);
+  // 越阈标记（click 抑制）：pointerdown 重置、越阈置位、行 onClick 消费
+  const dragEngagedRef = useRef(false);
+  // 幽灵收场定时器句柄：新手势起拖前取消上一会话的收场计时（防其迟到把新幽灵清空）
+  const ghostExitTimerRef = useRef<number | null>(null);
+  // 在途手势收口（clearListeners + dwell + 接管态）：卸载兜底经此调用（Minor 5——组件卸载
+  // 不走 pointerup，残留的 onMove 仍可越阈复活接管态并对已卸载组件 setState）
+  const teardownGestureRef = useRef<(() => void) | null>(null);
+  // expanded/roots 实时镜像（pointermove/dwell 回调闭包在连点/懒加载场景下必陈旧——
+  // Workspace expandedRef 同款同步模式）
+  const expandedRef = useRef(props.expanded);
+  useEffect(() => {
+    expandedRef.current = props.expanded;
+  }, [props.expanded]);
+  const rootsRef = useRef(props.roots);
+  useEffect(() => {
+    rootsRef.current = props.roots;
+  }, [props.roots]);
+  // dirPickMode 实时镜像（拖拽监听器闭包持稳，pick 模式进出不影响在途会话判定）
+  const dirPickModeRef = useRef(props.dirPickMode);
+  useEffect(() => {
+    dirPickModeRef.current = props.dirPickMode;
+  }, [props.dirPickMode]);
+
+  // Esc 清除树选中（M9 面 B 键盘等价，蓝图 B.3）：焦点在资源树 nav 内、未被其他消费者
+  // defaultPrevented、非 pick 模式（pick 目标只由显式点选改变）才生效；菜单/浮层打开时
+  // 焦点在 portal 内（不在 nav 内）天然不误触
+  useEffect(() => {
+    if (props.dirPickMode) return undefined;
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const nav = navRef.current;
+      if (nav === null || !(e.target instanceof Node) || !nav.contains(e.target)) return;
+      props.onClearSelection();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [props.dirPickMode, props.onClearSelection]);
+
+  /** 命中判定（蓝图 C.3）：elementFromPoint → 最近 [data-tree-node-id]；幽灵 pointer-events-none
+   * 不参与命中，拖拽期画布 pointer-events 穿透（theme.css body.lt-tree-dragging） */
+  function hitTest(x: number, y: number): DragHit | null {
+    const el = document.elementFromPoint(x, y);
+    const holder = el !== null ? el.closest<HTMLElement>('[data-tree-node-id]') : null;
+    if (holder === null) return null;
+    const id = Number(holder.dataset.treeNodeId);
+    if (!Number.isInteger(id)) return null;
+    return { id, type: holder.dataset.treeNodeType ?? '' };
+  }
+
+  /** 落点合法性（蓝图 C.3）：纯判定在 treeModel.canDropOn（目录且非自身/非自身后代/
+   * 非源当前父级——同父移动=无动作，moveNode 亦会撞同名约束，不伪装成可放置） */
+  function verdictFor(source: NodeMeta, hit: DragHit | null): boolean {
+    if (hit === null) return false;
+    return canDropOn(rootsRef.current, source, hit.id, hit.type);
+  }
+
+  /** 清驻留展开计时器（目标变化/收口两路共用，成对纪律） */
+  function resetDwell(session: DragSession): void {
+    if (session.dwellTimer !== null) {
+      window.clearTimeout(session.dwellTimer);
+      session.dwellTimer = null;
+    }
+  }
+
+  /**
+   * 行主按钮 pointerdown（拖拽手势入口，蓝图 C.1 状态机）：window 级成对挂卸
+   * move/up/cancel/keydown（M8 分隔条先例）；未越阈抬起=零副作用（点击语义原样）；
+   * 越阈=起拖（body.lt-tree-dragging 全局接管 + 幽灵渲染 + engaged 置位抑制 click）。
+   * 收口（抬起/取消同路径）：摘 body 类、清驻留计时器、播收场动画后卸载幽灵——
+   * pointercancel 必须同清理（漏摘态会把画布永久置为 pointer-events-none）
+   */
+  function onRowPointerDown(e: React.PointerEvent<HTMLButtonElement>, meta: NodeMeta): void {
+    if (e.button !== 0) return;
+    if (dirPickModeRef.current) return; // pick 模式点选语义优先，禁用拖拽（蓝图 C.1）
+    if (dragRef.current !== null) return; // 会话进行中忽略新手势
+    dragEngagedRef.current = false;
+    const session: DragSession = {
+      source: meta,
+      startX: e.clientX,
+      startY: e.clientY,
+      active: false,
+      targetId: null,
+      targetValid: false,
+      dwellTimer: null,
+    };
+    dragRef.current = session;
+    // 上一会话的幽灵收场计时若仍在途，先行取消（Minor 4：防迟到 setDragView(null) 清空新幽灵）
+    if (ghostExitTimerRef.current !== null) {
+      window.clearTimeout(ghostExitTimerRef.current);
+      ghostExitTimerRef.current = null;
+    }
+    // 收口登记（Minor 5：卸载兜底经此清 window 监听器，防卸载后 onMove 复活接管态）
+    teardownGestureRef.current = (): void => {
+      clearListeners();
+      resetDwell(session);
+      resetTakeover();
+    };
+    const onMove = (move: PointerEvent): void => {
+      const s = dragRef.current;
+      if (s === null) return;
+      if (!s.active) {
+        if (Math.hypot(move.clientX - s.startX, move.clientY - s.startY) < TREE_DRAG_THRESHOLD_PX) {
+          return;
+        }
+        // 起拖：全局接管态 + 幽灵渲染 + click 抑制置位（蓝图 C.1）；幽灵初始位=越阈时刻
+        // 指针位（非按下位，避免首帧回跳）
+        s.active = true;
+        dragEngagedRef.current = true;
+        document.body.classList.add('lt-tree-dragging');
+        setDragView({
+          source: s.source,
+          startX: move.clientX,
+          startY: move.clientY,
+          targetId: null,
+          targetValid: false,
+          phase: 'drag',
+        });
+      }
+      // 幽灵跟随：直写 transform（零 transition，位置零延迟，蓝图 C.4 红线）
+      if (ghostRef.current !== null) {
+        ghostRef.current.style.transform = `translate3d(${String(move.clientX + GHOST_OFFSET_PX)}px, ${String(move.clientY + GHOST_OFFSET_PX)}px, 0)`;
+      }
+      // 命中判定仅在目标变化时进 state（蓝图 C.1：pointermove 高频路径零 React 渲染）
+      const hit = hitTest(move.clientX, move.clientY);
+      const valid = verdictFor(s.source, hit);
+      const hitId = hit?.id ?? null;
+      if (hitId !== s.targetId || valid !== s.targetValid) {
+        s.targetId = hitId;
+        s.targetValid = valid;
+        setDragView((prev) =>
+          prev === null ? prev : { ...prev, targetId: hitId, targetValid: valid },
+        );
+        resetDwell(s);
+        // 合法折叠目录驻留自动展开（蓝图 C.1：单层 600ms，走既有 onToggle 含懒加载）
+        if (valid && hit !== null) {
+          const node = findNode(rootsRef.current, hit.id);
+          const collapsed =
+            node !== null && node.meta.nodeType === 'dir' && !expandedRef.current.has(hit.id);
+          if (collapsed) {
+            s.dwellTimer = window.setTimeout(() => {
+              onToggleRef.current(hit.id);
+            }, TREE_DRAG_EXPAND_DWELL_MS);
+          }
+        }
+      }
+    };
+    const clearListeners = (): void => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKey, true);
+    };
+    const resetTakeover = (): void => {
+      document.body.classList.remove('lt-tree-dragging');
+    };
+    /**
+     * 收口（抬起/取消/Esc 同路径）：合法抬起=drop 收场（跟随层 180ms 过渡飞向落点行中心，
+     * 卡片退场）+ onDropMove 落库；其余=cancel 原位退场。幽灵摘除在收场动画播完后
+     * （GHOST_EXIT_MS 与类串 duration-180 同源）——「先卸载再补动画」会丢退场
+     */
+    const finish = (committed: boolean): void => {
+      const s = dragRef.current;
+      if (s === null) return;
+      clearListeners();
+      resetDwell(s);
+      resetTakeover();
+      teardownGestureRef.current = null;
+      // 抑制标记宏任务后复位：click 同步于 pointerup 后、宏任务前到达（同源行抬起仍被
+      // 消费）；Esc/pointercancel/树外抬起等不产生行 click 的路径不再残留标记吞掉后续
+      // 键盘 Enter/新点击（Major 1 修复）
+      window.setTimeout(() => {
+        dragEngagedRef.current = false;
+      }, 0);
+      if (!s.active) {
+        // 未越阈：纯点击路径，零副作用零动画
+        dragRef.current = null;
+        setDragView(null);
+        return;
+      }
+      const drop = committed && s.targetValid && s.targetId !== null;
+      const phase: DragView['phase'] = drop ? 'drop' : 'cancel';
+      if (drop && s.targetId !== null) {
+        // 跟随层 transform 改写为落点行中心（transition 类随 phase 切换同时生效——
+        // CSS transition 以 after-change style 的 transition-property 判定，可触发插值）
+        const holder = document.querySelector<HTMLElement>(
+          `[data-tree-node-id="${String(s.targetId)}"]`,
+        );
+        if (holder !== null && ghostRef.current !== null) {
+          const rect = holder.getBoundingClientRect();
+          ghostRef.current.style.transform = `translate3d(${String(rect.left + rect.width / 2 - 24)}px, ${String(rect.top + rect.height / 2 - 24)}px, 0)`;
+        }
+        props.onDropMove(s.source.id, s.targetId);
+      }
+      setDragView((prev) =>
+        prev === null ? prev : { ...prev, phase, targetId: s.targetId, targetValid: s.targetValid },
+      );
+      dragRef.current = null;
+      ghostExitTimerRef.current = window.setTimeout(() => {
+        setDragView(null);
+      }, GHOST_EXIT_MS);
+    };
+    const onUp = (up: PointerEvent): void => {
+      finish(up.button === 0);
+    };
+    const onCancel = (): void => {
+      finish(false);
+    };
+    const onKey = (key: KeyboardEvent): void => {
+      if (key.key !== 'Escape') return;
+      // Esc 取消拖拽并阻断同刻其它 Esc 消费（蓝图 C.1）
+      key.preventDefault();
+      finish(false);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    // capture 阶段：先于「空白区清除选中」的 bubble 监听器消费 Esc 并 preventDefault，
+    // 防同刻「取消拖拽 + 清除树选中」双触发（蓝图 C.1）
+    window.addEventListener('keydown', onKey, true);
+  }
+
+  /** 点击前消费拖拽残留（蓝图 C.1）：越阈拖拽后浏览器仍会对源行派发 click，不作点选 */
+  function consumeDragClick(): boolean {
+    if (dragEngagedRef.current) {
+      dragEngagedRef.current = false;
+      return true;
+    }
+    return false;
+  }
+
+  // onToggle 实时镜像（dwell 计时器回调闭包持稳，展开集更新不重挂计时器）
+  const onToggleRef = useRef(props.onToggle);
+  useEffect(() => {
+    onToggleRef.current = props.onToggle;
+  }, [props.onToggle]);
+
+  // 拖拽会话卸载兜底（M8 分隔条同款）：组件卸载不会走到 pointerup——漏摘 body 类会把
+  // 画布永久置为 pointer-events-none；在途手势的 window 监听器一并摘除（Minor 5）
+  useEffect(() => {
+    return () => {
+      teardownGestureRef.current?.();
+      teardownGestureRef.current = null;
+      const session = dragRef.current;
+      if (session !== null) resetDwell(session);
+      document.body.classList.remove('lt-tree-dragging');
+    };
+  }, []);
+
+  const dragging = dragView !== null && dragView.phase === 'drag';
+  // 幽灵图标形态（源行同形：目录按当前展开态换 Folder/FolderOpen，「抓住的就是你看到的那个」）
+  const ghostNode = dragView !== null ? findNode(props.roots, dragView.source.id) : null;
+  const ghostExpanded = ghostNode !== null && isExpandedNode(ghostNode, props.expanded);
+  const GhostIcon = dragView !== null ? treeIconFor(dragView.source, ghostExpanded) : null;
   return (
     <nav
+      ref={navRef}
       aria-label="资源树"
       // 装配完成信号锚（E2E 三 spec 等待点）：roots 非空 = Workspace mount 首拉
       // listChildren 已应用到树——空库也有合成根，置位语义与原「根按钮出现」完全等价；
@@ -452,17 +809,55 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
         ) : null}
       </div>
       {props.rootPath !== null ? (
-        // ②保存路径小字（根行隐藏后补位告知数据落点，VS Code 侧栏同构的 xs muted 形态）：
-        // truncate 截断溢出，title 悬停看全路径；类名 lt-tree-root-path 为 E2E/测试锚点
-        <div
-          className="lt-tree-root-path shrink-0 truncate border-b border-border px-2 py-1 text-xs text-muted-foreground"
+        // ②保存路径小字 → M9 升级为「根目录」可点选入口（蓝图 B.2）：根行隐藏后本条即根的
+        // 代理行——点击上抛 onSelectRoot（常规模式=树选中根；pick 模式=目标定为根），命中态
+        // 经 aria-current 高亮（单一事实来源：显式选中根时才点亮）；同时承载拖拽落点
+        // （data-tree-node-id="1" data-tree-node-type="dir"，data-drop-target 与目录行同形）。
+        // h-6（24px）比树行矮一档=次级信息位阶；类名 lt-tree-root-path 为既有 E2E/测试锚点
+        <button
+          type="button"
+          className="lt-tree-root-path flex h-6 w-full shrink-0 min-w-0 items-center gap-1.5 border-b border-border px-2 text-left text-xs text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground data-[pick-target=true]:bg-primary/10 data-[pick-target=true]:ring-1 data-[pick-target=true]:ring-ring data-[drop-target=true]:bg-primary/10 data-[drop-target=true]:ring-1 data-[drop-target=true]:ring-ring data-[drop-invalid=true]:bg-destructive/10 data-[drop-invalid=true]:ring-1 data-[drop-invalid=true]:ring-destructive"
+          aria-label={`根目录：${props.rootPath}`}
+          aria-current={props.rootSelected ? 'true' : undefined}
           title={props.rootPath}
+          data-tree-node-id={ROOT_ID}
+          data-tree-node-type="dir"
+          data-pick-target={
+            props.dirPickMode && props.pickTargetId === ROOT_ID ? 'true' : undefined
+          }
+          data-drop-target={
+            dragging && dragView !== null && dragView.targetValid && dragView.targetId === ROOT_ID
+              ? 'true'
+              : undefined
+          }
+          data-drop-invalid={
+            dragging && dragView !== null && !dragView.targetValid && dragView.targetId === ROOT_ID
+              ? 'true'
+              : undefined
+          }
+          onClick={props.onSelectRoot}
         >
-          {props.rootPath}
-        </div>
+          <Folder
+            aria-hidden="true"
+            className="size-3.5 shrink-0 text-amber-500 dark:text-amber-400"
+          />
+          <span className="truncate">{props.rootPath}</span>
+        </button>
       ) : null}
-      {/* 顶层列表占满余高并自滚动（页面级不滚动，设计系统文档 §二） */}
-      <ul className="m-0 min-h-0 flex-1 list-none overflow-auto p-2 text-sm">
+      {/* 顶层列表占满余高并自滚动（页面级不滚动，设计系统文档 §二）；类名 lt-tree-list 为
+          M9 空白区锚（蓝图 B.2，替代易断的结构锚）。空白区 pointerdown（M9 面 B）=失焦回落：
+          左键、目标非交互元素（行钮/菜单钮/命名输入/路径条）、非 pick 模式（pick 目标只由
+          显式点选改变，蓝图 B.6）→ 清除树选中，新建/导入/粘贴落点随之回落根；pointerdown
+          （而非 click）使行内命名行的失焦提交先于清除选中完成（蓝图 §八 R7 真机验证项） */}
+      <ul
+        className="lt-tree-list m-0 min-h-0 flex-1 list-none overflow-auto p-2 text-sm"
+        onPointerDown={(e) => {
+          if (e.button !== 0 || props.dirPickMode) return;
+          const target = e.target instanceof Element ? e.target : null;
+          if (target !== null && target.closest('button, input, a') !== null) return;
+          props.onClearSelection();
+        }}
+      >
         {/* ②根层命名行回归顶层：根行已不渲染，TreeItem 内 ROOT_ID 命中分支自然不再生效
             （无双行）；目标父=根时命名行渲染于顶层列表首位 */}
         {props.creatingDirParentId === ROOT_ID ? (
@@ -480,6 +875,10 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
             dirPickMode={props.dirPickMode}
             pickTargetId={props.pickTargetId}
             creatingDirParentId={props.creatingDirParentId}
+            dragSourceId={dragView?.source.id ?? null}
+            dropTargetId={dragView?.targetId ?? null}
+            dropTargetValid={dragView?.targetValid ?? false}
+            dragging={dragging}
             onToggle={props.onToggle}
             onSelect={props.onSelect}
             onConfirmCreateDir={props.onConfirmCreateDir}
@@ -487,9 +886,52 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
             onRename={props.onRename}
             onStartMove={props.onStartMove}
             onTrash={props.onTrash}
+            onRowPointerDown={onRowPointerDown}
+            consumeDragClick={consumeDragClick}
           />
         ))}
       </ul>
+      {/* 拖拽幽灵（M9 面 C，蓝图 C.2）：两层结构 portal 到 document.body——侧栏内容层的
+          animate-in 会写 transform（合成器路径入场），fixed 后代在该窗口内改以动画层为
+          包含块并落入裁剪面（M8 已实测该陷阱）；body portal 零依赖侧栏结构。
+          跟随层 .lt-drag-ghost：fixed left-0 top-0 + inline transform 直写（拖拽期零
+          transition），drop 收场时由收口逻辑改写 transform 指向落点行中心并挂 transition
+          类（data-[phase=drop]:transition-transform）插值飞行；动画层 .lt-drag-ghost-card：
+          48×48 正方形卡片（4px 标尺，蓝图 C.2 尺寸裁决），类型图标=源行同形同色
+          （「抓住的就是你看到的那个」），入场 fade+zoom 100ms、drop/cancel 两路退场均
+          fill-mode-forwards（reduced-motion 下防回弹滞留）。aria-hidden：纯视觉反馈不进
+          可访问树（无键盘拖拽=播报无受益者，等价路径「移动到…」已覆盖，蓝图 C.6） */}
+      {dragView !== null
+        ? createPortal(
+            <div
+              ref={ghostRef}
+              className={`lt-drag-ghost pointer-events-none fixed left-0 top-0 z-50 data-[phase=drop]:transition-transform data-[phase=drop]:duration-180 data-[phase=drop]:ease-out`}
+              data-phase={dragView.phase}
+              style={{
+                transform: `translate3d(${String(dragView.startX + GHOST_OFFSET_PX)}px, ${String(dragView.startY + GHOST_OFFSET_PX)}px, 0)`,
+              }}
+              aria-hidden="true"
+            >
+              <div
+                className={`lt-drag-ghost-card flex size-12 items-center justify-center rounded-lg border border-border bg-popover shadow-md ${
+                  dragView.phase === 'drag'
+                    ? 'duration-100 ease-out animate-in fade-in zoom-in-95'
+                    : dragView.phase === 'drop'
+                      ? 'duration-180 ease-in animate-out fade-out zoom-out-50 fill-mode-forwards'
+                      : 'duration-180 ease-in animate-out fade-out zoom-out-90 fill-mode-forwards'
+                }`}
+              >
+                {GhostIcon === null ? null : (
+                  <GhostIcon
+                    aria-hidden="true"
+                    className={`size-6 ${treeIconClassFor(dragView.source)}`}
+                  />
+                )}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </nav>
   );
 }
