@@ -47,7 +47,7 @@
 | --- | --- | --- | --- | --- |
 | docs/07 | 编辑器与保存管线设计 | 多标签页状态模型、自动保存去抖与写合并（竞态规则）、大文件阈值行为 | M4 开工前 | 待撰写 |
 | docs/08 | 导入导出与辅助功能设计 | 导入冲突判定键与三策略（跳过/重命名/覆盖）语义、vfs:// → 相对路径改写算法、设置 schema、备份命名与恢复流程 | M5 开工前 | 待撰写 |
-| docs/09 | 打包与发布规格 | electron-builder 配置基线、@electron/fuses 关闭清单（待调研项）、release 工作流与签名占位、版本号策略 | M6 发布批次开工前（先完成 fuses 待调研项） | 部分覆盖（2026-09-22）：NSIS 安装位置可选与 author 字段已由 `docs/superpowers/specs/2026-09-22-产品化UI重构-design.md` §5.3 落地；fuses 调研与 afterPack 落地已完成（2026-09-23，`docs/agmds-research/2026-09-23-electron-fuses清单.md`，asar 完整性双 fuse 缓启待本 spec）、release 工作流已建（`.github/workflows/release.yml`）；asar 完整性启用与版本策略仍待本 spec |
+| docs/09 | 打包与发布规格 | electron-builder 配置基线、@electron/fuses 关闭清单（待调研项）、release 工作流与签名占位、版本号策略 | M6 发布批次开工前（先完成 fuses 待调研项） | 部分覆盖（2026-09-22）：NSIS 安装位置可选与 author 字段已由 `docs/superpowers/specs/2026-09-22-产品化UI重构-design.md` §5.3 落地；fuses 调研与 afterPack 落地已完成（2026-09-23，`docs/agmds-research/2026-09-23-electron-fuses清单.md`，asar 完整性双 fuse 缓启待本 spec）、release 工作流已建（`.github/workflows/release.yml`）；asar 完整性启用与版本策略仍待本 spec；**应用内更新规格已独立成文**（2026-09-23，`docs/superpowers/specs/2026-09-23-应用内更新-design.md`：能力矩阵/八态状态机/IPC 契约/安全隐私/不做清单；macOS 自更新随签名证书启用） |
 
 不需要单独 spec 的：M0 脚手架（宪法 C.4/C.6 + TASK.md 执行项已是完整依据）；IPC 字段级契约（在 `src/shared` 以 TS + zod 为单一来源，docs/03 §7 已定通道语义，代码即规格）；安全基线（宪法 B.5 禁令已完备）。
 
@@ -70,4 +70,7 @@
 | 树多层后代缓存元数据不随单条 renamed/moved 广播刷新：getNode 续体只反查事件节点自身、markStaleAround 只标树内直父一层——moved 目录的多层后代 virtualPath 缓存及已开后代标签 meta 靠逐层展开/后续广播收敛（与改前行为一致，无回归） | M7 反馈②④⑤批次审查 P3（2026-09-23） | 后续树同步打磨批次 | 待办 |
 | toast 宿主与壳层底边叠压：宿主 `fixed bottom-4`（距视口底 16px）落在状态栏（24px 高）内部 8px，遮盖状态栏主题/设置钮上沿约 6px 命中区；单条 toast 与画布浮动「从库重新加载」钮（`absolute right-4 bottom-4`）重叠约 10px；`z-50` + `pointer-events-auto` 使被覆盖处点击被 toast 吞掉 | M8 批次审查 P2（2026-09-23；存量缺陷，非本批引入） | 下次触碰 toast 宿主定位时（须与进度面板 `bottom-14` 协同上移，属呈现面位移改动） | 待办 |
 | 还原失败后半开状态改 relaunch：备份还原 rename 极端失败后重开的 db 与 vfs/search 旧连接脱节，此后库操作报错至重启——建议 relaunch+exit 替代重开连接（重开无人使用的连接不如干净重启） | M5 终审（2026-09-21） | 后续批次打磨 | 待办（M6 数据目录迁移已按同向 D9 语义落地：关库后失败=清理+重启走旧指针） |
+| 主进程 `will-frame-navigate` 导航闸门接线（交互态站内导航已由注入桥最低形态承接：链接/表单取消就地导航 + 站内链接交父窗开新标签；脚本式 location.assign/window.open 不在覆盖面——蓝图 §八 R3 已知边界） | M9 交互蓝图 A.3 导航闸门 + 设计系统 §十四 | 下一画布批次（触碰 vfsProtocol/webContents 生命周期时） | 待办 |
+| macOS 自更新启用：需签名证书（Squirrel.Mac 强制签名）+ mac zip target（dmg 不可自更新）+ latest-mac.yml 产物；证书就绪前 macOS 显式降级 unsupported 说明（已落地） | docs/superpowers/specs/2026-09-23-应用内更新-design.md 能力矩阵；FR-UPDATE-01 | 签名证书就绪时（与 forceCodeSigning/asar fuse 同批） | 待办 |
+| 更新链真机打包冒烟：打包版启动 → 检查到新版（需已发布 Release 含 latest.yml）→ 下载 → 重启安装全链路；开发形态仅降级呈现已 E2E 覆盖 | docs/superpowers/specs/2026-09-23-应用内更新-design.md「必须真机验证的项」 | v0.2.0 发布批次（本批发版冒烟时顺验检查面；下载/重启安装待 v0.2.1+ 存量发布后具备可检条件） | 待办 |
 | macOS Playwright _electron 进程退出验证不可驱动（guard E2E darwin 跳过）——Electron quit 流程被 guard preventDefault 中断后 forceClose 关窗不在 quit 流程内，mac window-all-closed 不自动退，Playwright 连接与 OS 句柄存在固有窗口；guard 链验收由 Windows/Linux 覆盖，mac 真实验证记录见 M4 Task 10 报告 §十二（第四轮 CI dialog 链全通日志） | M4 Task 10 fix loop 四轮 CI 实证 + SDD breaker 裁决（2026-09-19）；降级先例：spec §9.1-7 检查元素原生 popup 不可驱动 | mac 平台 guard E2E 覆盖需求出现时（或 Playwright _electron 进程退出能力演进时）重评 | 已裁决（darwin 跳过 + 留证） |
