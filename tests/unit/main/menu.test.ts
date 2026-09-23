@@ -146,6 +146,20 @@ describe('createMenuTemplate', () => {
     expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'export' });
   });
 
+  it('粘贴导入项（M9 FR-IO-03）：无 accelerator（Ctrl+V 由渲染层作用域监听，原生键位会劫持编辑器粘贴），点击下发 paste-import', () => {
+    const template = createMenuTemplate(false) as Array<{
+      label: string;
+      submenu: Array<Record<string, unknown>>;
+    }>;
+    const items = template.find((m) => m.label === '导入导出')?.submenu ?? [];
+    const pasteImport = items.find((item) => item['id'] === 'menu-paste-import');
+    expect(pasteImport).toBeDefined();
+    expect(pasteImport?.['label']).toBe('粘贴导入');
+    expect(pasteImport?.['accelerator']).toBeUndefined(); // 不注册全局键位（设计裁决）
+    (pasteImport?.['click'] as () => void)();
+    expect(sendMock).toHaveBeenCalledWith(IPC.shellCommand, { type: 'paste-import' });
+  });
+
   it('macOS 模板首项为 appMenu role；Windows 非 mac 无', () => {
     const mac = createMenuTemplate(true) as Array<Record<string, unknown>>;
     expect(mac[0]?.['role']).toBe('appMenu');

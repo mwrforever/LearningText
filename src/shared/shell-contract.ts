@@ -7,7 +7,10 @@
  * import 为菜单「导入…」下发（M5 批次⑥ Task 12，目录选择 → 策略确认 → io:import 链入口）；
  * import-html 为「导入 HTML 文件」下发（M7：树工具栏/菜单/Ctrl+N/欢迎页共用，文件选择 →
  * 导入确认浮层 → io:import 单文件链入口——空文件创建入口退役，导入即建）；
- * export 为菜单「导出…」下发（M5 批次⑥ Task 13，目录选择 → io:export → 完成动作链入口）。
+ * export 为菜单「导出…」下发（M5 批次⑥ Task 13，目录选择 → io:export → 完成动作链入口）；
+ * paste-import 为「粘贴导入」下发（M9 批次 FR-IO-03：主进程读剪贴板文件清单直接导入当前
+ * 落点；Ctrl/Cmd+V 由渲染层在资源树视图内作用域监听承载——原生菜单 accelerator 会全局
+ * 劫持编辑器/画布内的粘贴语义，故菜单项不注册键位）。
  */
 import { z } from 'zod';
 
@@ -20,7 +23,8 @@ export type ShellCommand =
   | { readonly type: 'global-search' }
   | { readonly type: 'open-settings' }
   | { readonly type: 'import' }
-  | { readonly type: 'export' };
+  | { readonly type: 'export' }
+  | { readonly type: 'paste-import' };
 
 /**
  * shell:open-path 请求：在系统文件管理器中打开目录（shell.openPath）。

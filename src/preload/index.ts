@@ -9,6 +9,7 @@ import type { Result } from '../shared/result';
 import type { ShellCommand } from '../shared/shell-contract';
 import type { VfsChangedBroadcast } from '../shared/vfs-contract';
 import type { IoProgress } from '../shared/io-contract';
+import type { UpdateState } from '../shared/update-contract';
 import type { WindowApi } from '../shared/window-api';
 
 const api: WindowApi = {
@@ -45,6 +46,8 @@ const api: WindowApi = {
   pickDirectory: (request) => ipcRenderer.invoke(IPC.ioPickDirectory, request),
   // 无参通道沿 settingsGet 先例固定发 null（HTML 文件选择，M7 单文件导入入口）
   pickHtmlFile: () => ipcRenderer.invoke(IPC.ioPickFile, null),
+  // 粘贴导入（M9 批次）：请求只携目标父与策略（源路径由主进程读剪贴板，不经渲染层）
+  importFromClipboard: (request) => ipcRenderer.invoke(IPC.ioImportClipboard, request),
   // —— 导出域（M5 批次⑥ Task 13）：invoke 长任务 + 打开目录完成动作 ——
   exportNodes: (request) => ipcRenderer.invoke(IPC.ioExport, request),
   // openPath 白名单边界（B.5-4 精神）：dir 仅接受主进程 dialog 产出的目录串，主进程
@@ -78,6 +81,17 @@ const api: WindowApi = {
     const listener = (_event: IpcRendererEvent, value: string): void => callback(value);
     ipcRenderer.on(IPC.backupDone, listener);
     return () => ipcRenderer.removeListener(IPC.backupDone, listener);
+  },
+  // —— 应用内更新域（M9 批次）：四通道全无参（null 先例同 settingsGet），状态订阅退订成对 ——
+  getUpdateState: () => ipcRenderer.invoke(IPC.updateGetState, null),
+  checkForUpdates: () => ipcRenderer.invoke(IPC.updateCheck, null),
+  downloadUpdate: () => ipcRenderer.invoke(IPC.updateDownload, null),
+  installUpdate: () => ipcRenderer.invoke(IPC.updateInstall, null),
+  /** 订阅更新状态广播（UpdateState 可辨识联合）：同 onVfsChanged 先例，退订成对 */
+  onUpdateState: (callback) => {
+    const listener = (_event: IpcRendererEvent, value: UpdateState): void => callback(value);
+    ipcRenderer.on(IPC.updateState, listener);
+    return () => ipcRenderer.removeListener(IPC.updateState, listener);
   },
 };
 

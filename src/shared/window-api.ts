@@ -6,6 +6,8 @@ import type {
   BackupRestoreResponse,
 } from './backup-contract';
 import type {
+  ClipboardImportRequest,
+  ClipboardImportResponse,
   ExportRequest,
   ExportResult,
   ImportRequest,
@@ -16,6 +18,7 @@ import type {
 } from './io-contract';
 import type { OpenPathRequest } from './shell-contract';
 import type { ChangeDataDirRequest, ChangeDataDirResponse, DataDirInfo } from './storage-contract';
+import type { UpdateState } from './update-contract';
 import type { SearchQueryRequest, SearchQueryResponse } from './search-contract';
 import type { ShellCommand } from './shell-contract';
 import type { SettingsData } from './settings-contract';
@@ -96,6 +99,12 @@ export interface WindowApi {
   /** 主进程弹出 HTML 文件选择框（单选，过滤器固定 html/htm）；取消返回空数组 */
   pickHtmlFile(): Promise<Result<readonly string[]>>;
   /**
+   * 粘贴导入（M9 批次，FR-IO-03）：主进程读取系统剪贴板文件清单并直接导入目标父目录。
+   * 剪贴板无文件返回 { kind:'empty' }（非错误，渲染层给克制提示）；有文件则返回导入计数
+   * （进度经 onIoProgress 到达，kind: 'import'）。源路径不经渲染层，故不走对话框登记簿。
+   */
+  importFromClipboard(request: ClipboardImportRequest): Promise<Result<ClipboardImportResponse>>;
+  /**
    * 导出 VFS 子树到磁盘（M5 批次⑥ Task 13）：targetDir 须为 pickDirectory 当次会话产出
    * （主进程按登记簿校验，伪造串拒绝）。进度经 onIoProgress 订阅到达（kind: 'export'）。
    */
@@ -122,6 +131,20 @@ export interface WindowApi {
   countNodes(): Promise<Result<number>>;
   /** 订阅树变更广播，返回取消订阅函数 */
   onVfsChanged(callback: (broadcast: VfsChangedBroadcast) => void): () => void;
+  // —— 应用内更新域（M9 批次，FR-UPDATE-01）：四通道全无参（null 先例同 settingsGet）——
+  /** 读当前更新状态（渲染层挂载期首拉；增量经 onUpdateState 到达） */
+  getUpdateState(): Promise<Result<UpdateState>>;
+  /** 立即检查更新（设置页「检查更新」钮）；检查完成的终态经本调用结果与广播双通道到达 */
+  checkForUpdates(): Promise<Result<UpdateState>>;
+  /**
+   * 下载已发现的新版本（用户在标题栏确认后调用）：本调用在下载开始即返回，
+   * 进度与终态经 onUpdateState 广播到达（downloading/downloaded/error）
+   */
+  downloadUpdate(): Promise<Result<UpdateState>>;
+  /** 重启并安装已下载的新版本（quitAndInstall）：调用后进程随即退出，续体可能不落地 */
+  installUpdate(): Promise<Result<null>>;
+  /** 订阅更新状态变更广播（UpdateState 可辨识联合），返回取消订阅函数 */
+  onUpdateState(callback: (state: UpdateState) => void): () => void;
 }
 
 declare global {

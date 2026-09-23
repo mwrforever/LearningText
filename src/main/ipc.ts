@@ -31,6 +31,7 @@ import type { BackupService } from './backup/backupService';
 import type { ImportService } from './io/importService';
 import type { ExportService } from './io/exportService';
 import {
+  ClipboardImportRequestSchema,
   ExportRequestSchema,
   ImportRequestSchema,
   IoCancelRequestSchema,
@@ -38,12 +39,16 @@ import {
   IoPickFileRequestSchema,
 } from '../shared/io-contract';
 import type {
+  ClipboardImportRequest,
+  ClipboardImportResponse,
   ExportRequest,
   ImportRequest,
   ImportResult,
   IoCancelRequest,
   IoPickDirectoryRequest,
 } from '../shared/io-contract';
+import { UpdateRequestSchema } from '../shared/update-contract';
+import type { UpdateService } from './update/updateService';
 import { OpenPathRequestSchema } from '../shared/shell-contract';
 import type { OpenPathRequest } from '../shared/shell-contract';
 import { ChangeDataDirRequestSchema } from '../shared/storage-contract';
@@ -140,6 +145,16 @@ export interface IpcHandlerDeps {
    * 成功即 relaunch（响应续体可能不落地，同 backup:restore 语义）。
    */
   readonly changeDataDir: (targetDir: string) => ChangeDataDirResponse;
+  /**
+   * 粘贴导入读剪贴板供给（M9 批次，FR-IO-03，app.ts 供给 clipboard.read() 快照适配）：
+   * 返回剪贴板内文件/目录的本地路径清单（无可用文件为空数组）。源路径由主进程自采——
+   * **不经渲染层也不经对话框登记簿**（登记簿的信任边界针对「渲染层可伪造的路径串」，
+   * 本通道不接收路径，故无需登记簿校验，对照 io:import 的 sourcePaths 校验）。
+   * 异步形态：Electron 44 剪贴板读取唯一入口为异步的 clipboard.read()。
+   */
+  readonly readClipboardFiles: () => Promise<readonly string[]>;
+  /** 应用内更新服务（M9 批次，FR-UPDATE-01）：状态机归属服务，四通道仅做转发 */
+  readonly update: UpdateService;
 }
 
 /** origin 白名单判定（B.5-6）：senderFrame 可能为 null，null/空串/非白名单一律拒绝 */
@@ -425,6 +440,30 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     handleWithAsync(deps, IoPickFileRequestSchema, () => deps.pickHtmlFile()),
   );
 
+  // —— 粘贴导入（M9 批次，FR-IO-03）：源路径由主进程读剪贴板自采（安全边界见 deps 注：
+  //    不经渲染层也不经登记簿，渲染层伪造路径串在本通道无入口）；空清单返回 { kind:'empty' }
+  //    不是错误——用户按 Ctrl+V 时剪贴板里没有文件是正常操作，渲染层据此给克制提示；
+  //    复用 io:import 的导入服务与 io:progress 进度广播（与对话框导入同链路）。导入前
+  //    info 日志只记条目数与目标父 id，不打印用户文件路径全文（全局 §二 禁敏感信息）——
+  ipcMain.handle(
+    IPC.ioImportClipboard,
+    handleWithAsync(deps, ClipboardImportRequestSchema, async (q: ClipboardImportRequest) => {
+      const paths = await deps.readClipboardFiles();
+      if (paths.length === 0) {
+        return { kind: 'empty' } satisfies ClipboardImportResponse;
+      }
+      console.info(
+        `[clipboard] 粘贴导入：清单 ${String(paths.length)} 项 → 目标父节点 ${String(q.targetParentId)}（策略 ${q.conflict}）`,
+      );
+      const result: ImportResult = await deps.io.importNodes({
+        sourcePaths: [...paths],
+        targetParentId: q.targetParentId,
+        conflict: q.conflict,
+      });
+      return { kind: 'imported', result } satisfies ClipboardImportResponse;
+    }),
+  );
+
   // —— 导出域（M5 批次⑥ Task 13）：写盘为事务外逐节点长任务（无 vfs 写事务 → 不广播，
   //    进度经 io:progress 服务侧广播）；targetDir 只接受登记簿内串（见 deps 注）——
   ipcMain.handle(
@@ -462,6 +501,31 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         throw new AppError(E_IPC_BAD_PAYLOAD, '目标目录必须来自目录选择对话框');
       }
       return { result: deps.changeDataDir(q.targetDir) satisfies ChangeDataDirResponse };
+    }),
+  );
+
+  // —— 应用内更新域（M9 批次，FR-UPDATE-01）：四通道全无参（null 载荷先例同 settingsGet），
+  //    均为纯读 / 状态机操作、无 vfs 写事务 → 返回对象无 event 键 → 不广播（B.3-4）；
+  //    状态增量经 update:state 广播到达（服务 onState 供给，app 层遍历窗口）——
+  ipcMain.handle(
+    IPC.updateGetState,
+    handleWith(deps, UpdateRequestSchema, () => ({ result: deps.update.getState() })),
+  );
+  // 检查更新为异步（网络元数据请求），其余三通道同步转发
+  ipcMain.handle(
+    IPC.updateCheck,
+    handleWithAsync(deps, UpdateRequestSchema, async () => deps.update.check()),
+  );
+  ipcMain.handle(
+    IPC.updateDownload,
+    handleWith(deps, UpdateRequestSchema, () => ({ result: deps.update.download() })),
+  );
+  // install 调用后进程即将退出（quitAndInstall），响应固定 null（A.7-2 禁 undefined 承载语义）
+  ipcMain.handle(
+    IPC.updateInstall,
+    handleWith(deps, UpdateRequestSchema, () => {
+      deps.update.install();
+      return { result: null };
     }),
   );
 }

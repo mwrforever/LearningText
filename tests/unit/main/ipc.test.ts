@@ -33,6 +33,8 @@ import type { SettingsService } from '../../../src/main/settings/settingsService
 import type { BackupService } from '../../../src/main/backup/backupService';
 import type { ImportService } from '../../../src/main/io/importService';
 import type { ExportService } from '../../../src/main/io/exportService';
+import type { UpdateService } from '../../../src/main/update/updateService';
+import type { UpdateState } from '../../../src/shared/update-contract';
 import { DEFAULT_SETTINGS, type SettingsData } from '../../../src/shared/settings-contract';
 
 function fakeEvent(origin: string | null): { senderFrame: { origin: string | null } | null } {
@@ -133,17 +135,40 @@ function makeChangeDataDirStub(): Mock<(targetDir: string) => ChangeDataDirRespo
   return vi.fn((): ChangeDataDirResponse => ({ relaunch: true }));
 }
 
+/** 更新服务桩（M9 批次，FR-UPDATE-01）：四通道 + start/dispose 全可编程断言 */
+const IDLE_UPDATE_STATE: UpdateState = { kind: 'idle', currentVersion: '0.1.1' };
+
+function makeUpdateServiceStub(): UpdateService {
+  return {
+    getState: vi.fn((): UpdateState => IDLE_UPDATE_STATE),
+    check: vi.fn((): Promise<UpdateState> => Promise.resolve(IDLE_UPDATE_STATE)),
+    download: vi.fn((): UpdateState => IDLE_UPDATE_STATE),
+    install: vi.fn(),
+    start: vi.fn(),
+    dispose: vi.fn(),
+  };
+}
+
+/** 剪贴板读清单供给桩（M9 批次，FR-IO-03）：默认返回一项可导入路径，用例内可覆写为空 */
+function makeReadClipboardFilesStub(): Mock<() => Promise<readonly string[]>> {
+  return vi.fn((): Promise<readonly string[]> => Promise.resolve(['D:/clip/a.html']));
+}
+
 /**
- * 注册器：为既有用例补齐 storage 两供给默认桩（非 storage 用例零关注该域；
- * storage 专属用例经 overrides 注入自建桩以取回断言引用）。其余 deps 原样透传。
+ * 注册器：为既有用例补齐默认供给桩（非该域用例零关注；专属用例经 overrides 注入自建桩
+ * 以取回断言引用）。其余 deps 原样透传。
  */
 function registerHandlers(
-  deps: Omit<IpcHandlerDeps, 'getStorageInfo' | 'changeDataDir'> &
-    Partial<Pick<IpcHandlerDeps, 'getStorageInfo' | 'changeDataDir'>>,
+  deps: Omit<IpcHandlerDeps, 'getStorageInfo' | 'changeDataDir' | 'readClipboardFiles' | 'update'> &
+    Partial<
+      Pick<IpcHandlerDeps, 'getStorageInfo' | 'changeDataDir' | 'readClipboardFiles' | 'update'>
+    >,
 ): void {
   registerIpcHandlers({
     getStorageInfo: makeGetStorageInfoStub(),
     changeDataDir: makeChangeDataDirStub(),
+    readClipboardFiles: makeReadClipboardFilesStub(),
+    update: makeUpdateServiceStub(),
     ...deps,
   });
 }
@@ -1445,5 +1470,243 @@ describe('storage 通道接线', () => {
     expect(forbidden.ok).toBe(false);
     expect(forbidden.error.code).toBe(E_IPC_FORBIDDEN_ORIGIN);
     expect(deps.changeDataDir).not.toHaveBeenCalled();
+  });
+});
+
+// 粘贴导入通道（M9 批次，FR-IO-03）：源路径由主进程读剪贴板自采（不经渲染层也不经
+// 登记簿——handler 无登记簿校验即为本通道的既定安全语义）；空清单是正常操作非错误
+describe('io:import-clipboard 通道接线', () => {
+  interface ClipboardDeps {
+    readClipboardFiles: () => Promise<readonly string[]>;
+    io: ImportService;
+  }
+
+  function registerWith(overrides: Partial<ClipboardDeps> = {}): ClipboardDeps {
+    const deps: ClipboardDeps = {
+      readClipboardFiles: makeReadClipboardFilesStub(),
+      io: makeIoStub(),
+      ...overrides,
+    };
+    handlers.clear();
+    registerHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      settings: makeSettingsStub(),
+      broadcast: vi.fn(),
+      requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
+      io: deps.io,
+      pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
+      export: makeExportStub(),
+      dialogProducedPaths: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
+      readClipboardFiles: deps.readClipboardFiles,
+    });
+    return deps;
+  }
+
+  it('剪贴板非空：发起导入（清单展开为 sourcePaths）并返回 imported 计数，日志不含路径全文', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const deps = registerWith();
+      const ok = (await handlers.get(IPC.ioImportClipboard)?.(fakeEvent('app://bundle'), {
+        targetParentId: 1,
+        conflict: 'rename',
+      })) as { ok: boolean; value: { kind: string; result: { imported: number } } };
+      expect(ok).toEqual({
+        ok: true,
+        value: {
+          kind: 'imported',
+          result: { imported: 1, skipped: 0, failed: 0, importedNodeIds: [9] },
+        },
+      });
+      // 服务入参 = 剪贴板清单 + 请求载荷（目标父与策略），与对话框导入同一服务链路
+      expect(deps.io.importNodes).toHaveBeenCalledWith({
+        sourcePaths: ['D:/clip/a.html'],
+        targetParentId: 1,
+        conflict: 'rename',
+      });
+      // 全局 §二：info 含条目数与目标父 id；用户路径全文不得进入日志
+      expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('清单 1 项'));
+      expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('目标父节点 1'));
+      const logged = infoSpy.mock.calls.map((args) => String(args[0])).join('\n');
+      expect(logged).not.toContain('D:/clip/a.html');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('剪贴板无文件：返回 { kind: empty }（非错误），导入服务不被调用', async () => {
+    const deps = registerWith({
+      readClipboardFiles: vi.fn(() => Promise.resolve([] as readonly string[])),
+    });
+    const empty = (await handlers.get(IPC.ioImportClipboard)?.(fakeEvent('app://bundle'), {
+      targetParentId: 1,
+      conflict: 'rename',
+    })) as { ok: boolean; value: { kind: string } };
+    expect(empty).toEqual({ ok: true, value: { kind: 'empty' } });
+    expect(deps.io.importNodes).not.toHaveBeenCalled();
+  });
+
+  it('非法载荷 E_IPC_BAD_PAYLOAD；非白名单 origin 拒绝；两者均不触剪贴板读取与导入', async () => {
+    const deps = registerWith();
+    const bad = (await handlers.get(IPC.ioImportClipboard)?.(fakeEvent('app://bundle'), {
+      targetParentId: 1,
+    })) as { ok: boolean; error: { code: string } };
+    expect(bad.ok).toBe(false);
+    expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+    const forbidden = (await handlers.get(IPC.ioImportClipboard)?.(fakeEvent('http://evil'), {
+      targetParentId: 1,
+      conflict: 'rename',
+    })) as { ok: boolean; error: { code: string } };
+    expect(forbidden.ok).toBe(false);
+    expect(forbidden.error.code).toBe(E_IPC_FORBIDDEN_ORIGIN);
+    expect(deps.readClipboardFiles).not.toHaveBeenCalled();
+    expect(deps.io.importNodes).not.toHaveBeenCalled();
+  });
+
+  it('导入业务错误保真透传（E_IO_SOURCE_NOT_FOUND）；意外异常收敛 E_STORE_INTERNAL', async () => {
+    const missingIo = makeIoStub();
+    (missingIo.importNodes as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.reject(new AppError(E_IO_SOURCE_NOT_FOUND, '导入源路径不存在或不可读')),
+    );
+    registerWith({ io: missingIo });
+    const missing = (await handlers.get(IPC.ioImportClipboard)?.(fakeEvent('app://bundle'), {
+      targetParentId: 1,
+      conflict: 'rename',
+    })) as { ok: boolean; error: { code: string; message: string } };
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toEqual({
+      code: E_IO_SOURCE_NOT_FOUND,
+      message: '导入源路径不存在或不可读',
+    });
+
+    const crashIo = makeIoStub();
+    (crashIo.importNodes as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      Promise.reject(new Error('意外崩溃')),
+    );
+    registerWith({ io: crashIo });
+    const unknown = (await handlers.get(IPC.ioImportClipboard)?.(fakeEvent('app://bundle'), {
+      targetParentId: 1,
+      conflict: 'rename',
+    })) as { ok: boolean; error: { code: string } };
+    expect(unknown.ok).toBe(false);
+    expect(unknown.error.code).toBe(E_STORE_INTERNAL);
+  });
+});
+
+// 应用内更新四通道（M9 批次，FR-UPDATE-01）：全无参（null 载荷先例同 settingsGet），
+// 纯状态机转发、无 vfs 写事务不广播
+describe('update 四通道接线', () => {
+  interface UpdateDeps {
+    update: UpdateService;
+  }
+
+  function registerWith(overrides: Partial<UpdateDeps> = {}): UpdateDeps {
+    const deps: UpdateDeps = { update: makeUpdateServiceStub(), ...overrides };
+    handlers.clear();
+    registerHandlers({
+      allowedOrigins: ['app://bundle'],
+      vfs: makeVfsStub(),
+      search: makeSearchStub(),
+      settings: makeSettingsStub(),
+      broadcast: vi.fn(),
+      requestClose: vi.fn(),
+      backup: makeBackupStub(),
+      restoreBackup: vi.fn(),
+      requestRelaunch: vi.fn(),
+      io: makeIoStub(),
+      pickDirectories: makePickStub(),
+      pickHtmlFile: makePickFileStub(),
+      export: makeExportStub(),
+      dialogProducedPaths: new Set(['D:/picked']),
+      openDirectoryInShell: makeOpenPathStub(),
+      onAppearanceThemeChange: vi.fn(),
+      update: deps.update,
+    });
+    return deps;
+  }
+
+  it('update:get-state null 载荷透传服务当前状态', () => {
+    const available: UpdateState = {
+      kind: 'available',
+      currentVersion: '0.1.1',
+      version: '9.9.9',
+    };
+    const update = makeUpdateServiceStub();
+    (update.getState as ReturnType<typeof vi.fn>).mockReturnValue(available);
+    registerWith({ update });
+    const ok = handlers.get(IPC.updateGetState)?.(fakeEvent('app://bundle'), null) as {
+      ok: boolean;
+      value: UpdateState;
+    };
+    expect(ok).toEqual({ ok: true, value: available });
+  });
+
+  it('update:check await 服务终态；update:download 同步返回新态；update:install 调用后返回 null', async () => {
+    const checked: UpdateState = {
+      kind: 'up-to-date',
+      currentVersion: '0.1.1',
+      checkedAt: '2026-09-23T10:00:00.000+08:00',
+    };
+    const downloaded: UpdateState = {
+      kind: 'downloading',
+      currentVersion: '0.1.1',
+      version: '9.9.9',
+      percent: 0,
+    };
+    const update = makeUpdateServiceStub();
+    (update.check as ReturnType<typeof vi.fn>).mockResolvedValue(checked);
+    (update.download as ReturnType<typeof vi.fn>).mockReturnValue(downloaded);
+    registerWith({ update });
+    const check = (await handlers.get(IPC.updateCheck)?.(fakeEvent('app://bundle'), null)) as {
+      ok: boolean;
+      value: UpdateState;
+    };
+    expect(check).toEqual({ ok: true, value: checked });
+    const download = handlers.get(IPC.updateDownload)?.(fakeEvent('app://bundle'), null) as {
+      ok: boolean;
+      value: UpdateState;
+    };
+    expect(download).toEqual({ ok: true, value: downloaded });
+    const install = handlers.get(IPC.updateInstall)?.(fakeEvent('app://bundle'), null) as {
+      ok: boolean;
+      value: null;
+    };
+    expect(install).toEqual({ ok: true, value: null });
+    expect(update.install).toHaveBeenCalledTimes(1);
+  });
+
+  it('四通道均拒绝非 null 载荷（E_IPC_BAD_PAYLOAD）与非白名单 origin，服务不被触达', async () => {
+    const deps = registerWith();
+    for (const channel of [
+      IPC.updateGetState,
+      IPC.updateCheck,
+      IPC.updateDownload,
+      IPC.updateInstall,
+    ]) {
+      // update:check 为异步包装（handleWithAsync），统一 await 兼容同步/异步两类返回
+      const bad = (await handlers.get(channel)?.(fakeEvent('app://bundle'), { x: 1 })) as {
+        ok: boolean;
+        error: { code: string };
+      };
+      expect(bad.ok).toBe(false);
+      expect(bad.error.code).toBe(E_IPC_BAD_PAYLOAD);
+      const forbidden = (await handlers.get(channel)?.(fakeEvent('http://evil'), null)) as {
+        ok: boolean;
+        error: { code: string };
+      };
+      expect(forbidden.ok).toBe(false);
+      expect(forbidden.error.code).toBe(E_IPC_FORBIDDEN_ORIGIN);
+    }
+    expect(deps.update.getState).not.toHaveBeenCalled();
+    expect(deps.update.check).not.toHaveBeenCalled();
+    expect(deps.update.download).not.toHaveBeenCalled();
+    expect(deps.update.install).not.toHaveBeenCalled();
   });
 });

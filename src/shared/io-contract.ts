@@ -67,6 +67,27 @@ export interface ImportResult {
 export const IoPickFileRequestSchema = z.null();
 export type IoPickFileRequest = null;
 
+/**
+ * io:import-clipboard 请求（2026-09-23 M9 批次，FR-IO-03 粘贴导入）：目标父节点 id + 重名策略。
+ * 源路径**不在请求里**——由主进程自行读取系统剪贴板文件清单（Windows FileNameW / Linux
+ * text/uri-list / macOS public.file-url），清单全程不出主进程：渲染层无从伪造任意路径，
+ * 也不需要对话框登记簿（登记簿的信任边界针对「渲染层可伪造的路径串」，本通道不接收路径）。
+ * 重名策略默认由渲染层传 rename（粘贴语义：不打断、递增改名）。
+ */
+export const ClipboardImportRequestSchema = z.strictObject({
+  targetParentId: z.number().int(),
+  conflict: z.enum(['skip', 'rename', 'overwrite']),
+});
+export type ClipboardImportRequest = z.infer<typeof ClipboardImportRequestSchema>;
+
+/**
+ * io:import-clipboard 响应（可辨识联合，A.1-4）：剪贴板无文件/无可用路径时返回 empty
+ * （非错误——用户按 Ctrl+V 而剪贴板里没有文件是正常操作，渲染层据此给克制提示）；
+ * 有文件则返回与 io:import 同形的导入计数（进度复用 io:progress 广播）。
+ */
+export type ClipboardImportResponse =
+  { readonly kind: 'empty' } | { readonly kind: 'imported'; readonly result: ImportResult };
+
 /** io:cancel 请求：按服务侧单调分配的 importId 寻址（首个进度广播到达即可取消） */
 export const IoCancelRequestSchema = z.strictObject({ importId: z.number().int() });
 export type IoCancelRequest = z.infer<typeof IoCancelRequestSchema>;

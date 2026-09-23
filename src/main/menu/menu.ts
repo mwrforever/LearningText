@@ -79,6 +79,14 @@ export function createMenuTemplate(isMac: boolean): MenuItemConstructorOptions[]
           click: () => sendCommand({ type: 'import' }),
         },
         {
+          id: 'menu-paste-import',
+          label: '粘贴导入',
+          // M9 批次 FR-IO-03：主进程读剪贴板文件清单直接导入当前落点。无 accelerator——
+          // Ctrl/Cmd+V 由渲染层在资源树视图内作用域监听（原生 accelerator 全局生效，
+          // 会劫持编辑器/画布内的原生粘贴语义），本项仅命令下发
+          click: () => sendCommand({ type: 'paste-import' }),
+        },
+        {
           id: 'menu-export',
           label: '导出…',
           // M5 批次⑥ Task 13：导出链路（选中子树 → 目录选择 → io:export）落地，经命令单通道下发

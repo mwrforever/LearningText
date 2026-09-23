@@ -58,6 +58,8 @@ export const IPC = {
   ioPickDirectory: 'io:pick-directory',
   /** 选择 HTML 文件（openFile 单选，过滤器固定 html/htm；M7 单文件导入入口） */
   ioPickFile: 'io:pick-file',
+  /** 粘贴导入：主进程读系统剪贴板文件清单并直接导入（M9 批次，源路径不出主进程） */
+  ioImportClipboard: 'io:import-clipboard',
   /** 导出 VFS 子树到磁盘（逐节点写盘 + vfs:// 引用改写，进度经 ioProgress 广播） */
   ioExport: 'io:export',
   /** 在系统文件管理器中打开目录（导出完成动作；入参按当次会话目录选择登记簿校验） */
@@ -76,4 +78,15 @@ export const IPC = {
   storageGetInfo: 'storage:get-info',
   /** 更改数据目录并迁移（targetDir 须来自目录选择对话框登记簿；成功即重启生效） */
   storageChangeDataDir: 'storage:change-data-dir',
+  // —— 应用内更新域（M9 批次，FR-UPDATE-01）：四通道全无参（null 先例同 settingsGet）——
+  /** 读当前更新状态（渲染层挂载期首拉；增量经 updateState 广播） */
+  updateGetState: 'update:get-state',
+  /** 立即检查更新（设置页「检查更新」；静默周期检查在服务侧自带，不经此通道） */
+  updateCheck: 'update:check',
+  /** 下载已发现的新版本（用户确认后；进度经 updateState 广播到达） */
+  updateDownload: 'update:download',
+  /** 重启并安装已下载的新版本（quitAndInstall；调用后进程即将退出） */
+  updateInstall: 'update:install',
+  /** 主→渲染：更新状态变更广播（UpdateState 可辨识联合，shell-contract 同族单一来源） */
+  updateState: 'update:state',
 } as const;

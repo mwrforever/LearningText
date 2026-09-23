@@ -31,20 +31,32 @@ interface ExposedApi {
   cancelImport(request: unknown): Promise<unknown>;
   pickDirectory(request: unknown): Promise<unknown>;
   pickHtmlFile(request: unknown): Promise<unknown>;
+  importFromClipboard(request: unknown): Promise<unknown>;
   exportNodes(request: unknown): Promise<unknown>;
   openPath(request: unknown): Promise<unknown>;
   getDataDirInfo(request: unknown): Promise<unknown>;
   changeDataDir(request: unknown): Promise<unknown>;
+  getUpdateState(request: unknown): Promise<unknown>;
+  checkForUpdates(request: unknown): Promise<unknown>;
+  downloadUpdate(request: unknown): Promise<unknown>;
+  installUpdate(request: unknown): Promise<unknown>;
   onShellCommand(callback: (event: unknown) => void): () => void;
   onVfsChanged(callback: (event: unknown) => void): () => void;
   onBackupDone(callback: (event: unknown) => void): () => void;
   onIoProgress(callback: (event: unknown) => void): () => void;
+  onUpdateState(callback: (event: unknown) => void): () => void;
 }
 
-/** invoke 类通道的包装方法名（ping 与四个订阅通道单独用例覆盖；platform 为只读字段非方法） */
+/** invoke 类通道的包装方法名（ping 与订阅通道单独用例覆盖；platform 为只读字段非方法） */
 type InvokeMethod = Exclude<
   keyof ExposedApi,
-  'ping' | 'platform' | 'onVfsChanged' | 'onShellCommand' | 'onBackupDone' | 'onIoProgress'
+  | 'ping'
+  | 'platform'
+  | 'onVfsChanged'
+  | 'onShellCommand'
+  | 'onBackupDone'
+  | 'onIoProgress'
+  | 'onUpdateState'
 >;
 
 const mocks = vi.hoisted(() => ({
@@ -101,6 +113,7 @@ describe('preload 桥注册', () => {
       'cancelImport',
       'pickDirectory',
       'pickHtmlFile',
+      'importFromClipboard',
       'exportNodes',
       'openPath',
       'getDataDirInfo',
@@ -109,6 +122,11 @@ describe('preload 桥注册', () => {
       'onShellCommand',
       'onVfsChanged',
       'onBackupDone',
+      'getUpdateState',
+      'checkForUpdates',
+      'downloadUpdate',
+      'installUpdate',
+      'onUpdateState',
     ]);
   });
 
@@ -165,12 +183,19 @@ describe('preload 桥注册', () => {
       ['pickDirectory', IPC.ioPickDirectory, { multiple: true }],
       // 无参通道沿 settingsGet 先例固定发 null（HTML 文件选择，M7 单文件导入入口）
       ['pickHtmlFile', IPC.ioPickFile, null],
+      // 粘贴导入（M9 批次）：请求透传（源路径由主进程读剪贴板，不出渲染层）
+      ['importFromClipboard', IPC.ioImportClipboard, { targetParentId: 1, conflict: 'rename' }],
       // 导出域（M5 批次⑥ Task 13）：导出请求透传、打开目录串透传（白名单登记簿校验在主进程侧）
       ['exportNodes', IPC.ioExport, { nodeId: 7, targetDir: 'D:/picked' }],
       ['openPath', IPC.shellOpenPath, { dir: 'D:/picked' }],
       // 数据目录域（M6 批次③）：get-info 无参沿 null 先例，change 请求透传
       ['getDataDirInfo', IPC.storageGetInfo, null],
       ['changeDataDir', IPC.storageChangeDataDir, { targetDir: 'D:/picked' }],
+      // 更新域（M9 批次）：四通道全无参，沿 settingsGet 先例固定发 null
+      ['getUpdateState', IPC.updateGetState, null],
+      ['checkForUpdates', IPC.updateCheck, null],
+      ['downloadUpdate', IPC.updateDownload, null],
+      ['installUpdate', IPC.updateInstall, null],
     ];
     mocks.invoke.mockResolvedValue({ ok: true, value: null });
     for (const [method, channel, request] of channelCases) {
@@ -271,5 +296,28 @@ describe('preload 桥注册', () => {
     expect(callback).toHaveBeenCalledWith(exportPayload);
     unsubscribe();
     expect(mocks.removeListener).toHaveBeenCalledWith(IPC.ioProgress, listener);
+  });
+
+  it('onUpdateState 订阅：剥离 event 首参仅回传更新状态（可辨识联合），退订移除同一监听器', () => {
+    const callback = vi.fn<(event: unknown) => void>();
+    const unsubscribe = exposedApi.onUpdateState(callback);
+    // 订阅固定挂在 update:state 广播通道上（M9 批次 FR-UPDATE-01）
+    const onCall = mocks.on.mock.calls.at(-1);
+    expect(onCall?.[0]).toBe(IPC.updateState);
+    const listener = onCall?.[1];
+    if (listener === undefined) {
+      throw new Error('onUpdateState 未注册监听器');
+    }
+    // 模拟主进程广播：首个参数为 IpcRendererEvent 形态，必须被剥离后不透传
+    const available = { kind: 'available', currentVersion: '0.1.1', version: '0.2.0' };
+    listener({ sender: 'ipc-event' }, available);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(available);
+    // 下载进度同为该通道的状态成员（kind 判别字段区分）
+    const downloading = { kind: 'downloading', version: '0.2.0', percent: 42 };
+    listener({ sender: 'ipc-event' }, downloading);
+    expect(callback).toHaveBeenCalledWith(downloading);
+    unsubscribe();
+    expect(mocks.removeListener).toHaveBeenCalledWith(IPC.updateState, listener);
   });
 });

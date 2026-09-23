@@ -7,7 +7,16 @@
  */
 import path from 'node:path';
 import type Database from 'better-sqlite3';
-import { app, BrowserWindow, Menu, dialog, nativeTheme, protocol, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  clipboard,
+  dialog,
+  nativeTheme,
+  protocol,
+  shell,
+} from 'electron';
 import { handleAppResource } from './protocol/appProtocol';
 import { createVfsProtocolHandler } from './protocol/vfsProtocol';
 import { registerIpcHandlers } from './ipc';
@@ -20,10 +29,17 @@ import { createSearchService } from './search/searchService';
 import { createSettingsService } from './settings/settingsService';
 import { createImportService, nodeFs } from './io/importService';
 import { createExportService, nodeExportFs } from './io/exportService';
+import { clipboardReaderFromItems, readClipboardFilePaths } from './io/clipboardFiles';
+import type { ClipboardBlobLike } from './io/clipboardFiles';
+import { resolveUpdateCapability } from './update/updateCapability';
+import { createUpdateService } from './update/updateService';
+import { loadElectronUpdater } from './update/electronUpdaterAdapter';
 import { IPC } from '../shared/ipc';
 import { titleBarOverlayFor } from '../shared/titlebar';
 import type { VfsChangedBroadcast } from '../shared/vfs-contract';
 import type { ExportProgress, ImportProgress } from '../shared/io-contract';
+import type { UpdateState } from '../shared/update-contract';
+import type { UpdateService } from './update/updateService';
 import { attachWindowCloseGuard, installApplicationMenu } from './menu/menu';
 import { BackupService } from './backup/backupService';
 import { changeDataDir, dataDirMigrationFs } from './storage/dataDirMigration';
@@ -124,6 +140,9 @@ export function bootstrapMain(): void {
   // 数据库连接句柄：仅在 whenReady 内开库成功后赋值；开库前的 fail-fast 路径保持
   // undefined，will-quit 关库以可选链短路、不二次抛错（宪法 A.4-1/A.5-1）
   let db: Database.Database | undefined;
+  // 更新服务句柄：whenReady 装配成功后赋值；will-quit 释放定时器以可选链短路
+  // （fail-fast 路径未创建服务，dispose 不触达——成对释放，见 A.5-1）
+  let update: UpdateService | undefined;
   // standard+secure 使 app:// 拥有正常 origin（senderFrame origin 校验依赖此语义）
   protocol.registerSchemesAsPrivileged([
     { scheme: 'app', privileges: { standard: true, secure: true } },
@@ -288,6 +307,45 @@ export function bootstrapMain(): void {
         settingsFile: layout.settingsFile,
         custom: pointer.root !== null,
       });
+      // 粘贴导入读剪贴板供给（M9 批次，FR-IO-03）：一次 clipboard.read() 快照装配成读取面
+      // （clipboardReaderFromItems，格式清单与载荷消费同一快照，保证同源一致）。
+      // Electron 44 已移除同步剪贴板 API（运行时探针见 clipboardFiles 尾注），唯一入口是
+      // 异步 read()。清单全程不出主进程：渲染层无从伪造任意路径，ipc 层对本通道不做对话框
+      // 登记簿校验（登记簿针对「渲染层可伪造的路径串」，见 clipboardFiles 注）
+      const readClipboardFiles = async (): Promise<readonly string[]> => {
+        const items = await clipboard.read();
+        return readClipboardFilePaths({
+          platform: process.platform,
+          // A.1-5 受控窄化（掌握超集信息）：ClipboardItem.getType 契约上返回 Blob，仅
+          // 'electron application/bookmark' 一种类型返回 ClipboardBookmark——本适配只查询
+          // 文件复制相关格式（text/uri-list / FileName* 原始格式），bookmark 分支构造性不可达
+          clipboard: clipboardReaderFromItems(
+            items.map((item) => ({
+              types: item.types,
+              getType: async (type: string) => (await item.getType(type)) as ClipboardBlobLike,
+            })),
+          ),
+        });
+      };
+      // 应用内更新（M9 批次，FR-UPDATE-01）：能力判定取装配期环境事实（打包形态 / 平台 /
+      // AppImage 挂载路径），不满足的形态显式降级 unsupported；onState 即 update:state 广播
+      // （遍历全部窗口，与 vfs:changed 同型广播面——但更新状态无写事务，不属于宪法 B.3-4
+      // 的事务广播，推送时机 = 服务状态机每次变更）
+      const updateCapability = resolveUpdateCapability({
+        isPackaged: app.isPackaged,
+        platform: process.platform,
+        appImagePath: process.env.APPIMAGE,
+      });
+      update = createUpdateService({
+        currentVersion: app.getVersion(),
+        capability: updateCapability,
+        updater: loadElectronUpdater(),
+        onState: (state: UpdateState) => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send(IPC.updateState, state);
+          }
+        },
+      });
       // 数据目录迁移编排（M6 spec §5.2）：checkpoint → 干净关库（will-quit 关库守卫对
       // db=undefined 短路）→ 复制 → 写指针 → 重启；失败语义由服务收口（D9）
       const changeDataDirNow = (targetDir: string): { relaunch: true } => {
@@ -370,6 +428,10 @@ export function bootstrapMain(): void {
         // 数据目录域（M6 批次③）：布局查询与迁移编排供给
         getStorageInfo,
         changeDataDir: changeDataDirNow,
+        // 粘贴导入（M9 批次，FR-IO-03）：主进程读剪贴板供给（源路径不经渲染层）
+        readClipboardFiles,
+        // 应用内更新域（M9 批次，FR-UPDATE-01）：状态机服务注入（四通道转发）
+        update,
         // 自绘标题栏主题联动（M6 spec §2.2/D12）：settings:set 检测 appearance.theme
         // 变更后回调；主进程内聚更新 overlay 配色，不新增 IPC 通道
         onAppearanceThemeChange: (intent) => {
@@ -397,6 +459,9 @@ export function bootstrapMain(): void {
       // M6 起原生菜单栏在 hidden 标题栏形态下不渲染（spec §2.2 探针实证），本装配保留
       // 承载加速器与 mac 系统菜单栏；应用内菜单由渲染层 TitleBar 承接（同命令单通道）
       installApplicationMenu();
+      // 周期更新检查排程（M9 批次，FR-UPDATE-01）：窗口创建之后启动——启动延迟与周期在
+      // 服务内收敛（5s 首查避开启动争抢 / 每 4h 一次），能力关闭形态不排任何定时器
+      update.start();
       // 每日自动备份（M5 批次③）：装配完成后判定一次（窗口先行创建，复制不阻塞首帧）；
       // 到期判定与建份失败容错均在服务内（warn 不阻断启动）
       backup.autoBackupIfNeeded(toLocalIsoDate(new Date()), settings.get().backup.autoEnabled);
@@ -413,11 +478,13 @@ export function bootstrapMain(): void {
     }
   });
 
-  // 退出前优雅关库（spec §2.2 / 宪法 A.4-1/A.5-1）：干净关闭令 SQLite 自动执行
-  // 最终 WAL checkpoint 并清理 -wal/-shm。关库失败仅记录日志、不中断退出流程；
-  // 开库前的 fail-fast 路径 db 为 undefined，可选链短路为无操作、不二次抛错。
+  // 退出前优雅收口（spec §2.2 / 宪法 A.4-1/A.5-1）：更新定时器成对释放（幂等，未创建
+  // 服务时可选链短路）+ 干净关闭令 SQLite 自动执行最终 WAL checkpoint 并清理 -wal/-shm。
+  // 关库失败仅记录日志、不中断退出流程；开库前的 fail-fast 路径 db 为 undefined，
+  // 可选链短路为无操作、不二次抛错。
   app.on('will-quit', () => {
     try {
+      update?.dispose();
       db?.close();
     } catch (e) {
       console.error('[main] 关闭数据库失败', e);

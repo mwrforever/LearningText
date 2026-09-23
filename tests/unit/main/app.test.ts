@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
@@ -42,6 +43,17 @@ const mocks = vi.hoisted(() => {
     }
   }
   const backupStubs: BackupServiceStub[] = [];
+  // 更新服务桩（M9 批次，FR-UPDATE-01）：工厂产物标记对象，start/dispose 断言面
+  const updateStub = {
+    getState: vi.fn((): unknown => null),
+    check: vi.fn((): Promise<unknown> => Promise.resolve(null)),
+    download: vi.fn((): unknown => null),
+    install: vi.fn(),
+    start: vi.fn(),
+    dispose: vi.fn(),
+  };
+  // electron-updater 适配器桩标记对象：断言 createUpdateService 收到的 updater 注入链路
+  const updaterStub = { __updaterStub: true } as const;
   const m = {
     registerSchemesAsPrivileged: vi.fn<(schemes: unknown[]) => void>(),
     protocolHandle:
@@ -54,6 +66,12 @@ const mocks = vi.hoisted(() => {
     appRelaunch: vi.fn<() => void>(),
     getAppPath: vi.fn<() => string>(),
     getPath: vi.fn<(name: string) => string>(),
+    // 应用内更新（M9 批次，FR-UPDATE-01）：版本号 / 打包形态 / 剪贴板读取桩
+    appGetVersion: vi.fn<() => string>(),
+    isPackaged: false,
+    clipboardRead: vi.fn<() => Promise<unknown[]>>(),
+    loadElectronUpdater: vi.fn<() => unknown>(),
+    createUpdateService: vi.fn<(deps: unknown) => unknown>(),
     openDatabase:
       vi.fn<(options: { readonly file: string }) => { readonly file: string; close: () => void }>(),
     // db 句柄 close/pragma 桩：断言 will-quit 优雅关库（spec §2.2 / A.4-1）与
@@ -123,12 +141,19 @@ const mocks = vi.hoisted(() => {
           readonly getStorageInfo: () => unknown;
           readonly changeDataDir: (targetDir: string) => { readonly relaunch: true };
           readonly onAppearanceThemeChange: (intent: 'light' | 'dark' | 'system') => void;
+          readonly readClipboardFiles: () => Promise<readonly string[]>;
+          readonly update: unknown;
         }) => void
       >(),
   };
   // app.ts 模块加载即执行 bootstrapMain，此时须保证 whenReady / getAppPath 立即可用
   m.whenReady.mockResolvedValue(undefined);
   m.getAppPath.mockImplementation(() => '/mock-app-path');
+  // 更新装配默认值：版本号固定、未打包形态、剪贴板空快照、适配器/服务桩接线
+  m.appGetVersion.mockReturnValue('0.1.1');
+  m.clipboardRead.mockResolvedValue([]);
+  m.loadElectronUpdater.mockImplementation(() => updaterStub);
+  m.createUpdateService.mockImplementation(() => updateStub);
   // userData 指向真实临时目录：dataDir 的 ensureDataDir 递归建目录可安全落盘（测试结束后由系统回收）
   m.getPath.mockImplementation(() => mkdtempSync(path.join(tmpdir(), 'lt-app-userdata-')));
   // 开库桩：返回带 close/pragma 桩的句柄对象（选项展开保留 file 字段供既有断言复用），
@@ -179,6 +204,8 @@ const mocks = vi.hoisted(() => {
     nodeExportFsStub,
     BackupServiceStub,
     backupStubs,
+    updateStub,
+    updaterStub,
   });
 });
 
@@ -195,7 +222,14 @@ vi.mock('electron', () => ({
     relaunch: mocks.appRelaunch,
     getAppPath: mocks.getAppPath,
     getPath: mocks.getPath,
+    // 更新能力判定输入（M9 批次，FR-UPDATE-01）：getter 保持逐用例可翻转打包形态
+    getVersion: mocks.appGetVersion,
+    get isPackaged() {
+      return mocks.isPackaged;
+    },
   },
+  // 粘贴导入（M9 批次，FR-IO-03）：clipboard.read 一次快照（Electron 44 唯一异步读取入口）
+  clipboard: { read: mocks.clipboardRead },
   // 静态方法 getAllWindows 挂在构造器上（broadcast 遍历窗口用，宪法 B.3-4）
   BrowserWindow: Object.assign(mocks.BrowserWindow, { getAllWindows: mocks.getAllWindows }),
   // 目录选择弹窗（M5 批次⑥ io:pick-directory 供给闭包消费）
@@ -229,6 +263,14 @@ vi.mock('../../../src/main/io/exportService', () => ({
 }));
 vi.mock('../../../src/main/backup/backupService', () => ({
   BackupService: mocks.BackupServiceStub,
+}));
+// 更新两模块（M9 批次，FR-UPDATE-01）：服务工厂与 electron-updater 适配器整体替换——
+// 适配器替换使真实 electron-updater 不在本套件加载（能力判定 resolveUpdateCapability 走真实现）
+vi.mock('../../../src/main/update/updateService', () => ({
+  createUpdateService: mocks.createUpdateService,
+}));
+vi.mock('../../../src/main/update/electronUpdaterAdapter', () => ({
+  loadElectronUpdater: mocks.loadElectronUpdater,
 }));
 
 import { bootstrapMain } from '../../../src/main/app';
@@ -275,6 +317,9 @@ describe('主进程装配 bootstrapMain', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     delete process.env.VITE_DEV_SERVER_URL;
+    // 更新装配输入逐用例复位：开发形态、无 AppImage 环境（CI 三平台矩阵同口径）
+    mocks.isPackaged = false;
+    delete process.env.APPIMAGE;
     mocks.whenReady.mockResolvedValue(undefined);
     mocks.backupStubs.length = 0;
     mocks.nativeTheme.shouldUseDarkColors = false; // 主题桩逐用例复位，防跨用例泄漏
@@ -986,6 +1031,166 @@ describe('主进程装配 bootstrapMain', () => {
       expect(mocks.dbClose).toHaveBeenCalledTimes(1);
       expect(mocks.appRelaunch).toHaveBeenCalledTimes(1);
       expect(mocks.appExit).toHaveBeenCalledWith(0);
+    });
+  });
+
+  // —— 粘贴导入与更新装配（M9 批次，FR-IO-03 / FR-UPDATE-01）——
+  describe('粘贴导入与更新装配', () => {
+    interface M9Deps {
+      readonly readClipboardFiles: () => Promise<readonly string[]>;
+      readonly update: unknown;
+    }
+
+    async function bootstrapWithM9(): Promise<M9Deps> {
+      bootstrapMain();
+      await flushReadyChain();
+      const deps = mocks.registerIpcHandlers.mock.calls[0]?.[0] as unknown as M9Deps;
+      if (deps === undefined) {
+        throw new Error('registerIpcHandlers 未被调用');
+      }
+      return deps;
+    }
+
+    /** 取 createUpdateService 最近一次装配的入参（含 capability / updater / onState） */
+    function updateServiceDeps(): {
+      currentVersion: string;
+      capability: unknown;
+      updater: unknown;
+      onState: (state: unknown) => void;
+    } {
+      const deps = mocks.createUpdateService.mock.calls.at(-1)?.[0] as
+        | {
+            currentVersion: string;
+            capability: unknown;
+            updater: unknown;
+            onState: (state: unknown) => void;
+          }
+        | undefined;
+      if (deps === undefined) {
+        throw new Error('createUpdateService 未被装配');
+      }
+      return deps;
+    }
+
+    it('更新服务按装配期环境事实接线：版本号、dev 能力、适配器注入，窗口创建后 start 一次', async () => {
+      const deps = await bootstrapWithM9();
+      const svcDeps = updateServiceDeps();
+      expect(svcDeps.currentVersion).toBe('0.1.1');
+      // 默认桩为未打包形态：dev 降级优先于平台（测试进程平台无关）
+      expect(svcDeps.capability).toEqual({ enabled: false, reason: 'dev' });
+      expect(svcDeps.updater).toBe(mocks.updaterStub);
+      expect(mocks.updateStub.start).toHaveBeenCalledTimes(1);
+      // 服务注入 registerIpcHandlers（update 四通道转发依赖）
+      expect(deps.update).toBe(mocks.updateStub);
+    });
+
+    it('能力判定环境事实分组：打包 win 可用；打包 linux 无 APPIMAGE 降级 platform', async () => {
+      const original = process.platform;
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+      mocks.isPackaged = true;
+      try {
+        bootstrapMain();
+        await flushReadyChain();
+        expect(updateServiceDeps().capability).toEqual({ enabled: true });
+      } finally {
+        Object.defineProperty(process, 'platform', { value: original, configurable: true });
+      }
+      // linux 打包形态未注入 APPIMAGE：非 AppImage 形态降级（APPIMAGE 已在 beforeEach 删除）
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      mocks.isPackaged = true;
+      try {
+        bootstrapMain();
+        await flushReadyChain();
+        expect(updateServiceDeps().capability).toEqual({ enabled: false, reason: 'platform' });
+      } finally {
+        Object.defineProperty(process, 'platform', { value: original, configurable: true });
+      }
+    });
+
+    it('onState 供给闭包：遍历全部窗口以 update:state 发送状态（非事务广播，无 vfs 写事务）', async () => {
+      await bootstrapWithM9();
+      const { onState } = updateServiceDeps();
+      const sendA = vi.fn<(channel: string, payload: unknown) => void>();
+      const sendB = vi.fn<(channel: string, payload: unknown) => void>();
+      mocks.getAllWindows.mockReturnValue([
+        { webContents: { send: sendA } },
+        { webContents: { send: sendB } },
+      ]);
+      const state = { kind: 'available', currentVersion: '0.1.1', version: '9.9.9' };
+      onState(state);
+      expect(sendA).toHaveBeenCalledWith(IPC.updateState, state);
+      expect(sendB).toHaveBeenCalledWith(IPC.updateState, state);
+    });
+
+    it('will-quit 补充更新定时器释放：dispose 与 start 成对，未装配路径可选链短路', async () => {
+      bootstrapMain();
+      const handler = willQuitHandler();
+      // ready 链尚未落地：更新服务未创建，dispose 不触达、不二次抛错
+      expect(() => handler()).not.toThrow();
+      expect(mocks.updateStub.dispose).not.toHaveBeenCalled();
+      await flushReadyChain();
+      handler();
+      expect(mocks.updateStub.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('readClipboardFiles 供给闭包：uri-list 快照经 parseUriList 转本地路径（三平台通用主路径）', async () => {
+      const deps = await bootstrapWithM9();
+      const uri = 'file:///D:/clip/a.html';
+      // 小 Buffer 走 8KB 池：arrayBuffer 必须按字节区间切片，否则带出整池垃圾
+      const bytes = Buffer.from(uri, 'utf8');
+      mocks.clipboardRead.mockResolvedValue([
+        {
+          types: ['text/uri-list'],
+          getType: () =>
+            Promise.resolve({
+              arrayBuffer: () =>
+                Promise.resolve(
+                  bytes.buffer.slice(
+                    bytes.byteOffset,
+                    bytes.byteOffset + bytes.byteLength,
+                  ) as ArrayBuffer,
+                ),
+            }),
+        },
+      ]);
+      await expect(deps.readClipboardFiles()).resolves.toEqual([fileURLToPath(uri)]);
+      // 一次调用仅一次 clipboard.read 快照（格式清单与载荷同源）
+      expect(mocks.clipboardRead).toHaveBeenCalledTimes(1);
+    });
+
+    it('readClipboardFiles 供给闭包：win32 FileNameW 快照经 UTF-16LE 解析（钉 win32 覆盖原始格式分支）', async () => {
+      const original = process.platform;
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+      try {
+        const deps = await bootstrapWithM9();
+        // 小 Buffer 走 8KB 池：arrayBuffer 必须按字节区间切片，否则带出整池垃圾
+        const bytes = Buffer.from('D:\\clip\\1.html\0\0', 'utf16le');
+        mocks.clipboardRead.mockResolvedValue([
+          {
+            types: ['FileNameW'],
+            getType: () =>
+              Promise.resolve({
+                arrayBuffer: () =>
+                  Promise.resolve(
+                    bytes.buffer.slice(
+                      bytes.byteOffset,
+                      bytes.byteOffset + bytes.byteLength,
+                    ) as ArrayBuffer,
+                  ),
+              }),
+          },
+        ]);
+        await expect(deps.readClipboardFiles()).resolves.toEqual(['D:\\clip\\1.html']);
+      } finally {
+        Object.defineProperty(process, 'platform', { value: original, configurable: true });
+      }
+    });
+
+    it('readClipboardFiles 供给闭包：空快照返回空清单（剪贴板无文件是正常操作）', async () => {
+      const deps = await bootstrapWithM9();
+      // mockResolvedValue 实现不随 clearAllMocks 复位：显式置回空快照（防前用例泄漏）
+      mocks.clipboardRead.mockResolvedValue([]);
+      await expect(deps.readClipboardFiles()).resolves.toEqual([]);
     });
   });
 });
