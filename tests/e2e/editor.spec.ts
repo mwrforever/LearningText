@@ -497,6 +497,33 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
     await expect(page.locator('.lt-sidebar')).toHaveCSS('transition-duration', '0.18s');
     const x = box.x + box.width / 2;
     const y = box.y + box.height / 2;
+    // 异常取消路径（pointercancel）与抬起同路径收口：漏摘拖拽态会把画布永久置为
+    // pointer-events-none（真实缺陷，故须在鼠标仍按住时断言——若靠随后的真实 pointerup
+    // 收口则本断言无鉴别力）
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await divider.dispatchEvent('pointerdown', {
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: 1,
+      clientX: x,
+      clientY: y,
+    });
+    await expect(divider).toHaveAttribute('data-dragging', 'true');
+    await divider.dispatchEvent('pointercancel', {
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+    });
+    await expect(divider).not.toHaveAttribute('data-dragging', 'true');
+    await expect(page.locator('.lt-sidebar')).toHaveCSS('transition-duration', '0.18s');
+    expect(await page.evaluate(() => document.body.classList.contains('lt-col-dragging'))).toBe(
+      false,
+    );
+    await page.mouse.up();
+    // 正常拖拽链：pointerdown → move → up（up 一次性持久化）
     await page.mouse.move(x, y);
     await page.mouse.down();
     await divider.dispatchEvent('pointerdown', {
