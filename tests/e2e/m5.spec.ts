@@ -163,15 +163,20 @@ function treeNodes(): Locator {
 }
 
 /**
- * HTML 画布编辑（M6 所见即所得，editor.spec 同款驱动形态）：等注入桥置 contenteditable
- * 就绪 → 点 iframe 面聚焦（空文档 body 零高不可点，iframe 全幅可见必可点）→ 光标推到
- * 文档末尾 → 键入追加。返回画布 frame 供内容断言
+ * HTML 画布编辑（M9「交互优先」驱动形态）：先经工具条「编辑」进入编辑态
+ * （html[data-lt-editing]=桥 enterEdit 置位信号；进入即 body 落笔并聚焦，不点击画布
+ * ——编辑态点击空白=退出编辑）→ 光标推到文档末尾 → 键入追加。返回画布 frame 供内容断言
  */
 async function typeAtCanvasEnd(name: string, text: string): Promise<FrameLocator> {
-  const holder = page.locator(`iframe.lt-canvas-frame[title="编辑 ${name}"]`);
+  const holder = page.locator(`iframe.lt-canvas-frame[title="文档 ${name}"]`);
   const frame = holder.contentFrame();
-  await expect(frame.locator('body')).toHaveAttribute('contenteditable', 'true');
-  await holder.click();
+  // 目标文档就绪双信号（editor.spec focusCanvasAtEnd 同款）：src 指向目标 + 桥装载完成；
+  // 进入即 body 落笔并聚焦，不点击画布（编辑态点击空白=退出编辑）
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await expect(holder).toHaveAttribute('src', new RegExp(`/${escaped}$`));
+  await expect(holder).toHaveAttribute('data-lt-canvas-mode', 'interact');
+  await page.getByLabel('编辑').click();
+  await expect(frame.locator('html')).toHaveAttribute('data-lt-editing', '1');
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
   await page.keyboard.type(text);
   return frame;
@@ -237,7 +242,7 @@ test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
     await expect(page.getByRole('tab', { name: /p\.html/ })).toBeVisible();
     // 初始渲染证据：正文锚点已呈现（charset utf-8 正确解码，M4 Task 8 语义）
     await expect(
-      page.locator('iframe.lt-canvas-frame[title="编辑 p.html"]').contentFrame().locator('#pp'),
+      page.locator('iframe.lt-canvas-frame[title="文档 p.html"]').contentFrame().locator('#pp'),
     ).toHaveText('探针正文锚点');
     const canvas = await typeAtCanvasEnd('p.html', '链路增量');
     // 所见即所得：输入即渲染（编辑面=渲染面零重载）；innerText 容错（接收器 script 不计
@@ -273,7 +278,7 @@ test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
     await expect
       .poll(async () =>
         page
-          .locator('iframe.lt-canvas-frame[title="编辑 p.html"]')
+          .locator('iframe.lt-canvas-frame[title="文档 p.html"]')
           .contentFrame()
           .locator('img')
           .evaluate((img: HTMLImageElement) => ({
@@ -364,7 +369,7 @@ test.describe('M5 主链路与快速打开（同一 userData 会话）', () => {
     await expect(page.getByRole('tab', { name: /p\.html/ })).toBeVisible(); // 标签会话恢复
     // 恢复式打开读回内容：p.html 为画布标签（M6 三分流），内容断言平移到画布 frame
     await expect(
-      page.locator('iframe.lt-canvas-frame[title="编辑 p.html"]').contentFrame().locator('body'),
+      page.locator('iframe.lt-canvas-frame[title="文档 p.html"]').contentFrame().locator('body'),
     ).toContainText('链路增量', { useInnerText: true });
   });
 

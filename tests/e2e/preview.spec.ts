@@ -185,8 +185,10 @@ test('画布编辑零重载最终态一致 + 外部写入后手动重载子资�
     vfsResponses.filter((r) => r.url().endsWith('/a.html') && r.status() === 200).length;
   const doc200Before = doc200s();
   // —— 画布连续输入：内容实时一致（编辑面=渲染面），输入全程零主文档导航 ——
-  await expect(frame.locator('body')).toHaveAttribute('contenteditable', 'true');
-  await holder.click();
+  // M9「交互优先」：加载完成即为交互态，键入前先经工具条进入编辑态
+  await page.getByLabel('编辑').click();
+  await expect(frame.locator('html')).toHaveAttribute('data-lt-editing', '1');
+  // body 进入即聚焦（蓝图 A.5），不点击画布——编辑态点击空白=退出编辑
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
   await page.keyboard.type('最终态一二三四五六七八九十', { delay: 10 });
   await expect(frame.locator('body')).toContainText('最终态一二三四五六七八九十', {
@@ -266,13 +268,13 @@ test('M7 文件导入渲染：导入落库的示例 HTML 文档（code.html）�
   if (!created.ok) throw new Error('建 code.html 失败');
   await page.getByRole('button', { name: 'code.html' }).click();
   // 按 title 定位（此前用例的 a.html iframe 保活并存，无差别 iframe 定位会 strict 违例）
-  const frame = page.frameLocator('iframe[title="编辑 code.html"]');
+  const frame = page.frameLocator('iframe[title="文档 code.html"]');
   // 渲染断言：文档主标题 + 章节关键文本——长文档结构与中文内容完整呈现
   await expect(frame.locator('body')).toContainText('Spring 框架全景解析', { timeout: 10000 });
   await expect(frame.locator('body')).toContainText('从入门到精通', { useInnerText: true });
   // 渲染留证（M7 验收需求：示例文件导入渲染实测）——test-results 为 gitignore 产物目录
   await page
-    .locator('iframe[title="编辑 code.html"]')
+    .locator('iframe[title="文档 code.html"]')
     .screenshot({ path: 'test-results/m7-code-html-render.png' });
 });
 
@@ -293,7 +295,7 @@ test('画布文档面基底为浏览器白：文档未自设背景时文档区�
   if (!created.ok) throw new Error('建无底文档失败');
   await page.getByRole('button', { name: '无底文档.html' }).click();
   const visible = page.locator('iframe.lt-canvas-frame:not(.hidden)');
-  await expect(visible).toHaveAttribute('title', '编辑 无底文档.html');
+  await expect(visible).toHaveAttribute('title', '文档 无底文档.html');
   const background = await visible.evaluate((el) => getComputedStyle(el).backgroundColor);
   expect(background).toBe('rgb(255, 255, 255)');
 });

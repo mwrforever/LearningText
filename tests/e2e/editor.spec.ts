@@ -103,9 +103,9 @@ async function openInTree(name: string): Promise<void> {
   await treeNodes().getByRole('button', { name }).click();
 }
 
-/** 活动画布 iframe 元素（按 title=编辑 <名> 精确定位对应 HTML 标签；多标签并存时互不串扰） */
+/** 活动画布 iframe 元素（按 title=文档 <名> 精确定位对应 HTML 标签；多标签并存时互不串扰） */
 function canvasHolder(name: string): Locator {
-  return page.locator(`iframe.lt-canvas-frame[title="编辑 ${name}"]`);
+  return page.locator(`iframe.lt-canvas-frame[title="文档 ${name}"]`);
 }
 
 /** 活动画布 frame（后台标签 iframe 保活隐藏，DOM 仍在——文本断言对隐藏态同样成立） */
@@ -114,27 +114,37 @@ function canvasFrame(name: string): FrameLocator {
 }
 
 /**
- * 等画布编辑态就绪并聚焦到文档末尾。就绪信号 = body contenteditable（注入桥 onLoad 后
- * lt:edit-enable 才置位——早于此键入不进编辑面）；聚焦点 iframe 面本身而非 body：新建
- * 空文档 body 零高不可命中，iframe 全幅可见必可点，点选即把焦点与光标交予画布文档；
+ * 进入画布编辑态并聚焦到文档末尾（M9「交互优先」：加载完成即为交互态，编辑须显式进入
+ * ——工具条「编辑」为唯一程序化入口）。目标文档就绪双信号先行：src 已指向目标（rename/
+ * move 触发的换路径导航完成前不得进入编辑——旧文档的桥会先应答 data-lt-editing 使编辑
+ * 意图落空）+ data-lt-canvas-mode="interact"（首帧 load 完成后才有值）。进入即以 body 为
+ * 落笔目标并聚焦（蓝图 A.5），不点击画布——编辑态点击空白=退出编辑（蓝图 A.1）；
  * Control+End 把光标推到文档末尾（追加语义）
  */
 async function focusCanvasAtEnd(name: string): Promise<FrameLocator> {
-  const frame = canvasFrame(name);
-  await expect(frame.locator('body')).toHaveAttribute('contenteditable', 'true');
-  await canvasHolder(name).click();
+  const holder = canvasHolder(name);
+  const frame = holder.contentFrame();
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await expect(holder).toHaveAttribute('src', new RegExp(`/${escaped}$`));
+  await expect(holder).toHaveAttribute('data-lt-canvas-mode', 'interact');
+  await page.getByLabel('编辑').click();
+  await expect(frame.locator('html')).toHaveAttribute('data-lt-editing', '1');
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
   return frame;
 }
 
 /**
- * 整文档替换输入（保存管线用例的确定性编辑形态）：聚焦画布后全选重打。
- * 断言锚定替换后文本，无残留旧内容
+ * 整文档替换输入（保存管线用例的确定性编辑形态）：目标文档就绪双信号（同上）→ 进入
+ * 编辑态后全选重打（body 已聚焦，不点击画布——编辑态点击空白=退出）。
  */
 async function replaceCanvasDoc(name: string, text: string): Promise<FrameLocator> {
-  const frame = canvasFrame(name);
-  await expect(frame.locator('body')).toHaveAttribute('contenteditable', 'true');
-  await canvasHolder(name).click();
+  const holder = canvasHolder(name);
+  const frame = holder.contentFrame();
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await expect(holder).toHaveAttribute('src', new RegExp(`/${escaped}$`));
+  await expect(holder).toHaveAttribute('data-lt-canvas-mode', 'interact');
+  await page.getByLabel('编辑').click();
+  await expect(frame.locator('html')).toHaveAttribute('data-lt-editing', '1');
   await pressSelectAll();
   await page.keyboard.type(text);
   return frame;
