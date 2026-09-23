@@ -1,6 +1,6 @@
 {
   "name": "learningtext",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "跨平台桌面端 HTML 文档管理与实时预览工具",
   "author": "mwrforever",
