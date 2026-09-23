@@ -59,7 +59,7 @@
 | 配置分支保护（**dev=日常开发主干；main=生产分支，项目完整落地后一次性合入并触发完整 CI/CD 打包发布**）：dev 与 main 必需检查 = 三平台检查名 + 要求分支同步，无人工绕过通道 | 同上；分支模型经用户 2026-09-15 指定 | M0 首个 PR 前 | 完成（M0） |
 | 【M1 前置】补齐 B.5-4/5 窗口安全基线缺口：`will-navigate` origin 白名单拦截（URL 解析器比较）、`setWindowOpenHandler` 一律 deny、`setPermissionRequestHandler` 默认拒绝 | 宪法 B.5-4/5 强制条款，M0 未落地 | M1 窗口 / 预览工作时优先补齐 | 完成（M1） |
 | 【M1 前置】preload 从 tsconfig.main 拆出独立构建：现 dev watch 与单独 `npm run build:main` 会用 tsc 多文件产物覆盖 rolldown 单文件 preload（sandbox 下坏产物、dev 形态 IPC 断），重构构建编排——dev 主开发循环即受影响，M1 开工首日即撞上 | M0-Task 8/11 实测遗留 | M1 前置（M1 开工首日） | 完成（M1） |
-| release 发布工作流：tag 触发、draft release 人工发布闸门、签名 / 公证 secrets 占位、`forceCodeSigning` 证书就绪后开启为硬门禁 | 同上 §三方案 C | M6 | 主体完成（2026-09-23：`.github/workflows/release.yml` 三平台 matrix + draft 闸门 + tag/版本一致性守卫；forceCodeSigning 与签名 secrets 随证书就绪启用） |
+| release 发布工作流：tag 触发、draft release 人工发布闸门、签名 / 公证 secrets 占位、`forceCodeSigning` 证书就绪后开启为硬门禁 | 同上 §三方案 C | M6 | 主体完成（2026-09-23：`.github/workflows/release.yml` 三平台 matrix + draft 闸门 + tag/版本一致性守卫；forceCodeSigning 与签名 secrets 随证书就绪启用）；**v0.1.1 已公开发布**（2026-09-23，8 项产物，run 35822947798；v0.1.0 未公开 draft 保留待清理） |
 | 搜索索引重建修复例程（设置页：v1 对账不平或用户自修复触发——同 v2 复制范式重跑） | docs/superpowers/specs/2026-09-17-搜索-design.md §7.1 | 后续批次 | 待办（M6 已按用户需求「未实现功能不设计」移除设置页 disabled 占位按钮；接线项保留） |
 | electron-builder v27 `electronGet` 更名复核 | 同上 §三（C.6-11） | v27 发布后 |
 | A.5-4 交互/批量预算分档与基句悬空指针清理（终审建议：交互单点写与批量导入分档、删「见 TASK.md」悬空引用） | M2 终审 | 下一修宪周期 | 待办 |
