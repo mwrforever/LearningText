@@ -6,9 +6,12 @@
  * FolderOpen（展开集经 props 下传，M6 纯呈现批次的接口红线随功能批次解除）。
  * —— 图标区分 ——类型图标按类型着色（低饱和双主题色板，映射见 treeIconClassFor），
  * 尺寸升 16px（size-4）。
- * —— 行内新建 ——目录新建进入 VS Code 式行内命名：目标父的子级首位渲染命名输入行
- * （CreateDirRow，Enter 确认 / Esc、失焦取消），确认经 onConfirmCreateDir 走 createNode，
- * 失败保留行内编辑态可改名重试；原「固定名直接入库」路径退役。
+ * —— 行内新建 ——目录新建进入行内命名：目标父的子级首位渲染命名输入行
+ * （CreateDirRow，Enter / 失焦提交、空草稿与 Esc 取消），确认经 onConfirmCreateDir 走
+ * createNode，失败保留行内编辑态并重新聚焦可改名重试；原「固定名直接入库」路径退役。
+ * 失焦提交与「新建动作一次性收口」为用户实测反馈修复（原「失焦不取消」致命名行永久
+ * 滞留、空目录看似长期处于新建态；现语义与 Windows 资源管理器一致：行只承载本次新建
+ * 动作，提交后即为普通目录行，重命名须显式走工具栏/行内菜单）。
  * —— 导入入口 ——「新建文件」钮升级为「导入 HTML 文件」（onImportHtml，流程归 Workspace）。
  * 目录点选模式（dirPickMode）由 move / import-html 两流程共用：dir 点选=选定目标
  * （data-pick-target 高亮），file 点选禁用——合法性判定与确认归各流程自身。
@@ -46,6 +49,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@components/ui/dropdown-menu';
+import { ICON_BUTTON } from '../ui/classStrings';
 import type { TreeNode } from '../tree/treeModel';
 
 /** 树栏视图态（M5 三态容器）：资源树 / 全局搜索（Task 7）/ 回收站（M5 批次②） */
@@ -103,9 +107,9 @@ export interface TreePanelProps {
   onSelect(node: NodeMeta): void;
   /** 进入行内新建目录流程（工具栏钮入口；上下文父在面板内推导） */
   onStartCreateDir(parentId: number): void;
-  /** 行内命名确认（Enter；空名不回传由行内自守）；失败由 Workspace toast 并保留行内态 */
+  /** 行内命名提交（Enter / 失焦）：落库成功清命名行、失败 toast 并同样清行（不留在编辑态） */
   onConfirmCreateDir(parentId: number, name: string): void;
-  /** 行内命名取消（Esc / 失焦） */
+  /** 行内命名取消（Esc / 失焦时空草稿） */
   onCancelCreateDir(): void;
   onTrash(nodeId: number): void;
   /** 重命名入口（工具栏以选中 id、行内菜单以本行 id 直传；模态渲染归 Workspace） */
@@ -123,30 +127,33 @@ export interface TreePanelProps {
 const ROW_MENU_TRIGGER_CLASS =
   'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition duration-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100 hover:bg-accent hover:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground';
 
-/** 工具栏图标钮标准类串（28px 热区，hover/focus/disabled 纪律与既有文字钮同源） */
-const TOOLBAR_ICON_BUTTON_CLASS =
-  'inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40';
-
 /**
  * 树节点行主按钮标准类串（设计系统文档 §7.2 树列表形态 · M7 图标行版）：
  * chevron + 类型图标 + 名称横向排布（gap-1.5 与标签条图标行同节奏），名称 span 持有
- * truncate；强选中 aria-current 半透明底 + 加粗；点选目标 ring 提示
+ * truncate；强选中 aria-current 半透明底 + 加粗；点选目标 ring 提示。
+ * 行级元素不加按压态（宽行缩放即抖动，且行点击结果由选中态自证）——按压纪律见 classStrings
  */
 const TREE_ROW_BUTTON_CLASS =
   'min-w-0 flex-1 flex items-center gap-1.5 rounded-sm px-2 py-1 text-left text-sm text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40 aria-current:bg-accent aria-current:font-medium aria-current:text-accent-foreground data-[pick-target=true]:bg-primary/10 data-[pick-target=true]:ring-1 data-[pick-target=true]:ring-ring';
 
 /**
- * 行内新建目录命名行（VS Code 式原地命名）：自持草稿态（预填「新建目录」、挂载即聚焦
- * 全选，键入即覆盖）；Enter 确认（trim 空名视同取消）、Esc 取消（在途忽略取消——等待
- * createNode 结果期间不被打断，失败 toast 后行内态保留可改名重试）。失焦不取消：命名行
- * 是非模态轻量编辑，失焦取消与焦点系统时序（挂载期焦点重建伪影）强耦合且误伤键盘流，
- * 留行让用户以 Enter/Esc 显式收口，代价更低。
+ * 行内新建目录命名行（用户实测反馈后的文件系统语义版）：自持草稿态（预填「新建目录」、
+ * 挂载即聚焦全选，键入即覆盖）。**本次新建动作内一次性收口**——Enter 提交、Esc 取消、
+ * 失焦提交三路都以「提交受理 / 取消」终结行内态，不存在悬空的命名行（原「失焦不取消」
+ * 曾使失焦后的行永久滞留树中，用户实测为「一直处于新建状态」，已推翻）。
+ * 失焦语义（与 Windows 资源管理器同构）：草稿 trim 非空 → 以该名提交；trim 为空 → 视同
+ * 取消（不留无名目录）。提交结果（落库成功/失败）由 Workspace 收口：失败 toast 原因并
+ * **同时关闭命名行**——失败不留在编辑态，故不存在「用户已离开却每次点击都重发一次失败
+ * 请求并抢回焦点」的焦点陷阱（失败后以再点「新建目录」重试，与资源管理器同）。
+ * 命名行只承载「新建」这一次动作：提交后该目录即为普通目录行，重命名须经工具栏/行内
+ * 「⋯」菜单显式触发——目录是否为空不影响任何呈现（空目录不渲染任何占位行）。
  * 类名 lt-create-row 与 aria-label「新目录名称」为 E2E/组件测试锚点。
  */
 function CreateDirRow({
   onConfirm,
   onCancel,
 }: {
+  /** 提交草稿名（trim 非空）：落库结果由 Workspace 收口（成功/失败均终结行内态） */
   onConfirm(name: string): void;
   onCancel(): void;
 }): React.JSX.Element {
@@ -158,6 +165,12 @@ function CreateDirRow({
     inputRef.current?.focus();
     inputRef.current?.select();
   }, []);
+  /** 收口解析：空名取消、非空提交（Enter 与失焦共用同一路径，语义不因触发方式分叉） */
+  function resolveRow(): void {
+    const trimmed = draft.trim();
+    if (trimmed.length === 0) onCancel();
+    else onConfirm(trimmed);
+  }
   return (
     <li className="lt-create-row list-none">
       <div className="flex items-center gap-1.5 rounded-sm px-2 py-1">
@@ -174,17 +187,18 @@ function CreateDirRow({
           onChange={(e) => {
             setDraft(e.target.value);
           }}
-          className="h-6 min-w-0 flex-1 rounded-sm border border-input bg-background px-1.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring duration-100 animate-in fade-in"
+          className="h-6 min-w-0 flex-1 rounded-sm border border-input bg-background px-1.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring duration-100 ease-out animate-in fade-in"
           onKeyDown={(e) => {
+            // 输入法组合期（中文拼音等）的 Enter 是「确认候选词」而非「提交命名」，放行给 IME
+            if (e.nativeEvent.isComposing) return;
             if (e.key === 'Enter') {
-              const trimmed = draft.trim();
-              // 空名 Enter 视同取消（VS Code 同语义）；非空经确认回调（inFlight 守卫在 Workspace 侧）
-              if (trimmed.length === 0) onCancel();
-              else onConfirm(trimmed);
+              resolveRow();
             } else if (e.key === 'Escape') {
               onCancel();
             }
           }}
+          // 失焦提交（点击树内任意处/工具栏/画布，或应用失焦后离开本行）：与 Enter 同一收口路径
+          onBlur={resolveRow}
         />
       </div>
     </li>
@@ -324,7 +338,7 @@ function TreeItem({
         // 嵌套层经缩进 + 左侧连线表达层级（设计系统文档 §7.2 树列表形态）；展开入场
         // fade 100ms（opacity 合成器路径，折叠→展开卸载重挂时重播，reduced-motion 全局降级）；
         // 行内新建目录命名行渲染于子级首位（VS Code 新建项位置语义）
-        <ul className="m-0 ml-4 list-none border-l border-border pl-1 duration-100 animate-in fade-in">
+        <ul className="m-0 ml-4 list-none border-l border-border pl-1 duration-100 ease-out animate-in fade-in">
           {creatingDirParentId === node.meta.id ? (
             <CreateDirRow
               onConfirm={(name) => onConfirmCreateDir(node.meta.id, name)}
@@ -385,7 +399,7 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
           type="button"
           aria-label="新建目录"
           title="新建目录"
-          className={TOOLBAR_ICON_BUTTON_CLASS}
+          className={ICON_BUTTON}
           onClick={() => props.onStartCreateDir(contextParentId)}
         >
           <FolderPlus aria-hidden="true" className="size-4" />
@@ -394,7 +408,7 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
           type="button"
           aria-label="导入 HTML 文件"
           title="导入 HTML 文件"
-          className={TOOLBAR_ICON_BUTTON_CLASS}
+          className={ICON_BUTTON}
           onClick={props.onImportHtml}
         >
           <FileUp aria-hidden="true" className="size-4" />
@@ -404,7 +418,7 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
             type="button"
             aria-label="删除"
             title="删除"
-            className={TOOLBAR_ICON_BUTTON_CLASS}
+            className={ICON_BUTTON}
             onClick={() => props.onTrash(trashTarget)}
           >
             <Trash2 aria-hidden="true" className="size-4" />
@@ -417,7 +431,7 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
               aria-label="重命名"
               title="重命名"
               disabled={actionTarget === ROOT_ID}
-              className={TOOLBAR_ICON_BUTTON_CLASS}
+              className={ICON_BUTTON}
               onClick={() => props.onRename(actionTarget)}
             >
               <Pencil aria-hidden="true" className="size-4" />
@@ -427,7 +441,7 @@ export function TreePanel(props: TreePanelProps): React.JSX.Element {
               aria-label="移动到…"
               title="移动到…"
               disabled={actionTarget === ROOT_ID || props.dirPickMode}
-              className={TOOLBAR_ICON_BUTTON_CLASS}
+              className={ICON_BUTTON}
               onClick={() => props.onStartMove(actionTarget)}
             >
               <FolderInput aria-hidden="true" className="size-4" />

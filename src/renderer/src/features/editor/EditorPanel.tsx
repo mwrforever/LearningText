@@ -14,6 +14,7 @@
 import { useEffect, useRef } from 'react';
 import { EditorView } from '@codemirror/view';
 import { FileText } from 'lucide-react';
+import { TOOL_BUTTON } from '../ui/classStrings';
 import type { TabState } from '../workspace/tabModel';
 import { appearanceReconfigureEffect } from './codemirror';
 import { TabSessions } from './tabSessions';
@@ -152,7 +153,7 @@ export function EditorPanel({
             （brief 落地注 ②：立即写语义归 Task 5 管线，本任务经 onSaveRequest 可选接线） */}
         <button
           type="button"
-          className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+          className={TOOL_BUTTON}
           onClick={() => {
             onSaveRequest?.();
           }}

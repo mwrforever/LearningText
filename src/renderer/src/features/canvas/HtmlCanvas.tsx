@@ -128,13 +128,15 @@ export function HtmlCanvas({
           onLoad={() => handleLoad(tab.meta.id)}
         />
       ))}
-      {/* 浮动「从库重新加载」（spec §3.3 D7 外部变更入口）：绝对定位右下角，不随文档滚动 */}
+      {/* 浮动「从库重新加载」（spec §3.3 D7 外部变更入口）：绝对定位右下角，不随文档滚动。
+          按压走 scale 档（32px 热区 ≥ 28px 判定线）：纯图标钮前景为 muted 色，按压面不加深
+          表面（对比度不达正文门槛），纪律依据见 features/ui/classStrings.ts 按压纪律 */}
       <button
         type="button"
         aria-label="从库重新加载"
         title={activeDirty ? '有未保存更改，保存或撤销后可重新加载' : '从库重新加载'}
         disabled={activeId === null || activeDirty}
-        className="absolute right-4 bottom-4 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-popover text-popover-foreground shadow-md transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+        className="absolute right-4 bottom-4 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-popover text-popover-foreground shadow-md transition-[color,background-color,scale] duration-100 hover:bg-accent hover:text-accent-foreground active:duration-0 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
         onClick={reloadActive}
       >
         <RotateCw aria-hidden="true" className="size-4" />

@@ -32,7 +32,7 @@ export function ImportHtmlDialog({
   const trimmed = draft.trim();
   return (
     <div
-      className="lt-import-html fixed left-1/2 top-1/2 z-50 flex w-80 -translate-x-1/2 -translate-y-1/2 flex-col gap-2 rounded-lg border border-border bg-popover p-4 shadow-md duration-240 animate-in fade-in zoom-in-95"
+      className="lt-import-html fixed left-1/2 top-1/2 z-50 flex w-80 -translate-x-1/2 -translate-y-1/2 flex-col gap-2 rounded-lg border border-border bg-popover p-4 shadow-md duration-240 ease-out animate-in fade-in zoom-in-95"
       role="dialog"
       aria-label="导入 HTML 文件"
     >
@@ -58,11 +58,14 @@ export function ImportHtmlDialog({
       <p className="text-xs text-muted-foreground">
         导入到「{targetName}」，点击树中目录可更改位置
       </p>
+      {/* 操作钮 h-7 为浮层密度档（与面板工具钮 h-6 分档），故不复用共享常量，仅按压纪律对齐
+          （按下即时、释放平滑；中性钮走 --accent-active 表面、主钮走 primary-80，依据见
+          features/ui/classStrings.ts 按压纪律） */}
       <div className="flex items-center justify-end gap-2">
         <button
           type="button"
           aria-label="取消导入文件"
-          className="inline-flex h-7 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
+          className="inline-flex h-7 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground active:duration-0 active:bg-accent-active disabled:pointer-events-none disabled:opacity-40"
           onClick={onCancel}
         >
           取消
@@ -71,7 +74,7 @@ export function ImportHtmlDialog({
           type="button"
           aria-label="确认导入文件"
           disabled={inFlight || trimmed.length === 0}
-          className="inline-flex h-7 items-center justify-center rounded-sm bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors duration-100 hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-40"
+          className="inline-flex h-7 items-center justify-center rounded-sm bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors duration-100 hover:bg-primary/90 active:duration-0 active:bg-primary/80 disabled:pointer-events-none disabled:opacity-40"
           onClick={() => {
             onConfirm(trimmed);
           }}

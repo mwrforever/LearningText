@@ -267,6 +267,23 @@ test.describe('M4 主链路（出厂默认设置）', () => {
     await page.keyboard.type('重开后可编辑');
     await expect(reopened.locator('body')).toContainText('重开后可编辑', { useInnerText: true });
   });
+
+  // 用户实测反馈修复的浏览器侧实证：jsdom 的焦点/失焦时序不可靠（历史教训：伪影 blur），
+  // 「失焦提交」只能在真实 Chromium 上验收——失焦后命名行必须收口（不留悬空新建态），
+  // 目录以草稿名落树。名字带重试轮次：retries=1 时重跑不与首轮产物重名（重名会失败保留行）
+  test('行内命名失焦即提交：点击树外失焦 → 目录以草稿名落树且命名行收口（无悬空新建态）', async () => {
+    const name = `失焦收口目录r${String(test.info().retry)}`;
+    await toolbar().getByRole('button', { name: '新建目录' }).click();
+    await page.getByLabel('新目录名称').fill(name);
+    await expect(page.locator('li.lt-create-row')).toHaveCount(1);
+    // 失焦入口选树外中性面（保存路径小字为非交互 div，等价于「点空白处」）
+    await page.locator('.lt-tree-root-path').click();
+    // 收口双证据：命名行消失 + 目录行以草稿名出现
+    await expect(page.locator('li.lt-create-row')).toHaveCount(0);
+    await expect(
+      page.locator('nav[aria-label="资源树"]').getByRole('button', { name }).first(),
+    ).toBeVisible();
+  });
 });
 
 test.describe('M4 保存管线/多标签/热替换/5MB（计时调优设置）', () => {
@@ -474,6 +491,10 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
     const divider = page.locator('.lt-divider-sidebar');
     const box = await divider.boundingBox();
     if (box === null) throw new Error('未找到侧栏分隔条');
+    // M8 动效批次几何基线：侧栏单一常驻（折叠/展开同元素才可能过渡）+ 宽度过渡能力在位
+    await expect(page.locator('.lt-sidebar')).toHaveCount(1);
+    await expect(page.locator('.lt-sidebar')).toHaveCSS('transition-property', 'width');
+    await expect(page.locator('.lt-sidebar')).toHaveCSS('transition-duration', '0.18s');
     const x = box.x + box.width / 2;
     const y = box.y + box.height / 2;
     await page.mouse.move(x, y);
@@ -487,8 +508,21 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
       clientX: x,
       clientY: y,
     });
+    // 拖拽三态（M8）：拖拽态置位为 DOM 可断言锚点；过渡摘除（直跟手红线：拖拽期间宽度
+    // 不允许被过渡平滑，否则指针与分割线脱节）；body 级光标/选区固化生效
+    await expect(divider).toHaveAttribute('data-dragging', 'true');
+    await expect(page.locator('.lt-sidebar')).toHaveCSS('transition-duration', '0s');
+    expect(await page.evaluate(() => document.body.classList.contains('lt-col-dragging'))).toBe(
+      true,
+    );
     await page.mouse.move(x + 200, y, { steps: 8 });
     await page.mouse.up();
+    // 释放：拖拽态摘除、过渡能力恢复（此时宽度未变，故不触发多余过渡）
+    await expect(divider).not.toHaveAttribute('data-dragging', 'true');
+    await expect(page.locator('.lt-sidebar')).toHaveCSS('transition-duration', '0.18s');
+    expect(await page.evaluate(() => document.body.classList.contains('lt-col-dragging'))).toBe(
+      false,
+    );
     // 持久化完成业务信号（非 sleep）：settings 内比例偏离出厂 0.25 即 pointerup 写回完成
     await expect
       .poll(async () => {
@@ -496,9 +530,11 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
         return settings.ok ? settings.value.shell.layout.sidebarWidthRatio : -1;
       })
       .toBeGreaterThan(0.25);
-    // 折叠侧栏（折叠态本地应用与持久化一次完成）
+    // 折叠侧栏（折叠态本地应用与持久化一次完成）：宽度过渡落位为 48px 窄条，展开钮同步在位
     await page.getByLabel('折叠侧栏').click();
     await expect(page.getByLabel('展开侧栏')).toBeVisible();
+    await expect(page.locator('.lt-sidebar')).toHaveClass(/lt-sidebar-collapsed/);
+    await expect(page.locator('.lt-sidebar')).toHaveCSS('width', '48px');
     // 无脏关窗：guard 直通（不弹确认链）→ 同 userData 重启（折叠态下装配信号走展开钮）。
     // 关停经 closeAppGracefully 显式放行（macOS quit 流程修复，见 close-app.ts 头注）
     await closeAppGracefully(app, page);

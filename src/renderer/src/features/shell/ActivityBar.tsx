@@ -5,6 +5,7 @@
  */
 import { Files, Search, Settings, Trash2 } from 'lucide-react';
 import type { TreePaneView } from '../tree/TreePanel';
+import { ACTIVITY_BUTTON } from '../ui/classStrings';
 
 export interface ActivityBarProps {
   /** 当前活动视图（Workspace 持久化态 activityView 回灌） */
@@ -16,11 +17,6 @@ export interface ActivityBarProps {
   /** 打开设置标签页 */
   onOpenSettings(): void;
 }
-
-/** 活动栏图标钮标准类串：40px 视觉热区（蓝图 §2.2「图标钮 40×40」）+ 选中态前景正色；
- * 指示条由子 span 按激活态渲染 */
-const ACTIVITY_BUTTON_CLASS =
-  'relative inline-flex h-10 w-10 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground aria-current:text-foreground';
 
 export function ActivityBar({
   view,
@@ -38,7 +34,7 @@ export function ActivityBar({
         aria-label="资源树"
         title="资源树"
         aria-current={view === 'tree' ? 'true' : undefined}
-        className={ACTIVITY_BUTTON_CLASS}
+        className={ACTIVITY_BUTTON}
         onClick={() => onViewChange('tree')}
       >
         {view === 'tree' ? (
@@ -46,7 +42,7 @@ export function ActivityBar({
           // 视图切换指示条瞬现缺乏状态反馈，与蓝图「面板切换 fade 100ms」同族微动效
           <span
             aria-hidden="true"
-            className="absolute top-1/2 left-0 h-5 w-0.5 -translate-y-1/2 rounded-full bg-foreground duration-100 animate-in fade-in"
+            className="absolute top-1/2 left-0 h-5 w-0.5 -translate-y-1/2 rounded-full bg-foreground duration-100 animate-in fade-in ease-out"
           />
         ) : null}
         <Files className="size-5" />
@@ -56,14 +52,14 @@ export function ActivityBar({
         aria-label="全局搜索"
         title="全局搜索"
         aria-current={view === 'search' ? 'true' : undefined}
-        className={ACTIVITY_BUTTON_CLASS}
+        className={ACTIVITY_BUTTON}
         onClick={() => onViewChange('search')}
       >
         {view === 'search' ? (
           // 指示条 100ms fade-in（同资源树钮：状态反馈微动效）
           <span
             aria-hidden="true"
-            className="absolute top-1/2 left-0 h-5 w-0.5 -translate-y-1/2 rounded-full bg-foreground duration-100 animate-in fade-in"
+            className="absolute top-1/2 left-0 h-5 w-0.5 -translate-y-1/2 rounded-full bg-foreground duration-100 animate-in fade-in ease-out"
           />
         ) : null}
         <Search className="size-5" />
@@ -73,14 +69,14 @@ export function ActivityBar({
         aria-label="回收站"
         title="回收站"
         aria-current={view === 'trash' ? 'true' : undefined}
-        className={ACTIVITY_BUTTON_CLASS}
+        className={ACTIVITY_BUTTON}
         onClick={() => onViewChange('trash')}
       >
         {view === 'trash' ? (
           // 指示条 100ms fade-in（同资源树钮：状态反馈微动效）
           <span
             aria-hidden="true"
-            className="absolute top-1/2 left-0 h-5 w-0.5 -translate-y-1/2 rounded-full bg-foreground duration-100 animate-in fade-in"
+            className="absolute top-1/2 left-0 h-5 w-0.5 -translate-y-1/2 rounded-full bg-foreground duration-100 animate-in fade-in ease-out"
           />
         ) : null}
         <Trash2 className="size-5" />
@@ -91,7 +87,7 @@ export function ActivityBar({
         aria-label="设置"
         title="设置"
         aria-pressed={settingsActive}
-        className={`${ACTIVITY_BUTTON_CLASS} mt-auto aria-pressed:text-foreground`}
+        className={`${ACTIVITY_BUTTON} mt-auto aria-pressed:text-foreground`}
         onClick={onOpenSettings}
       >
         <Settings className="size-5" />

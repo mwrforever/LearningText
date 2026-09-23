@@ -24,9 +24,11 @@ export interface WelcomePageProps {
   onQuickOpen(): void;
 }
 
-/** 主操作钮标准类串：图标 + 文字的次级大钮（欢迎页专用，44px 级热区） */
+/** 主操作钮标准类串：图标 + 文字的次级大钮（欢迎页专用，44px 级热区）；
+ * 单文件专属、无兄弟纪律要求，故不入共享类串模块；按压态对齐纪律（按下即时、释放平滑）：
+ * 含文字钮走表面深一档而非缩放（字形重栅格化不值，见 features/ui/classStrings.ts 按压纪律） */
 const ACTION_BUTTON_CLASS =
-  'inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-card px-4 text-sm font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground';
+  'inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-card px-4 text-sm font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground active:duration-0 active:bg-accent-active';
 
 export function WelcomePage({
   recent,
@@ -42,7 +44,7 @@ export function WelcomePage({
     >
       {/* 内容列 100ms fade 入场（蓝图动效基线「面板切换 fade 100ms」）：无标签空态的
           出现属状态切换反馈，opacity 单属性合成器路径，reduced-motion 全局降级覆盖 */}
-      <div className="flex w-full max-w-md flex-col gap-6 px-6 py-10 duration-100 animate-in fade-in">
+      <div className="flex w-full max-w-md flex-col gap-6 px-6 py-10 duration-100 animate-in fade-in ease-out">
         <div>
           <h2 className="m-0 text-2xl font-semibold text-foreground">LearningText</h2>
           <p className="m-0 mt-1 text-sm text-muted-foreground">

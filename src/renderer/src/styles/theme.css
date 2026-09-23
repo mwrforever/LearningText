@@ -24,6 +24,10 @@
   --muted-foreground: #5f7085;
   --accent: #e2e8f0;
   --accent-foreground: #0f172a;
+  /* 按压面（M8 按钮微交互）：hover 面（--accent）再深一档，承载含文字钮的 active 态。
+     对比度自证（设计系统文档 §3.1）：--foreground 于本面 12.02 通过；--muted-foreground
+     于本面仅 3.41 不达正文门槛——故 muted 前景元素（纯图标钮）按压走 scale 路径不改表面 */
+  --accent-active: #cbd5e1;
   /* red-700：破坏色文本最坏表面 = 悬停 accent 面（#E2E8F0，标签/下拉项 hover）——
      red-600 在该面仅 3.92:1 不达正文门槛 4.5:1，加深一档后 5.25:1（实算，
      全组合见设计系统文档 §3.1 打磨增量行；对比度缺口为 M5 Task 15 审计发现） */
@@ -51,6 +55,8 @@
   --muted-foreground: #94a3b8;
   --accent: #1e293b;
   --accent-foreground: #f8fafc;
+  /* 按压面（M8）：暗面取亮一档（--accent 的对应深向），--foreground 于本面 9.90 通过 */
+  --accent-active: #334155;
   /* red-400：破坏色文本最坏表面 = 悬停 accent 面（#1E293B）——red-500 系在该面不达 4.5:1
      （3.89:1），提亮一档后 5.29:1（实算）；破坏面配深色字照旧：白字对 #F87171 仅 2.77:1，
      深字 6.45:1 通过（M5 Task 15 审计发现的暗色侧同型缺口一并修复） */
@@ -79,6 +85,7 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-accent-active: var(--accent-active);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
@@ -92,10 +99,16 @@
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 4px);
-  /* 动效时长 tokens（数值即工具类字面量的唯一事实来源，见设计系统文档 §6.1） */
-  --duration-instant: 100ms;
-  --duration-fast: 180ms;
-  --duration-normal: 240ms;
+}
+
+/* 全局过渡缓动基线（设计系统文档 §6.1「一切入场 ease-out」）：Tailwind v4 的 transition-*
+   工具按 var(--tw-ease, var(--default-transition-timing-function)) 取时序函数，默认值为
+   cubic-bezier(0.4, 0, 0.2, 1)（标准 ease-in-out）。此处改写为 ease-out 语义值，令全仓
+   transition-* 一次到位——逐处补 ease-out 类既不可维护也制造不一致。
+   注意：animate-in/out 的动画简写读 var(--tw-ease, ease)，不读本键，故浮层/面板的
+   animate-* 入场仍须在消费点显式写 ease-out、出场显式 ease-in（本批只补台账内点位）。 */
+@theme {
+  --default-transition-timing-function: cubic-bezier(0, 0, 0.2, 1);
 }
 
 @layer base {
@@ -110,6 +123,15 @@
   }
   .lt-no-drag {
     -webkit-app-region: no-drag;
+  }
+  /* 分隔条拖拽期全局光标固化与选区抑制（M8 拖拽微交互）：拖拽中指针会离开 4px 命中轨、
+     越过树行与画布 iframe，光标随之翻转为文本/指针形且横向拖拽会刷出文字选区——拖拽是
+     「已接管」状态，必须全局压住。与 .lt-drag 同源：Tailwind 无以整文档为作用面的工具类，
+     故以语义类承载；!important 用于压过 cursor-pointer/cursor-text 等工具类（拖拽态优先）。 */
+  body.lt-col-dragging,
+  body.lt-col-dragging * {
+    cursor: col-resize !important;
+    user-select: none !important;
   }
   /* 键盘焦点环基线（M5 打磨增量）：未自带焦点样式的自研控件（工具钮/树行/标签/「⋯」
      触发钮/关闭钮）统一 2px 实线 ring——原先仅 UA auto 轮廓叠加 50% 透明 ring 色，

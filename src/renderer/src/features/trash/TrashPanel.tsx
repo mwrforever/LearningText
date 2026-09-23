@@ -10,21 +10,9 @@
 import { useEffect, useState } from 'react';
 import { E_VFS_NOT_FOUND } from '../../../../shared/errors';
 import type { TrashedNodeMeta } from '../../../../shared/vfs-contract';
+import { DESTRUCTIVE_BUTTON, TOOL_BUTTON } from '../ui/classStrings';
 import { showToast } from '../ui/Toast';
 import { filterTrashed } from './trashModel';
-
-/** 工具钮标准类串（设计系统文档 §7.2 唯一规范形态，模板字面量拼接、禁体外发挥） */
-const TOOL_BUTTON_CLASS =
-  'inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40';
-
-/**
- * 破坏性工具钮类串（清空专用，独立整串避免模板字面量拼接下 text-* 双类级联歧义）：
- * 不可逆批量操作的色彩分级（蓝图 §2.3 回收站「清空」destructive 色语义）；
- * 悬停面文字对比度已自证（设计系统文档 §3.1 #18/#19：destructive/accent = 5.25/5.29），
- * 禁用态经 opacity-40 降噪；还原/删除为逐条可逆或强确认操作，维持中性 TOOL_BUTTON_CLASS
- */
-const DESTRUCTIVE_BUTTON_CLASS =
-  'inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-destructive transition-colors duration-100 hover:bg-accent hover:text-destructive disabled:pointer-events-none disabled:opacity-40';
 
 export function TrashPanel(): React.JSX.Element {
   const [items, setItems] = useState<readonly TrashedNodeMeta[]>([]);
@@ -101,11 +89,14 @@ export function TrashPanel(): React.JSX.Element {
           className="min-w-0 flex-1 rounded-sm border border-input bg-background px-2 py-1 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onChange={(e) => setKeyword(e.target.value)}
         />
+        {/* 清空（不可逆批量操作）走破坏色分级，与中性工具钮构成色彩分级族
+            （色彩依据与对比度自证见 features/ui/classStrings.ts DESTRUCTIVE_BUTTON）；
+            还原/删除为逐条可逆或强确认操作，维持中性 TOOL_BUTTON */}
         <button
           type="button"
           aria-label="清空回收站"
           disabled={items.length === 0}
-          className={DESTRUCTIVE_BUTTON_CLASS}
+          className={DESTRUCTIVE_BUTTON}
           onClick={onEmpty}
         >
           清空
@@ -132,7 +123,7 @@ export function TrashPanel(): React.JSX.Element {
                   <button
                     type="button"
                     aria-label={`还原 ${item.meta.name}`}
-                    className={TOOL_BUTTON_CLASS}
+                    className={TOOL_BUTTON}
                     onClick={() => onRestore(item.meta.id)}
                   >
                     还原
@@ -140,7 +131,7 @@ export function TrashPanel(): React.JSX.Element {
                   <button
                     type="button"
                     aria-label={`彻底删除 ${item.meta.name}`}
-                    className={TOOL_BUTTON_CLASS}
+                    className={TOOL_BUTTON}
                     onClick={() => onPurge(item)}
                   >
                     删除

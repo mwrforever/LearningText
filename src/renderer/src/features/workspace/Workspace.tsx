@@ -89,6 +89,7 @@ import { StatusBar } from '../shell/StatusBar';
 import { TitleBar } from '../shell/TitleBar';
 import { WelcomePage } from '../shell/WelcomePage';
 import { showToast } from '../ui/Toast';
+import { ICON_BUTTON, PRIMARY_BUTTON, TOOL_BUTTON } from '../ui/classStrings';
 import { TabBar } from './TabBar';
 import { ratioFromPointer } from './layoutModel';
 import { PROGRESS_EXIT_MS, useExitPresence } from './ioProgressPresence';
@@ -127,6 +128,9 @@ export function Workspace(): React.JSX.Element {
   const [autoSaveMs, setAutoSaveMs] = useState(3000);
   // 壳层布局态（FR-SHELL-01 修订版，v4）：侧栏折叠/宽度/活动视图；启动时由 settingsGet 恢复
   const [layout, setLayout] = useState<ShellLayout>(DEFAULT_LAYOUT);
+  // 布局就绪标记（M8）：settingsGet 应用布局后才置位——在此之前不挂过渡/入场类，避免把
+  // 「默认布局 → 记忆布局」的装载覆盖播成动画（非用户动作驱动的动效是廉价感来源）
+  const [layoutReady, setLayoutReady] = useState(false);
   // move 选择模式（M4 spec §6.2 D8；M5 批次④ Task 10 源锚退役）：null=未进入；sourceId=
   // 进入模式时直传的移动源（树工具栏传选中 id、行内菜单传本行 id——不再读 tabsOp.activeId，
   // 消灭「覆盖高亮/激活态瞬态错位」窗口），targetId=已点选的目标目录（null=尚待点选）。
@@ -143,8 +147,9 @@ export function Workspace(): React.JSX.Element {
   // 行内新建目录（M7，VS Code 式原地命名）：目标父 id（null=无命名行）；父未展开时进入
   // 即自动展开装载（行内命名行渲染于子级首位，需父 loaded）
   const [creatingDirParentId, setCreatingDirParentId] = useState<number | null>(null);
-  // 行内新建目录请求在途（确认防重复提交；在途忽略失焦取消）
-  const [createDirInFlight, setCreateDirInFlight] = useState(false);
+  // 行内新建目录请求在途（确认防重复提交；ref 而非 state——见 confirmCreateDir 注：同任务
+  // 连发提交时 state 闭包会读到旧值而穿透守卫）
+  const createDirInFlightRef = useRef(false);
   // HTML 文件导入草稿（M7，FR-IO-01 文件形态）：io:pick-file 产出源路径 + 目标父目录
   // （确认浮层非模态，打开期间树中点选目录即改目标——dirPickMode 与 move 共用语义），
   // null=浮层关闭
@@ -157,6 +162,11 @@ export function Workspace(): React.JSX.Element {
   // 树栏视图态（M6 起由 layout.activityView 承载持久化，本态为渲染派生镜像——v4 装载前
   // 默认 'tree'；写入口 switchView/updateLayout 同步持久化）
   const [view, setView] = useState<TreePaneView>('tree');
+  // 侧栏宽度拖拽进行中（M8 拖拽微交互）：驱动 data-dragging 三处消费——aside 摘除宽度过渡
+  // （拖拽必须直跟手）、分隔条颜色固化（指针离开 4px 轨后 hover 面失效）、画布 pointer-events
+  // 穿透（指针越过 iframe 时光标才由壳层接管）。每次拖拽仅两次渲染（按下/抬起），不在
+  // pointermove 高频路径上
+  const [sidebarDragging, setSidebarDragging] = useState(false);
   // 树内定位选中覆盖（M5 Task 7 评审 fix，spec §2.2「在树中显示/定位打开」）：M4 架构
   // selected 即 activeTab，reveal 不开标签但需树内高亮——以覆盖值临时接管 TreePanel 的
   // selectedId；activeId 一变（开标签/切签/关签补位）即回落，用户焦点变化优先于 reveal 残留
@@ -300,6 +310,9 @@ export function Workspace(): React.JSX.Element {
         layoutRef.current = result.value.shell.layout;
         setLayout(result.value.shell.layout);
         setView(result.value.shell.layout.activityView);
+        // 布局就绪（M8）：首帧恒以 DEFAULT_LAYOUT 渲染、装载后才覆盖——过渡/入场类在就绪前
+        // 一律不挂，避免「默认布局 → 恢复布局」在每次启动时报一次非用户动作驱动的动画
+        setLayoutReady(true);
         // 欢迎页最近打开镜像装载（M6 spec §2.5）
         setRecentOpened(result.value.recent.opened);
         // 工作区恢复（M5 批次②）：开关开启才恢复；恢复链异步贯穿存活校验，卸载即中止
@@ -533,19 +546,20 @@ export function Workspace(): React.JSX.Element {
   }
 
   /**
-   * 行内命名确认：createNode 以用户输入名建目录；成功清命名行（created 广播挂入树），
-   * 失败（重名/非法名）toast 并保留命名行可改名重试（错误不落盘，行内态与库无冲突）
+   * 行内命名提交（Enter / 失焦）：createNode 以用户输入名建目录，**成功与失败都收口命名行**
+   * ——成功由 created 广播挂入树，失败 toast 呈现原因；失败不留在编辑态是刻意的（留在编辑态
+   * 会让「用户已离开」的每次点击都重发一次失败请求并抢回焦点，构成焦点陷阱；与资源管理器
+   * 「失败即结束，重试=再点新建」同语义）。
+   * 在途守卫用 ref：同一任务内连发提交（程序化 blur / 自动化驱动）时状态量尚未提交值更新，
+   * 闭包读到的仍是旧值，会穿透守卫重复上报——ref 写读同步，与 applyLayout 的 ref 先行记账同源。
    */
   function confirmCreateDir(parentId: number, name: string): void {
-    if (createDirInFlight) return;
-    setCreateDirInFlight(true);
+    if (createDirInFlightRef.current) return;
+    createDirInFlightRef.current = true;
     void window.api.createNode({ parentId, name, nodeType: 'dir' }).then((result) => {
-      setCreateDirInFlight(false);
-      if (result.ok) {
-        setCreatingDirParentId(null);
-      } else {
-        showToast(`创建目录失败：${result.error.message}`);
-      }
+      createDirInFlightRef.current = false;
+      if (!result.ok) showToast(`创建目录失败：${result.error.message}`);
+      setCreatingDirParentId(null);
     });
   }
 
@@ -1400,24 +1414,34 @@ export function Workspace(): React.JSX.Element {
   /**
    * 侧栏宽度拖拽：pointermove 仅本地态（写风暴防护，见 applyLayout），pointerup 一次性
    * 持久化；监听器 window 级成对移除（资源成对纪律）。偏移取容器左缘，换算与钳制归
-   * layoutModel 纯函数
+   * layoutModel 纯函数。拖拽期三处视觉/命中态（见 onDividerPointerDown 内注释）
    */
   function onDividerPointerDown(e: React.PointerEvent<HTMLDivElement>): void {
     e.currentTarget.setPointerCapture(e.pointerId);
     const host = e.currentTarget.parentElement;
     if (host === null) return;
+    // 拖拽态：aside 摘除宽度过渡（直跟手）、分隔条颜色加深一档（「已接管」台阶）、
+    // 画布指针穿透、光标与选区全局固化
+    setSidebarDragging(true);
+    document.body.classList.add('lt-col-dragging');
     const onMove = (move: PointerEvent): void => {
       const rect = host.getBoundingClientRect();
       const offset = move.clientX - rect.left;
       applyLayout({ sidebarWidthRatio: ratioFromPointer(rect.width, offset) });
     };
+    // 收口（抬起与异常取消同路径）：先恢复过渡能力与光标（清态瞬间宽度未变，不会触发过渡），
+    // 再落库最终比例；pointercancel 必须同清理——漏摘态会把画布永久置为 pointer-events-none
     const onUp = (): void => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      setSidebarDragging(false);
+      document.body.classList.remove('lt-col-dragging');
       persistLayout(layoutRef.current);
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }
 
   // 激活标签同步给控制器（flushActive 语义基准；tabModel 补位/聚焦后随 activeId 联动）。
@@ -1529,180 +1553,253 @@ export function Workspace(): React.JSX.Element {
   // 设置伪标签激活判定（哨兵值）；状态栏脏态（仅 doc 标签参与）
   const settingsActive = tabsOp.activeId === 'settings';
   const hasDirty = tabsOp.tabs.some((t) => t.dirty);
+  // 侧栏内容层退场存在性（M8 折叠过渡）：折叠时不瞬时卸载——内容层保留快照播完退场再卸载
+  //（「折叠后内容真的卸载、面板订阅随卸载回收」的既有语义不变，仅推迟一个过渡时长）。
+  // 载荷取布尔量而非视图值：退场期渲染的仍是离开时那个视图（view 状态未变，判定直接用 view）。
+  // 本 hook 只贡献「是否仍在场」这一个挂载门；退场**呈现态直读 layout.sidebarCollapsed**
+  //（它就是退场事实本身，走 hook 的 leaving 会晚一帧，见下 sidebarContentMounted）
+  const sidebarContent = useExitPresence(
+    layout.sidebarCollapsed ? null : 'present',
+    SIDEBAR_TOGGLE_MS,
+  );
+  // 挂载门：未折叠恒挂载；折叠后仅在退场存在性未清空期间继续渲染（播完即卸载）。
+  // 展开方向必须即时挂载（不能用 sidebarContent 单独判定——presence 由 effect 驱动，会晚一帧
+  // 造成「窄条钮已卸载、内容层未出现」的空窗与一次空帧焦点丢失）
+  const sidebarContentMounted = !layout.sidebarCollapsed || sidebarContent !== null;
+  // 折叠/展开的焦点交接（键盘可达性）：折叠后内容层（含折叠钮）整体卸载，焦点必须移交窄条
+  // 展开钮；展开后交回侧栏头折叠钮。目标 ref 为空表示对应层尚未挂载（展开首帧），此时
+  // **不消费意图**、等下一轮 effect（依赖含 sidebarContent）再落地——早先无条件消费会让
+  // 展开方向静默丢焦点到 body
+  const railExpandRef = useRef<HTMLButtonElement | null>(null);
+  const headerCollapseRef = useRef<HTMLButtonElement | null>(null);
+  const pendingSidebarFocusRef = useRef<'rail' | 'header' | null>(null);
+  useEffect(() => {
+    const target = pendingSidebarFocusRef.current;
+    if (target === null) return;
+    const element = target === 'rail' ? railExpandRef.current : headerCollapseRef.current;
+    if (element === null) return;
+    pendingSidebarFocusRef.current = null;
+    element.focus();
+  }, [layout.sidebarCollapsed, sidebarContent]);
+  // 拖拽会话的卸载兜底：body 级拖拽类只在拖拽收口时摘除，而组件卸载（窗口销毁 / 开发期
+  // 热重载）不会走到 pointerup——漏摘会让后续任何界面停在 col-resize 光标与禁选态
+  //（资源成对纪律：add 与 remove 各有归属）
+  useEffect(() => () => document.body.classList.remove('lt-col-dragging'), []);
 
   return (
     // 工作台容器：标题栏 + 主体行（活动栏|侧栏|分隔条|画布区）+ 状态栏（M6 spec §2 结构）
     <div className="lt-workspace flex min-h-0 flex-1 flex-col">
       <TitleBar platform={window.api.platform} onCommand={handleShellCommand} />
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div
+        className="group/drag flex min-h-0 flex-1 overflow-hidden"
+        data-dragging={sidebarDragging ? 'true' : undefined}
+      >
         <ActivityBar
           view={view}
           settingsActive={settingsActive}
           onViewChange={switchView}
           onOpenSettings={() => setTabsOp((prev) => openSettingsTab(prev))}
         />
-        {layout.sidebarCollapsed ? (
-          <aside className="lt-sidebar lt-sidebar-collapsed flex w-12 shrink-0 flex-col items-center gap-1 border-r border-border bg-background py-2">
-            <button
-              type="button"
-              aria-label="展开侧栏"
-              title="展开侧栏"
-              className={SIDEBAR_ICON_BUTTON_CLASS}
-              onClick={() => updateLayout({ sidebarCollapsed: false })}
+        {/* 侧栏（M8 动效批次：单一常驻 aside）：折叠/展开共用同一元素——原实现是两个 <aside>
+            三元互斥渲染，跨元素没有插值起点，几何过渡在物理上不可能。折叠态宽 w-12（48px
+            窄条），展开态宽为内联百分比，两者由 transition-[width] 插值（Chromium 支持 %↔px
+            长度插值，实测 250→48px 逐帧连续）。overflow-hidden 是折叠期的裁剪面（内容层尚未
+            卸载时先被裁掉，不溢出到画布）；relative 为窄条层定位基准。拖拽期与启动装载期摘除
+            宽度过渡——§6.2 红线：拖拽 pointermove 路径禁任何 transition（必须直跟手）；
+            装载期（layoutReady 前）摘除是为避免「默认布局 → 恢复布局」在启动时报一次无动机动画 */}
+        <aside
+          className={`lt-sidebar relative flex min-h-0 shrink-0 flex-col overflow-hidden border-r border-border bg-background${
+            // 拖拽期摘除宽度过渡（§6.2 红线：拖拽 pointermove 路径禁任何 transition，必须直跟手）。
+            // 用类串条件而非 group-data 变体——实测 `group-data-*/transition-none` 不进构建产物
+            // （同名变体挂 pointer-events-none 却正常生成，属该组合的静默失效），故取可核证的直白路径
+            sidebarDragging || !layoutReady ? '' : ' transition-[width] duration-180'
+          }${layout.sidebarCollapsed ? ' lt-sidebar-collapsed w-12' : ''}`}
+          style={
+            layout.sidebarCollapsed
+              ? undefined
+              : { width: `${(layout.sidebarWidthRatio * 100).toFixed(2)}%` }
+          }
+        >
+          {/* 折叠窄条层（绝对定位左缘 + 恒 48px，py-1 与侧栏头折叠钮同基线）：几何不随 aside
+              宽度变化——收缩过程中展开钮就在自己的最终位置被逐帧揭示，不随侧栏横向平移。
+              展开钮由 sidebarCollapsed 直接门控（不挂在退场存在性上）：折叠点击后即刻挂载、
+              展开后即刻卸载（组件测试以真时钟同步断言两者，等不起 180ms）。入场只许纯
+              opacity——Playwright 可点性判定要求包围盒稳定，任何 slide/zoom 都会把点击推迟到动画结束 */}
+          {layout.sidebarCollapsed ? (
+            <div className="absolute inset-y-0 left-0 flex w-12 flex-col items-center gap-1 py-1">
+              <button
+                ref={railExpandRef}
+                type="button"
+                aria-label="展开侧栏"
+                title="展开侧栏"
+                className={`${ICON_BUTTON} duration-100 ease-out animate-in fade-in`}
+                onClick={() => {
+                  pendingSidebarFocusRef.current = 'header';
+                  updateLayout({ sidebarCollapsed: false });
+                }}
+              >
+                <PanelLeftOpen aria-hidden="true" className="size-4" />
+              </button>
+            </div>
+          ) : null}
+          {/* 内容层（侧栏头 + 活动视图）：折叠时淡出 SIDEBAR_TOGGLE_MS 后才卸载（见 sidebarContent）。
+              退场呈现态直读 sidebarCollapsed（无 effect 滞后到帧）；opacity 走 transition 而非
+              animate-*：CSS 过渡天然从「当前值」续走，连点折叠/展开不会闪断，且 reduced-motion
+              下终态（opacity-0）是声明值、不会像 fill-mode:none 的动画那样回弹成不透明 */}
+          {sidebarContentMounted ? (
+            <div
+              className={`flex min-h-0 min-w-0 flex-1 flex-col ${
+                layout.sidebarCollapsed
+                  ? SIDEBAR_CONTENT_EXIT_CLASSES
+                  : SIDEBAR_CONTENT_ENTER_CLASSES
+              }`}
             >
-              <PanelLeftOpen aria-hidden="true" className="size-4" />
-            </button>
-          </aside>
-        ) : (
-          <aside
-            className="lt-sidebar flex min-h-0 min-w-0 flex-col bg-background"
-            style={{ width: `${(layout.sidebarWidthRatio * 100).toFixed(2)}%` }}
-          >
-            {/* 侧栏头（M6 spec §2.3）：随活动视图换题与操作（返回/折叠图标钮）。
-                bg-muted/50 与标签条同为 h-9 chrome 面（跨分隔条相邻、必须同值才成连续
-                横带——取设计系统文档 §7.2 面板标题栏标尺值；树工具栏不再着色，
-                二级头靠面差拉开层级） */}
-            <div className="lt-sidebar-header flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
-              <span className="text-xs font-medium text-muted-foreground">
-                {view === 'trash' ? '回收站' : view === 'search' ? '全局搜索' : '资源树'}
-              </span>
-              <div className="flex items-center gap-1">
-                {view !== 'tree' ? (
+              {/* 侧栏头（M6 spec §2.3）：随活动视图换题与操作（返回/折叠图标钮）。
+                  bg-muted/50 与标签条同为 h-9 chrome 面（跨分隔条相邻、必须同值才成连续
+                  横带——取设计系统文档 §7.2 面板标题栏标尺值；树工具栏不再着色，
+                  二级头靠面差拉开层级）。标题 min-w-0 truncate + 按钮组 shrink-0：折叠过程中
+                  侧栏会窄至 48px，标题截断而折叠钮恒贴右缘（否则 flex 溢出推出错位） */}
+              <div className="lt-sidebar-header flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border bg-muted/50 px-2">
+                <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
+                  {view === 'trash' ? '回收站' : view === 'search' ? '全局搜索' : '资源树'}
+                </span>
+                <div className="flex shrink-0 items-center gap-1">
+                  {view !== 'tree' ? (
+                    <button
+                      type="button"
+                      aria-label="返回资源树"
+                      title="返回资源树"
+                      className={ICON_BUTTON}
+                      onClick={() => switchView('tree')}
+                    >
+                      <ArrowLeft aria-hidden="true" className="size-4" />
+                    </button>
+                  ) : null}
                   <button
+                    ref={headerCollapseRef}
                     type="button"
-                    aria-label="返回资源树"
-                    title="返回资源树"
-                    className={SIDEBAR_ICON_BUTTON_CLASS}
-                    onClick={() => switchView('tree')}
+                    aria-label="折叠侧栏"
+                    title="折叠侧栏"
+                    className={ICON_BUTTON}
+                    onClick={() => {
+                      pendingSidebarFocusRef.current = 'rail';
+                      updateLayout({ sidebarCollapsed: true });
+                    }}
                   >
-                    <ArrowLeft aria-hidden="true" className="size-4" />
+                    <PanelLeftClose aria-hidden="true" className="size-4" />
                   </button>
-                ) : null}
-                <button
-                  type="button"
-                  aria-label="折叠侧栏"
-                  title="折叠侧栏"
-                  className={SIDEBAR_ICON_BUTTON_CLASS}
-                  onClick={() => updateLayout({ sidebarCollapsed: true })}
-                >
-                  <PanelLeftClose aria-hidden="true" className="size-4" />
-                </button>
+                </div>
+              </div>
+              {/* 视图切换面：key=活动视图——切换重挂重播 100ms 入场（蓝图「面板切换 fade 100ms」
+                  基线）；侧栏头不参与 key（返回钮焦点不因切视图丢失）。启动装载期不挂入场类
+                  （恢复的 activityView 与默认值不同时报一次无动机动画，见 layoutReady） */}
+              <div
+                key={view}
+                className={`flex min-h-0 min-w-0 flex-1 flex-col ${
+                  layoutReady ? SIDEBAR_VIEW_SWITCH_CLASSES : ''
+                }`}
+              >
+                {view === 'tree' ? (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <TreePanel
+                      roots={roots}
+                      selectedId={selectedTreeId}
+                      expanded={expanded}
+                      dirPickMode={dirPickMode}
+                      pickTargetId={pickTargetId}
+                      creatingDirParentId={creatingDirParentId}
+                      rootPath={storageInfo === null ? null : storageInfo.root}
+                      onToggle={onToggle}
+                      onSelect={onSelectNode}
+                      onStartCreateDir={startCreateDir}
+                      onConfirmCreateDir={confirmCreateDir}
+                      onCancelCreateDir={cancelCreateDir}
+                      onTrash={onTrash}
+                      onRename={onRename}
+                      onStartMove={startMove}
+                      onImportHtml={beginImportHtml}
+                    />
+                    {/* move 选择模式操作条（spec §6.2 D8）：目标未定/自身或后代/在途时确认禁用；
+                        Esc 或取消退出。引导文案（§6.2 字面，Task 10 补欠账）于目标未定时呈现，
+                        与「不能移动到自身或其后代」提示互斥（后者以目标已定为前提） */}
+                    {moveMode !== null ? (
+                      <div
+                        className="lt-move-bar flex flex-wrap items-center gap-2 border-t border-border bg-muted/50 px-2 py-1"
+                        role="group"
+                        aria-label="移动选择模式"
+                      >
+                        {moveTargetId === null ? (
+                          <span className="lt-move-hint text-xs text-muted-foreground">
+                            在树中选择目标目录并确认
+                          </span>
+                        ) : null}
+                        {moveInvalid ? (
+                          <span className="lt-move-hint text-xs text-destructive">
+                            不能移动到自身或其后代
+                          </span>
+                        ) : null}
+                        <button
+                          type="button"
+                          aria-label="确认移动"
+                          disabled={moveTargetId === null || moveInvalid || moveInFlight}
+                          className={PRIMARY_BUTTON}
+                          onClick={confirmMove}
+                        >
+                          确认移动
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="取消移动"
+                          className={TOOL_BUTTON}
+                          onClick={() => setMoveMode(null)}
+                        >
+                          取消
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : view === 'search' ? (
+                  // search 态：搜索面板数据自持（查询态在面板内部）。点选=定位打开（spec §2.2）：
+                  // 树侧展开（revealInTree）+ openFile 统一入口（大文件/二进制拦截与 recent 记录
+                  // 一并生效，开签后 activeId 变化自动收走 reveal 覆盖选中）；「在树中显示」=
+                  // revealInTree 定位 + 关搜索态回树（不开标签，目录结果的有效动作）
+                  <SearchPanel
+                    onOpen={(node) => {
+                      void revealInTree(node);
+                      void openFile(node);
+                    }}
+                    onReveal={(node) => {
+                      void revealInTree(node);
+                      switchView('tree');
+                    }}
+                  />
+                ) : (
+                  // trash 态：回收站面板整体替换树内容（move 选择条归树态，不渲染）；
+                  // 面板数据自持（首拉 + trash 域广播重拉），随态卸载即退订
+                  <TrashPanel />
+                )}
               </div>
             </div>
-            {/* 活动视图内容：互斥渲染，随态卸载即回收内部订阅（面板各自数据自持） */}
-            {view === 'tree' ? (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <TreePanel
-                  roots={roots}
-                  selectedId={selectedTreeId}
-                  expanded={expanded}
-                  dirPickMode={dirPickMode}
-                  pickTargetId={pickTargetId}
-                  creatingDirParentId={creatingDirParentId}
-                  rootPath={storageInfo === null ? null : storageInfo.root}
-                  onToggle={onToggle}
-                  onSelect={onSelectNode}
-                  onStartCreateDir={startCreateDir}
-                  onConfirmCreateDir={confirmCreateDir}
-                  onCancelCreateDir={cancelCreateDir}
-                  onTrash={onTrash}
-                  onRename={onRename}
-                  onStartMove={startMove}
-                  onImportHtml={beginImportHtml}
-                />
-                {/* move 选择模式操作条（spec §6.2 D8）：目标未定/自身或后代/在途时确认禁用；
-                    Esc 或取消退出。引导文案（§6.2 字面，Task 10 补欠账）于目标未定时呈现，
-                    与「不能移动到自身或其后代」提示互斥（后者以目标已定为前提） */}
-                {moveMode !== null ? (
-                  <div
-                    className="lt-move-bar flex flex-wrap items-center gap-2 border-t border-border bg-muted/50 px-2 py-1"
-                    role="group"
-                    aria-label="移动选择模式"
-                  >
-                    {moveTargetId === null ? (
-                      <span className="lt-move-hint text-xs text-muted-foreground">
-                        在树中选择目标目录并确认
-                      </span>
-                    ) : null}
-                    {moveInvalid ? (
-                      <span className="lt-move-hint text-xs text-destructive">
-                        不能移动到自身或其后代
-                      </span>
-                    ) : null}
-                    <button
-                      type="button"
-                      aria-label="确认移动"
-                      disabled={moveTargetId === null || moveInvalid || moveInFlight}
-                      className="inline-flex h-6 items-center justify-center rounded-sm bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors duration-100 hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-40"
-                      onClick={confirmMove}
-                    >
-                      确认移动
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="取消移动"
-                      className="inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground"
-                      onClick={() => setMoveMode(null)}
-                    >
-                      取消
-                    </button>
-                  </div>
-                ) : null}
-                {/* 行内重命名模态（spec §6.2 D8）：预填当前名，确认/取消经 RenameDialog 回传 */}
-                {renameTarget !== null ? (
-                  <RenameDialog
-                    nodeName={renameTarget.name}
-                    inFlight={renameInFlight}
-                    onConfirm={confirmRename}
-                    onCancel={() => setRenameTarget(null)}
-                  />
-                ) : null}
-                {/* HTML 文件导入确认浮层（M7）：非模态——打开期间树中点选目录即改导入
-                    目标（dirPickMode 合成下发）；名称可改（导入即重命名），重名固定
-                    rename 递增不打断；确认后导入即打开画布渲染（confirmImportHtml） */}
-                {importHtmlDraft !== null ? (
-                  <ImportHtmlDialog
-                    sourcePath={importHtmlDraft.sourcePath}
-                    targetName={findNode(roots, importHtmlDraft.targetParentId)?.meta.name ?? '根'}
-                    inFlight={importHtmlInFlight}
-                    onConfirm={confirmImportHtml}
-                    onCancel={cancelImportHtml}
-                  />
-                ) : null}
-              </div>
-            ) : view === 'search' ? (
-              // search 态：搜索面板数据自持（查询态在面板内部）。点选=定位打开（spec §2.2）：
-              // 树侧展开（revealInTree）+ openFile 统一入口（大文件/二进制拦截与 recent 记录
-              // 一并生效，开签后 activeId 变化自动收走 reveal 覆盖选中）；「在树中显示」=
-              // revealInTree 定位 + 关搜索态回树（不开标签，目录结果的有效动作）
-              <SearchPanel
-                onOpen={(node) => {
-                  void revealInTree(node);
-                  void openFile(node);
-                }}
-                onReveal={(node) => {
-                  void revealInTree(node);
-                  switchView('tree');
-                }}
-              />
-            ) : (
-              // trash 态：回收站面板整体替换树内容（move 选择条/重命名模态同属树态，不渲染）；
-              // 面板数据自持（首拉 + trash 域广播重拉），随态卸载即退订
-              <TrashPanel />
-            )}
-          </aside>
-        )}
+          ) : null}
+        </aside>
         {/* 侧栏分隔条（可拖拽调宽；w-1 显式命中区——flex 行内无宽度类则分隔条实际 0px，
-            hit-test 永不命中（E2E 探针实证的产品缺陷，M6 批次④修复）；折叠时不响应拖拽） */}
+            hit-test 永不命中（E2E 探针实证的产品缺陷，M6 批次④修复））。折叠时不响应拖拽，
+            故同时摘除 col-resize 光标与 hover 高亮——不可用的操作不该有可用性承诺；
+            拖拽期经 data-dragging 把轨色加深一档（hover 同色无法表达「已接管」） */}
         <div
-          className="lt-divider lt-divider-sidebar w-1 shrink-0 cursor-col-resize bg-border transition-colors duration-100 hover:bg-ring/50"
+          className={`lt-divider lt-divider-sidebar w-1 shrink-0 bg-border ${
+            layout.sidebarCollapsed
+              ? ''
+              : 'cursor-col-resize transition-colors duration-100 hover:bg-ring/50 data-[dragging=true]:bg-ring'
+          }`}
           role="separator"
           aria-orientation="vertical"
+          data-dragging={sidebarDragging ? 'true' : undefined}
           onPointerDown={layout.sidebarCollapsed ? undefined : onDividerPointerDown}
         />
         {/* 编辑画布区（M6 spec §2.4）：标签栏 + 类型化画布（所见即所得/媒体/CM 文本/
             设置标签页/欢迎页，随激活标签类型切换——spec §3.3） */}
-        <section className="lt-canvas flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+        <section className="lt-canvas flex min-h-0 min-w-0 flex-1 flex-col bg-background group-data-[dragging=true]/drag:pointer-events-none">
           {tabsOp.tabs.length > 0 || tabsOp.settingsOpen ? (
             <TabBar
               tabs={tabsOp.tabs}
@@ -1775,6 +1872,29 @@ export function Workspace(): React.JSX.Element {
           )}
         </section>
       </div>
+      {/* 树态浮层（行内重命名模态 / HTML 导入确认浮层）：M8 起挂工作台根层——侧栏内容层的
+          animate-in 会写 transform（合成器路径入场），使 fixed 后代改以动画层为包含块并落入
+          裁剪面；门条件「树视图且侧栏展开」与原渲染位置（侧栏树分支内）等价。
+          重命名模态：预填当前名，确认/取消经 RenameDialog 回传
+          HTML 导入浮层：非模态——打开期间树中点选目录即改导入目标（dirPickMode 合成下发）；
+          名称可改（导入即重命名），重名固定 rename 递增不打断；确认后导入即打开画布渲染 */}
+      {view === 'tree' && !layout.sidebarCollapsed && renameTarget !== null ? (
+        <RenameDialog
+          nodeName={renameTarget.name}
+          inFlight={renameInFlight}
+          onConfirm={confirmRename}
+          onCancel={() => setRenameTarget(null)}
+        />
+      ) : null}
+      {view === 'tree' && !layout.sidebarCollapsed && importHtmlDraft !== null ? (
+        <ImportHtmlDialog
+          sourcePath={importHtmlDraft.sourcePath}
+          targetName={findNode(roots, importHtmlDraft.targetParentId)?.meta.name ?? '根'}
+          inFlight={importHtmlInFlight}
+          onConfirm={confirmImportHtml}
+          onCancel={cancelImportHtml}
+        />
+      ) : null}
       {/* 快速打开浮层（M5 批次① Task 6）：radix portal 渲染，关闭即卸载内容；
           点选回传走 openFile 统一入口（大文件/二进制拦截与 recent 记录一并生效） */}
       <QuickOpenDialog
@@ -1844,10 +1964,12 @@ export function Workspace(): React.JSX.Element {
             if (!open) setImportDraft(null);
           }}
         >
-          <AlertDialogContent className="p-4">
+          <AlertDialogContent className="p-4 duration-240">
             {/* 打磨（M5 Task 15）：消费侧类覆写对齐设计系统标尺——浮层内边距 16px（p-4，
                 覆写模板 p-6）与标题字号 display 档 16px（text-base，覆写模板 text-lg 18px
-                体外值）；经 cn/tailwind-merge 合并为「外部类覆盖内部类」合法场景（D28） */}
+                体外值）；duration-240 覆写模板浮层默认 200ms（§6.1「浮层出入场 normal 240ms」
+                体外档位，M8 补齐——自研浮层/进度面板/toast 均已是 240ms）
+                经 cn/tailwind-merge 合并为「外部类覆盖内部类」合法场景（D28） */}
             <AlertDialogHeader>
               <AlertDialogTitle className="text-base">导入</AlertDialogTitle>
               <AlertDialogDescription>
@@ -1908,7 +2030,7 @@ export function Workspace(): React.JSX.Element {
             if (!open) setStorageChangeTarget(null);
           }}
         >
-          <AlertDialogContent className="p-4">
+          <AlertDialogContent className="p-4 duration-240">
             <AlertDialogHeader>
               <AlertDialogTitle className="text-base">更改数据位置</AlertDialogTitle>
               <AlertDialogDescription>
@@ -1968,20 +2090,46 @@ const ROOT_NODE: NodeMeta = {
 const LARGE_FILE_SOFT_LIMIT_BYTES = 5 * 1024 * 1024;
 const LARGE_FILE_HARD_LIMIT_BYTES = 50 * 1024 * 1024;
 
-/** 侧栏头图标钮标准类串（折叠/返回钮共用，M6 spec §2.3） */
-const SIDEBAR_ICON_BUTTON_CLASS =
-  'inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground';
+/**
+ * 侧栏折叠/展开过渡时长（毫秒）：与 aside 宽度过渡 `duration-180` 同源——Tailwind JIT 需
+ * 字面类名，调整时长必须本常量与类串两处同步修改（同 PROGRESS_EXIT_MS 惯例）。180ms 取
+ * 设计系统文档 §6.1 fast 档（内联表面过渡），240ms 档留给浮层/toast 出入场
+ */
+const SIDEBAR_TOGGLE_MS = 180;
+
+/** 侧栏内容层入场类串（展开/首次挂载）：无动画——内容由宽度过渡的裁剪「帷幕式」揭示，
+ * 不做淡入是为了避免「窄条钮已卸载、内容层从 0 淡入」的空窗帧；transition-opacity 只为
+ * 连点折叠↔展开时从当前不透明度平滑续走（见退场串注） */
+const SIDEBAR_CONTENT_ENTER_CLASSES = 'opacity-100 transition-opacity duration-100 ease-out';
+/**
+ * 侧栏内容层退场类串（折叠）：100ms 淡出 + pointer-events-none（退场播放期防误点）。
+ * 用 CSS 过渡而非 `animate-out` 有两个硬理由：①过渡从当前值续走，连点折叠/展开不会闪断
+ * （animate-in/out 是两个动画名，切换即从关键帧极值重播）；②reduced-motion 下全局把时长压到
+ * 0.01ms 时，过渡的终态是声明值 `opacity-0`（元素保持不可见直到卸载），而 `animate-out` 的
+ * fill-mode 为 none、动画结束后回到基础值 opacity:1 —— 会「闪回后滞留」整整一个退场时长。
+ * 100ms 早于几何 180ms 结束：内容在侧栏被挤压到极端窄幅之前已基本不可见（避免挤压重排被看见）
+ */
+const SIDEBAR_CONTENT_EXIT_CLASSES =
+  'pointer-events-none opacity-0 transition-opacity duration-100 ease-out';
+
+/**
+ * 侧栏视图切换面类串（tree/search/trash）：100ms 淡入，蓝图 §3「面板切换 fade 100ms」基线；
+ * 靠 key 变化重挂载重播入场（旧面板卸载瞬时完成，列表数据面不加退场以免拖慢切换体感）
+ */
+const SIDEBAR_VIEW_SWITCH_CLASSES = 'duration-100 ease-out animate-in fade-in';
 
 /** 进度面板入场动效类串（导入/导出共用）：保持既有滑入形态，duration-240 与退场对称 */
 const PROGRESS_ENTER_CLASSES =
-  'pointer-events-auto duration-240 animate-in fade-in slide-in-from-bottom-2';
+  'pointer-events-auto duration-240 ease-out animate-in fade-in slide-in-from-bottom-2';
 /**
  * 进度面板退场动效类串（导入/导出共用）：滑出过渡 + pointer-events-none 防退场播放期
  * （240ms）误点「取消」；duration-240 与 ioProgressPresence 的 PROGRESS_EXIT_MS 计时
- * 同源——Tailwind JIT 需字面类名，调整时长必须两处同步修改
+ * 同源——Tailwind JIT 需字面类名，调整时长必须两处同步修改；出场缓动 ease-in（同侧栏退场）。
+ * `fill-mode-forwards` 为 reduced-motion 兜底：全局把动画压到 0.01ms 时，fill-mode none 的
+ * 动画结束后会回到基础值（面板「闪回不透明 + 滞留一个退场时长」），forwards 令终态保持
  */
 const PROGRESS_EXIT_CLASSES =
-  'pointer-events-none duration-240 animate-out fade-out slide-out-to-bottom-2';
+  'pointer-events-none duration-240 ease-in animate-out fade-out slide-out-to-bottom-2 fill-mode-forwards';
 
 /**
  * 文本可编辑 MIME 判定（M3 textarea 版 EditorPanel 同名函数语义迁入——openFile 前置拦截

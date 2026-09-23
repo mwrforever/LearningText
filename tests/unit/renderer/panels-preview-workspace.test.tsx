@@ -11,7 +11,7 @@ import { DEFAULT_LAYOUT, DEFAULT_SETTINGS } from '../../../src/shared/settings-c
 import type { ShellCommand } from '../../../src/shared/shell-contract';
 import type { NodeMeta, VfsChangedBroadcast } from '../../../src/shared/vfs-contract';
 import { previewableMime } from '../../../src/renderer/src/features/preview/previewableMime';
-import { ToastHost } from '../../../src/renderer/src/features/ui/Toast';
+import { ToastHost, TOAST_EXIT_MS } from '../../../src/renderer/src/features/ui/Toast';
 import { MAX_TABS } from '../../../src/renderer/src/features/workspace/tabModel';
 import { Workspace } from '../../../src/renderer/src/features/workspace/Workspace';
 
@@ -239,8 +239,15 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     expect(api.readFile).not.toHaveBeenCalled(); // 前置拦截在读库之前
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
     expect(container.textContent).toContain('该文件类型暂不支持打开（仅 HTML/媒体/文本）');
+    // 自动消退两段计时（M8）：3000ms 进入退场（滑出过渡 240ms，条目仍在 DOM 且 pointer-events-none）
     await act(async () => {
       vi.advanceTimersByTime(3000);
+    });
+    expect(container.querySelector('.lt-toast')?.className).toContain('animate-out');
+    expect(container.textContent).toContain('该文件类型暂不支持打开');
+    // 退场播完才摘除（3000 + TOAST_EXIT_MS）——消费导出的常量，令 JS 计时与断言同源
+    await act(async () => {
+      vi.advanceTimersByTime(TOAST_EXIT_MS);
     });
     expect(container.textContent).not.toContain('该文件类型暂不支持打开'); // 3s 消退（spec §5.5）
     act(() => {
@@ -897,6 +904,107 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
     });
   });
 
+  it('行内命名失焦即收口（用户实测反馈）：失焦提交建目录并关闭命名行；失败同样收口 + toast', async () => {
+    const { api, handlers } = captureShell({
+      createNode: vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, value: meta(7, '资料', 'dir') })
+        .mockResolvedValueOnce({
+          ok: false,
+          error: { code: 'E_VFS_DUPLICATE_NAME', message: '同名节点已存在' },
+        }),
+    });
+    // ToastHost 自持独立宿主 div（不挂 document.body 根）：createRoot(document.body) 会清空
+    // body 既有子元素、把 Workspace 容器一并摘除——脱离文档的输入框 focus() 是空操作
+    // （jsdom 语义），失焦链会静默不触发
+    const toastHost = document.createElement('div');
+    document.body.appendChild(toastHost);
+    const toastRoot = createRoot(toastHost);
+    await act(async () => {
+      toastRoot.render(<ToastHost />);
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    const createInput = (): HTMLInputElement | null =>
+      container.querySelector<HTMLInputElement>('input[aria-label="新目录名称"]');
+    const typeName = (text: string): void => {
+      act(() => {
+        const el = createInput();
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(el, text);
+        el?.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    };
+    /** 失焦（jsdom 对未聚焦元素 blur() 为空操作：先聚焦再失焦 = 真实点击外部的等价事件序） */
+    const blurRow = async (): Promise<void> => {
+      await act(async () => {
+        createInput()?.focus();
+        createInput()?.blur();
+      });
+    };
+
+    // ①失焦提交：点击树内任意处（此处等价为失焦）即以草稿名落库，命名行随之关闭——
+    //   原实测缺陷「失焦后命名行永久滞留、空目录看似长期处于新建态」在此锁死
+    await act(async () => {
+      handlers[0]?.({ type: 'new-dir' });
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="新建目录"]')?.click();
+    });
+    typeName('资料');
+    await blurRow();
+    expect(api.createNode).toHaveBeenCalledWith({ parentId: 1, name: '资料', nodeType: 'dir' });
+    expect(container.querySelector('li.lt-create-row')).toBeNull();
+
+    // ②提交失败（重名）：toast 呈现原因且**命名行同样关闭**——失败不留在编辑态（留在编辑态
+    //   会让用户已离开后的每次点击都重发失败请求并抢回焦点，构成焦点陷阱；重试 = 再点新建）
+    await act(async () => {
+      handlers[0]?.({ type: 'new-dir' });
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="新建目录"]')?.click();
+    });
+    typeName('重名目录');
+    await blurRow();
+    expect(document.body.textContent).toContain('创建目录失败：同名节点已存在');
+    expect(container.querySelector('li.lt-create-row')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
+    act(() => {
+      toastRoot.unmount();
+    });
+    toastHost.remove();
+  });
+
+  it('在途守卫（ref 化回归）：同一任务内 Enter 与失焦连发只落库一次（state 闭包守卫会穿透）', async () => {
+    const api = stubApi() as unknown as { createNode: ReturnType<typeof vi.fn> };
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="新建目录"]')?.click();
+    });
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="新目录名称"]');
+    await act(async () => {
+      // 同一任务内连发两个提交（Enter + 失焦）：程序化驱动可复现，真实输入下 React 会在两次
+      // 事件之间同步 flush、状态量守卫恰好也能挡住——但 ref 守卫对两种时序都成立，故以本用例
+      // 锁住时序无关性（state 化的守卫在此场景读到旧值会穿透，产生一次虚假失败 toast）
+      input?.focus();
+      input?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      input?.blur();
+    });
+    expect(api.createNode).toHaveBeenCalledTimes(1);
+    act(() => {
+      tree.unmount();
+    });
+  });
+
   it('MAX_TABS 触顶：toast 提示先关且不开标签；释放槽位后可再开（无悬挂会话）', async () => {
     const files = Array.from({ length: MAX_TABS + 1 }, (_, i) => ({
       ...meta(10 + i, `f${i}.html`),
@@ -990,6 +1098,44 @@ describe('Workspace 侧栏折叠与布局记忆（M6 v4）', () => {
     act(() => {
       tree.unmount();
     });
+  });
+
+  it('折叠过渡（M8）：单元素承载两态、内容层退场期保留快照并 180ms 后卸载（订阅回收语义不变）', async () => {
+    vi.useFakeTimers();
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    // 单一常驻 .lt-sidebar（原「折叠/展开两元素三元互斥」已退役——跨元素无插值起点）
+    expect(container.querySelectorAll('.lt-sidebar')).toHaveLength(1);
+    await clickAriaLabel('折叠侧栏');
+    const sidebar = container.querySelector('.lt-sidebar');
+    expect(sidebar?.classList.contains('lt-sidebar-collapsed')).toBe(true);
+    // 退场期：内容层仍在（播淡出过渡），已挂退场呈现态（opacity-0 + pointer-events-none——
+    // 用 transition 而非 animate-out：连点可续走、reduced-motion 下终态不回弹）；
+    // 展开钮即刻在位（硬约束：折叠点击后同步可见）
+    const leavingNav = container.querySelector('nav[aria-label="资源树"]');
+    expect(leavingNav).not.toBeNull();
+    const leavingLayer = leavingNav?.closest('.opacity-0');
+    expect(leavingLayer).not.toBeNull();
+    expect(leavingLayer?.classList.contains('pointer-events-none')).toBe(true);
+    const railButton = container.querySelector<HTMLButtonElement>('button[aria-label="展开侧栏"]');
+    expect(railButton).not.toBeNull();
+    // 焦点交接（键盘可达性）：折叠钮随内容层卸载，焦点必须落到窄条展开钮
+    expect(document.activeElement).toBe(railButton);
+    // 过渡播完（SIDEBAR_TOGGLE_MS 与 duration-180 同源）才卸载：面板订阅随卸载回收的语义未变
+    await act(async () => {
+      vi.advanceTimersByTime(180);
+    });
+    expect(container.querySelector('nav[aria-label="资源树"]')).toBeNull();
+    // 展开：内容层即时回归树内容（不晚一帧），焦点交回侧栏头折叠钮
+    await clickAriaLabel('展开侧栏');
+    expect(container.querySelector('nav[aria-label="资源树"]')).not.toBeNull();
+    expect(document.activeElement).toBe(container.querySelector('button[aria-label="折叠侧栏"]'));
+    act(() => {
+      tree.unmount();
+    });
+    vi.useRealTimers();
   });
 
   it('启动恢复：settingsGet 返回的 shell.layout 折叠态与活动视图直接呈现（布局记忆跨重启）', async () => {

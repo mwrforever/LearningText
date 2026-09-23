@@ -242,6 +242,76 @@ describe('TreePanel', () => {
     expect(container.querySelector('li.lt-create-row')).toBeNull();
   });
 
+  it('行内命名收口（用户实测反馈）：失焦提交非空草稿、空草稿失焦取消，行内不自留编辑态', async () => {
+    const roots = [
+      withChildren(makeTreeRoot(meta(1, '根', 'dir')), [
+        withChildren(makeTreeRoot(meta(2, '笔记', 'dir')), [makeTreeRoot(meta(5, 'b.html'))]),
+      ]),
+    ];
+    const onConfirmCreateDir = vi.fn();
+    const onCancelCreateDir = vi.fn();
+    const tree = createRoot(container);
+    act(() => {
+      tree.render(
+        <TreePanel
+          roots={roots}
+          selectedId={null}
+          expanded={new Set([2])}
+          dirPickMode={false}
+          pickTargetId={null}
+          creatingDirParentId={2}
+          rootPath={null}
+          onToggle={vi.fn()}
+          onSelect={vi.fn()}
+          onStartCreateDir={vi.fn()}
+          onConfirmCreateDir={onConfirmCreateDir}
+          onCancelCreateDir={onCancelCreateDir}
+          onTrash={vi.fn()}
+          onRename={vi.fn()}
+          onStartMove={vi.fn()}
+          onImportHtml={vi.fn()}
+        />,
+      );
+    });
+    const input = (): HTMLInputElement | null =>
+      container.querySelector<HTMLInputElement>('input[aria-label="新目录名称"]');
+    /** 以原型 setter 注入草稿（React 受控输入的唯一可靠 jsdom 写入路径，同 search-panel 用例） */
+    const typeName = (text: string): void => {
+      act(() => {
+        const el = input();
+        if (el === null) throw new Error('无命名输入框');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        setter?.call(el, text);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+    };
+    /** 失焦（jsdom 对未聚焦元素 blur() 为空操作，故先聚焦再失焦——真实点击外部的等价事件序） */
+    const blurRow = async (): Promise<void> => {
+      await act(async () => {
+        input()?.focus();
+        input()?.blur();
+      });
+    };
+
+    // ①失焦即提交：草稿未改动（默认名）同样以该名建目录——Windows 资源管理器同语义
+    await blurRow();
+    expect(onConfirmCreateDir).toHaveBeenCalledWith(2, '新建目录');
+    expect(onCancelCreateDir).not.toHaveBeenCalled();
+
+    // ②空草稿失焦 = 取消（不留无名目录），不上抛提交
+    onConfirmCreateDir.mockClear();
+    typeName('   ');
+    await blurRow();
+    expect(onConfirmCreateDir).not.toHaveBeenCalled();
+    expect(onCancelCreateDir).toHaveBeenCalledTimes(1);
+
+    // ③提交后草稿再变更（用户改名重试路径）：非空草稿照旧上抛，行内不自作收口——
+    //   行内态的收口（成功/失败均关闭）归 Workspace，组件只负责解析草稿语义
+    typeName('重名目录');
+    await blurRow();
+    expect(onConfirmCreateDir).toHaveBeenCalledWith(2, '重名目录');
+  });
+
   // —— 树交互修复批次（②④⑤）——
 
   it('②隐藏合成根行：根子级顶层直出、无「根」行；nav data-ready 随 roots 空/非空切换（装配信号锚）', () => {

@@ -37,6 +37,7 @@ import {
 } from '@components/ui/alert-dialog';
 import type { BackupEntry } from '../../../../shared/backup-contract';
 import type { DataDirInfo } from '../../../../shared/storage-contract';
+import { TOOL_BUTTON } from '../ui/classStrings';
 import { clampAutoSave, clampDebounce, clampFontSize } from './settingsFormModel';
 import type { ThemeIntent } from './themeResolver';
 
@@ -101,10 +102,6 @@ const RANGE_CLASS = 'h-1 w-48 accent-primary';
 /** 滑块值回显类串：12px 弱化档 + tabular-nums（拖动时数字宽度不抖动，M5 打磨） */
 const RANGE_VALUE_CLASS = 'text-xs text-muted-foreground tabular-nums';
 
-/** 次级按钮标准类串（导航同源的 hover/disabled 纪律） */
-const BUTTON_CLASS =
-  'inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40';
-
 /** 备份文件大小展示格式：<1KB 按字节，其余按 KB（一位小数） */
 function formatBackupSize(sizeBytes: number): string {
   return sizeBytes >= 1024 ? `${(sizeBytes / 1024).toFixed(1)}KB` : `${String(sizeBytes)}B`;
@@ -134,8 +131,12 @@ export function SettingsPage({
   // 还原强确认目标（备份文件名）：null=浮层收起；确认/取消均收起，确认侧才上抛还原
   const [restoreTarget, setRestoreTarget] = useState<string | null>(null);
   return (
-    // 画布内嵌面（M6 spec D3）：占满画布区，不再 fixed 覆盖；lt-settings 保留为测试锚点
-    <section aria-label="设置" className="lt-settings flex min-h-0 flex-1 bg-background">
+    // 画布内嵌面（M6 spec D3）：占满画布区，不再 fixed 覆盖；lt-settings 保留为测试锚点。
+    // 入场动效 100ms fade（面板切换基线档）——M6 由覆盖层改内嵌面时丢失，M8 原地重建
+    <section
+      aria-label="设置"
+      className="lt-settings flex min-h-0 flex-1 bg-background duration-100 ease-out animate-in fade-in"
+    >
       <div className="flex min-h-0 flex-1">
         {/* 左侧锚点导航（图标 + 文字）：w-50 = 200px（蓝图 §2.7 定值，4px 标尺整数步进） */}
         <nav aria-label="设置导航" className="w-50 shrink-0 border-r border-border p-2">
@@ -173,7 +174,8 @@ export function SettingsPage({
                   <SelectTrigger size="sm" aria-label="主题" className="w-32 rounded-sm text-xs">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent position="popper">
+                  {/* 下拉面板 100ms 对齐蓝图动效基线（模板默认 150ms 为体外值） */}
+                  <SelectContent position="popper" className="duration-100">
                     <SelectItem value="light" className="text-xs">
                       亮色
                     </SelectItem>
@@ -272,7 +274,7 @@ export function SettingsPage({
                   <button
                     type="button"
                     aria-label="立即备份"
-                    className={BUTTON_CLASS}
+                    className={TOOL_BUTTON}
                     onClick={onCreateBackup}
                   >
                     立即备份
@@ -296,7 +298,7 @@ export function SettingsPage({
                         <button
                           type="button"
                           aria-label={`还原到 ${backup.fileName}`}
-                          className={`${BUTTON_CLASS} shrink-0`}
+                          className={`${TOOL_BUTTON} shrink-0`}
                           onClick={() => {
                             setRestoreTarget(backup.fileName);
                           }}
@@ -374,7 +376,7 @@ export function SettingsPage({
                       <button
                         type="button"
                         aria-label="打开数据目录"
-                        className={BUTTON_CLASS}
+                        className={TOOL_BUTTON}
                         onClick={onOpenStorageDir}
                       >
                         <FolderOpen aria-hidden="true" className="mr-1 inline size-3.5" />
@@ -383,7 +385,7 @@ export function SettingsPage({
                       <button
                         type="button"
                         aria-label="更改数据位置"
-                        className={BUTTON_CLASS}
+                        className={TOOL_BUTTON}
                         onClick={onChangeStorageDir}
                       >
                         <FolderInput aria-hidden="true" className="mr-1 inline size-3.5" />

@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@components/ui/select';
+import { TOOL_BUTTON } from '../ui/classStrings';
 import { showToast } from '../ui/Toast';
 import {
   FULL_TEXT_WINDOW,
@@ -29,10 +30,6 @@ import {
   type HighlightSpan,
   type SearchTypeFilter,
 } from './searchModel';
-
-/** 工具钮标准类串（设计系统文档 §7.2 唯一规范形态，模板字面量、禁体外发挥） */
-const TOOL_BUTTON_CLASS =
-  'inline-flex h-6 items-center justify-center rounded-sm px-2 text-xs font-medium text-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40';
 
 /** 结果条目主钮类串：整行可点（打开），内部片段按块排布 */
 const HIT_ROW_CLASS =
@@ -157,7 +154,8 @@ export function SearchPanel({ onOpen, onReveal }: SearchPanelProps): React.JSX.E
           >
             <SelectValue />
           </SelectTrigger>
-          <SelectContent position="popper">
+          {/* 下拉面板 100ms 对齐蓝图动效基线（模板默认 150ms 为体外值） */}
+          <SelectContent position="popper" className="duration-100">
             <SelectItem value="all" className="text-xs">
               全部
             </SelectItem>
@@ -206,7 +204,7 @@ export function SearchPanel({ onOpen, onReveal }: SearchPanelProps): React.JSX.E
                 <button
                   type="button"
                   aria-label={`在树中显示 ${item.node.name}`}
-                  className={`${TOOL_BUTTON_CLASS} shrink-0`}
+                  className={`${TOOL_BUTTON} shrink-0`}
                   onClick={() => onReveal(item.node)}
                 >
                   在树中显示
@@ -226,7 +224,7 @@ export function SearchPanel({ onOpen, onReveal }: SearchPanelProps): React.JSX.E
               type="button"
               aria-label="加载更多搜索结果"
               disabled={searching}
-              className={TOOL_BUTTON_CLASS}
+              className={TOOL_BUTTON}
               onClick={() => runSearch(hits.length)}
             >
               加载更多
