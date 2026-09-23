@@ -121,11 +121,13 @@ export interface TreePanelProps {
 }
 
 /** 行内「⋯」菜单触发钮标准类串（图标钮形态，字号取行内三档中的 xs 档）。
- * 显形策略（M5 打磨降噪）：常态弱化为透明、行悬停/行内焦点/菜单展开三态显形——每行
- * 常驻一枚 20px 钮是恒定视觉噪音；透明态仍占位（无布局位移）且可命中（无行为变化），
- * 键盘 Tab 聚焦经 group-focus-within 显形、菜单展开经 radix data-[state=open] 显形 */
+ * 显形策略（M8 用户实测反馈批次修订）：**常态可见**——前景取 muted（图标对比度达标，
+ * 与 chevron/类型图标同档），行悬停/行内焦点/菜单展开时经表面（bg-accent）与前景提亮
+ * 表达可交互；原「常态 opacity-0、仅悬停显形」的降噪裁决被推翻：用户实测反馈「新建目录
+ * 后看不到操作入口、以为目录无法操作」（M5 起行级操作入口只悬停可见，发现性代价高于降噪
+ * 收益；工具钮常态可见的既有口径也支持统一）。留证见设计系统 §十三。 */
 const ROW_MENU_TRIGGER_CLASS =
-  'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition duration-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100 hover:bg-accent hover:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground';
+  'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground group-hover:text-foreground focus-visible:text-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground';
 
 /**
  * 树节点行主按钮标准类串（设计系统文档 §7.2 树列表形态 · M7 图标行版）：

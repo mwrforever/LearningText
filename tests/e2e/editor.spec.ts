@@ -577,7 +577,7 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
     expect(layout.sidebarWidthRatio).toBeGreaterThan(0.25);
   });
 
-  test('unsaved-guard：脏标签关窗弹原生确认，确认后进程退出', async () => {
+  test('unsaved-guard：脏标签关窗弹应用内确认，确认后进程退出', async () => {
     // SDD breaker 裁决（fix round 5，非缺陷修复）：darwin 平台跳过 + 完整留证。四轮 CI 实证
     // guard 链（dialog 弹出/接管/文案匹配/forceClose）在 macOS 全部真实通过，唯「OS 进程
     // 终止验证」受 Playwright _electron 的 mac 平台限制不可达（补 quit 撞已关闭连接被吞、
@@ -614,32 +614,37 @@ test.describe('M4 外壳记忆与关窗 guard（计时调优设置）', () => {
     await expect(
       page.getByRole('tab', { name: /新建文件\.html/ }).locator('[aria-label="未保存"]'),
     ).toBeVisible({ timeout: 5000 });
-    // guard 选型 D3：close 拦截 → confirm-close 命令 → 渲染层 window.confirm——
-    // confirm 可被 Playwright dialog 事件驱动（beforeunload 原生消息盒不可驱动，故弃）。
-    // 时序：先发起 close（guard 链的触发器——确认框仅在 close 尝试被拦截时弹出），再竞速
-    // 等确认框。证据化加固 2：15s 竞速——超时报错即「确认框未弹出/未被接管」（可能 B 候选
-    // 留证），不吃满用例 60s 超时。close 的失败由下方 exitCode 断言兜底判定，此处吞掉
-    // 避免 15s 竞速已失败的场合残留悬挂 rejection
-    const dialogMessage = new Promise<string>((resolve) => {
-      page.once('dialog', (dialog) => {
-        void dialog.accept();
-        resolve(dialog.message());
-      });
-    });
+    // guard 选型 D3（M8 反馈批次修订）：close 拦截 → confirm-close 命令 → 渲染层
+    // **应用内确认弹窗**（原选型 window.confirm 的理由是「可被 Playwright dialog 事件驱动」，
+    // 应用内浮层由 DOM 直接驱动、可驱动性更强且样式与应用一致；beforeunload 原生消息盒
+    // 仍不可驱动，故不采用）。触发器取**窗口 close 事件**（主进程侧驱动）：app.close() 一旦
+    // 发起即拆除 Playwright 连接、页面不可再驱动，无法支撑「取消 → 再触发 → 确认」的完整
+    // 语义核验（guard 本身无状态：每次 close 被拦截即重发 confirm-close，可重复触发）。
+    // 证据化加固 2：15s 上限——超时即「确认框未弹出」，不吃满用例 60s 超时
     const proc = app.process();
-    const closePromise = app.close().catch(() => undefined);
-    let dialogTimer: NodeJS.Timeout | undefined;
-    const message = await Promise.race([
-      dialogMessage,
-      new Promise<never>((_, reject) => {
-        dialogTimer = setTimeout(
-          () =>
-            reject(new Error('guard 确认框 15s 未弹出/未被接管（macOS 平台限制候选，报告留证）')),
-          15000,
-        );
-      }),
-    ]).finally(() => clearTimeout(dialogTimer));
-    expect(message).toBe('有未保存的更改，确定退出？');
+    const guardDialog = page.locator('.lt-confirm');
+    const triggerClose = (): Promise<void> =>
+      app.evaluate(({ BrowserWindow }) => {
+        BrowserWindow.getAllWindows()[0]?.close();
+      });
+    // 取消分支先行核验：点「取消」不得放行（浮层收口、窗口仍在、进程未退）
+    await triggerClose();
+    await expect(guardDialog).toContainText('有未保存的更改，确定退出？', { timeout: 15000 });
+    await page.getByRole('button', { name: '取消操作' }).click();
+    await expect(guardDialog).toHaveCount(0);
+    expect(app.windows().length).toBeGreaterThan(0);
+    // 确认分支：再次触发关窗 → 浮层复现 → 确认放行（渲染层调 shell:force-close，主进程
+    // 置位 allowClose 后重入 close 直通；Windows/Linux 关窗即退，darwin 由下方补驱动收尾）
+    const closePromise = app.waitForEvent('close').catch(() => undefined);
+    await triggerClose();
+    await expect(guardDialog).toContainText('有未保存的更改，确定退出？', { timeout: 15000 });
+    // 确认点击即触发 forceClose 关窗：Playwright 的连接拆除与该次点击存在固有竞态
+    //（点击后页面随即销毁 → click 自身抛「Target … has been closed」），故吞掉——
+    // 放行事实由下方进程退出收敛与 exitCode 断言判定（原生 dialog 时代同款处置先例）
+    await page
+      .getByRole('button', { name: '确认操作' })
+      .click()
+      .catch(() => undefined);
     // 进程退出三段收敛（CI macOS 修复 round 3，round 4 放宽）：accept → forceClose 的关窗
     // 不在 quit 流程内——darwin 的 window-all-closed 惯例不 quit（app.ts，M0 裁决），首轮被
     // preventDefault 打断的 quit 不再续行 → 进程滞留；win/linux 因该分支主动 app.quit() 幸免。

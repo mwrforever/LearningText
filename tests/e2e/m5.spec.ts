@@ -424,15 +424,15 @@ test.describe('M5 回收站（独立 userData）', () => {
     await row.getByLabel(`还原 ${name}`).click();
     await expect(page.locator('.lt-toast').filter({ hasText: '还原失败' })).toBeVisible();
     await expect(row).toBeVisible(); // 还原失败条目不出列
-    // 彻底删除（不可逆）：window.confirm 原生框经 page.on('dialog') 驱动，接管并断言文案
-    const dialogMessage = new Promise<string>((resolve) => {
-      page.once('dialog', (dialog) => {
-        void dialog.accept();
-        resolve(dialog.message());
-      });
-    });
+    // 彻底删除（不可逆）：应用内确认弹窗（M8 反馈批次取代原生 window.confirm）——
+    // 文案逐字沿用，确认钮走破坏色；取消分支先行核验（不发起 purge、条目保留）
     await row.getByLabel(`彻底删除 ${name}`).click();
-    expect(await dialogMessage).toBe(`彻底删除「${name}」？不可恢复`);
+    await expect(page.locator('.lt-confirm')).toContainText(`彻底删除「${name}」？不可恢复`);
+    await page.getByRole('button', { name: '取消操作' }).click();
+    await expect(page.locator('.lt-confirm')).toHaveCount(0);
+    await expect(row).toBeVisible(); // 取消后条目保留
+    await row.getByLabel(`彻底删除 ${name}`).click();
+    await page.getByRole('button', { name: '确认操作' }).click();
     await expect(row).toHaveCount(0); // purged 后出列
     // 树回归面：还原语义事后核验——同名再建体仍在树、被彻底删除体不在
     await page.getByLabel('返回资源树').click();

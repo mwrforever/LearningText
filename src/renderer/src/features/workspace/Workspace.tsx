@@ -88,6 +88,7 @@ import { ActivityBar } from '../shell/ActivityBar';
 import { StatusBar } from '../shell/StatusBar';
 import { TitleBar } from '../shell/TitleBar';
 import { WelcomePage } from '../shell/WelcomePage';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { showToast } from '../ui/Toast';
 import { ICON_BUTTON, PRIMARY_BUTTON, TOOL_BUTTON } from '../ui/classStrings';
 import { TabBar } from './TabBar';
@@ -159,6 +160,16 @@ export function Workspace(): React.JSX.Element {
   } | null>(null);
   // HTML 文件导入请求在途（浮层确认钮防重复提交）
   const [importHtmlInFlight, setImportHtmlInFlight] = useState(false);
+  // 应用内确认弹窗（M8 反馈批次，取代原生 window.confirm）：请求态 + Promise 兑现器——
+  // 既有流程（大文件打开 / 未保存退出）在原生 confirm 下是同步阻塞读值，换成浮层后必须
+  // Promise 化，调用点 await 语义与分支结构保持不变
+  const [confirmRequest, setConfirmRequest] = useState<{
+    readonly title: string;
+    readonly description: string;
+    readonly confirmLabel: string;
+    readonly destructive: boolean;
+  } | null>(null);
+  const confirmResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
   // 树栏视图态（M6 起由 layout.activityView 承载持久化，本态为渲染派生镜像——v4 装载前
   // 默认 'tree'；写入口 switchView/updateLayout 同步持久化）
   const [view, setView] = useState<TreePaneView>('tree');
@@ -566,6 +577,32 @@ export function Workspace(): React.JSX.Element {
   /** 行内命名取消（Esc/失焦/空名 Enter） */
   function cancelCreateDir(): void {
     setCreatingDirParentId(null);
+  }
+
+  /**
+   * 应用内确认（M8 反馈批次）：返回 Promise 的确认弹窗请求——调用点 `await` 后按布尔分支，
+   * 与原生 window.confirm 的同步读值语义等价（原生框为 OS 皮肤、与应用设计语言脱节，
+   * 用户实测反馈「弹窗需要优化样式设计」）。兑现器用 ref：同一任务内弹窗开合只经本函数
+   * 与 settleConfirm 两个出口，ref 读写同步、不受 state 提交时序影响。
+   */
+  function askConfirm(request: {
+    readonly title: string;
+    readonly description: string;
+    readonly confirmLabel: string;
+    readonly destructive: boolean;
+  }): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      confirmResolveRef.current = resolve;
+      setConfirmRequest(request);
+    });
+  }
+
+  /** 确认弹窗落定（确认/取消共用出口）：先清请求态与兑现器，再兑现——防重复兑现与悬挂 */
+  function settleConfirm(confirmed: boolean): void {
+    const resolve = confirmResolveRef.current;
+    confirmResolveRef.current = null;
+    setConfirmRequest(null);
+    resolve?.(confirmed);
   }
 
   /**
@@ -1307,7 +1344,12 @@ export function Workspace(): React.JSX.Element {
     if (
       node.size > LARGE_FILE_SOFT_LIMIT_BYTES &&
       opts?.restore !== true &&
-      !window.confirm('大文件打开可能卡顿，是否继续？')
+      !(await askConfirm({
+        title: '打开大文件',
+        description: '大文件打开可能卡顿，是否继续？',
+        confirmLabel: '继续打开',
+        destructive: false,
+      }))
     ) {
       return;
     }
@@ -1500,16 +1542,23 @@ export function Workspace(): React.JSX.Element {
         beginExport();
         break;
       case 'confirm-close':
-        // 关窗确认链（spec §2.3）：无脏直接放行 forceClose；有脏弹原生 confirm，
+        // 关窗确认链（spec §2.3 修订版）：无脏直接放行 forceClose；有脏弹**应用内确认弹窗**
+        // （M8 反馈批次取代原生 window.confirm——原选型理由为「Playwright 可经 page.on('dialog')
+        // 驱动」，应用内浮层由 DOM 直接驱动，可驱动性更强且样式与应用一致），
         // 用户确认才放行（取消则留在应用）。放行动作即 shell:force-close，
         // 主进程 requestClose 置 allowClose 标记后重入 close 直通
         if (!dirtyRef.current) {
           void window.api.forceClose();
           return;
         }
-        if (window.confirm('有未保存的更改，确定退出？')) {
-          void window.api.forceClose();
-        }
+        void askConfirm({
+          title: '退出应用',
+          description: '有未保存的更改，确定退出？',
+          confirmLabel: '退出',
+          destructive: true,
+        }).then((confirmed) => {
+          if (confirmed) void window.api.forceClose();
+        });
         break;
     }
   }
@@ -2052,6 +2101,22 @@ export function Workspace(): React.JSX.Element {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+      ) : null}
+      {/* 应用内确认弹窗（M8 反馈批次）：大文件打开 / 未保存退出的确认面——Promise 化请求
+          （askConfirm）兑现为「确认/取消」两分支，取消不触发任何写侧动作 */}
+      {confirmRequest !== null ? (
+        <ConfirmDialog
+          title={confirmRequest.title}
+          description={confirmRequest.description}
+          confirmLabel={confirmRequest.confirmLabel}
+          destructive={confirmRequest.destructive}
+          onConfirm={() => {
+            settleConfirm(true);
+          }}
+          onCancel={() => {
+            settleConfirm(false);
+          }}
+        />
       ) : null}
       {/* 状态栏（M6 spec §2.6）：保存态 + 文档总数 + 主题循环 + 设置入口 */}
       <StatusBar

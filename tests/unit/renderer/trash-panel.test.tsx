@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // 回收站面板冒烟（M5 批次②）：列表渲染名称/原路径/删除时间、还原回调、还原撞名 toast、
-// 彻底删除 window.confirm 二次确认、清空强确认、trash 域广播重拉（restored 重拉/created 不拉）、
+// 彻底删除与清空的**应用内确认弹窗**二次确认（M8 反馈批次取代原生 window.confirm）、
+// trash 域广播重拉（restored 重拉/created 不拉）、
 // 本地过滤联动；另覆盖 Workspace 活动视图 trash 态接线（活动栏进入/Esc 返回/返回钮）。
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -95,6 +96,13 @@ afterEach(() => {
 async function clickAriaLabel(label: string): Promise<void> {
   await act(async () => {
     container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)?.click();
+  });
+}
+
+/** 确认弹窗内按可访问名点击（radix Portal 挂在 document.body，非本测试容器内——须全文档寻址） */
+async function clickDialogButton(label: string): Promise<void> {
+  await act(async () => {
+    document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)?.click();
   });
 }
 
@@ -214,66 +222,65 @@ describe('TrashPanel', () => {
     });
   });
 
-  it('彻底删除二次确认：confirm 取消不发起 purgeNode，确认后按 nodeId 发起', async () => {
+  it('彻底删除二次确认（应用内弹窗）：取消不发起 purgeNode，确认后按 nodeId 发起', async () => {
     const { api } = stubTrashApi();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    try {
-      const tree = createRoot(container);
-      await act(async () => {
-        tree.render(<TrashPanel />);
-      });
-      await clickAriaLabel('彻底删除 a.html');
-      expect(confirmSpy).toHaveBeenCalledWith('彻底删除「a.html」？不可恢复');
-      expect(api.purgeNode).not.toHaveBeenCalled();
-      // 确认分支：放行后按条目 id 发起
-      confirmSpy.mockReturnValue(true);
-      await clickAriaLabel('彻底删除 a.html');
-      expect(api.purgeNode).toHaveBeenCalledWith({ nodeId: 5 });
-      act(() => {
-        tree.unmount();
-      });
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<TrashPanel />);
+    });
+    // 首次点击只打开确认弹窗：文案逐字沿用原 window.confirm 文案，且未发起任何写侧调用
+    await clickAriaLabel('彻底删除 a.html');
+    expect(document.querySelector('.lt-confirm')?.textContent).toContain(
+      '彻底删除「a.html」？不可恢复',
+    );
+    expect(api.purgeNode).not.toHaveBeenCalled();
+    // 取消分支：弹窗关闭、不发起
+    await clickDialogButton('取消操作');
+    expect(document.querySelector('.lt-confirm')).toBeNull();
+    expect(api.purgeNode).not.toHaveBeenCalled();
+    // 确认分支：放行后按条目 id 发起，弹窗随即收口
+    await clickAriaLabel('彻底删除 a.html');
+    await clickDialogButton('确认操作');
+    expect(api.purgeNode).toHaveBeenCalledWith({ nodeId: 5 });
+    expect(document.querySelector('.lt-confirm')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
   });
 
-  it('清空强确认：文案含条目数（D4），确认后逐项 purge', async () => {
+  it('清空强确认（应用内弹窗）：文案含条目数（D4），确认后逐项 purge', async () => {
     const { api } = stubTrashApi();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    try {
-      const tree = createRoot(container);
-      await act(async () => {
-        tree.render(<TrashPanel />);
-      });
-      await clickAriaLabel('清空回收站');
-      // 强确认文案逐字（brief D4）：「将彻底删除 N 个节点，不可恢复」
-      expect(confirmSpy).toHaveBeenCalledWith('将彻底删除 2 个节点，不可恢复');
-      expect(api.purgeNode).toHaveBeenCalledWith({ nodeId: 5 });
-      expect(api.purgeNode).toHaveBeenCalledWith({ nodeId: 6 });
-      act(() => {
-        tree.unmount();
-      });
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<TrashPanel />);
+    });
+    await clickAriaLabel('清空回收站');
+    // 强确认文案逐字（brief D4）：「将彻底删除 N 个节点，不可恢复」
+    expect(document.querySelector('.lt-confirm')?.textContent).toContain(
+      '将彻底删除 2 个节点，不可恢复',
+    );
+    expect(api.purgeNode).not.toHaveBeenCalled();
+    await clickDialogButton('确认操作');
+    expect(api.purgeNode).toHaveBeenCalledWith({ nodeId: 5 });
+    expect(api.purgeNode).toHaveBeenCalledWith({ nodeId: 6 });
+    act(() => {
+      tree.unmount();
+    });
   });
 
-  it('清空强确认取消：不发起任何 purgeNode', async () => {
+  it('清空强确认取消：弹窗关闭且不发起任何 purgeNode', async () => {
     const { api } = stubTrashApi();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    try {
-      const tree = createRoot(container);
-      await act(async () => {
-        tree.render(<TrashPanel />);
-      });
-      await clickAriaLabel('清空回收站');
-      expect(api.purgeNode).not.toHaveBeenCalled();
-      act(() => {
-        tree.unmount();
-      });
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<TrashPanel />);
+    });
+    await clickAriaLabel('清空回收站');
+    await clickDialogButton('取消操作');
+    expect(document.querySelector('.lt-confirm')).toBeNull();
+    expect(api.purgeNode).not.toHaveBeenCalled();
+    act(() => {
+      tree.unmount();
+    });
   });
 
   it('trash 域广播重拉：restored/purged/trashed 触发 listTrashed 重拉，created 不触发；卸载退订成对', async () => {

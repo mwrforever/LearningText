@@ -6,7 +6,7 @@ import { runMigrations } from '../../../src/main/store/migrate';
 import { ALL_MIGRATIONS } from '../../../src/main/store/migrations';
 
 describe('runMigrations', () => {
-  it('全量迁移建表并种子根节点，user_version=2', () => {
+  it('全量迁移建表并种子根节点，user_version 推进到最新（v3）', () => {
     const db = openDatabase({ file: ':memory:' });
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     try {
@@ -18,7 +18,7 @@ describe('runMigrations', () => {
       infoSpy.mockRestore();
     }
 
-    expect(db.pragma('user_version', { simple: true })).toBe(2);
+    expect(db.pragma('user_version', { simple: true })).toBe(3);
     const root = db
       .prepare<[number], { id: number; parent_id: number | null; virtual_path: string }>(
         'SELECT id, parent_id, virtual_path FROM node WHERE id = ?',
@@ -40,7 +40,7 @@ describe('runMigrations', () => {
     ).run();
     runMigrations(db);
     infoSpy.mockRestore();
-    expect(db.pragma('user_version', { simple: true })).toBe(2);
+    expect(db.pragma('user_version', { simple: true })).toBe(3);
     expect(db.prepare<[], { c: number }>('SELECT COUNT(*) AS c FROM node').get()?.c).toBe(2);
     db.close();
   });

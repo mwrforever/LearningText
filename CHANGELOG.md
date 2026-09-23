@@ -4,6 +4,17 @@
 
 ## 2026-09-23
 
+- **用户复测反馈修复批次（旧库 schema 修复 + 弹窗统一 + 行操作入口可见化；用户实测「删除回收站后重新创建同名目录无法操作/被阻拦」的**真因**定位与修复）**：
+  - **真因（取证自用户真实库）**：用户库 `node` 表仍是**列级 `UNIQUE`（`virtual_path` 全量约束）**形态——2026-09-17 软删除域批次（e17da0f）把 v1 迁移**就地**改为「列不带 UNIQUE + 部分唯一索引 `idx_node_virtual_path (WHERE deleted_at IS NULL)`」，而就地修改对**已建库无效**（`user_version` 已为 1/2，迁移不再重放）。后果：软删行不让出路径 → **回收站让名语义整条失效**——trash 后建同名目录/导入同名文件/重命名/移动/还原一律 `SQLITE_CONSTRAINT_UNIQUE` → `E_VFS_DUPLICATE_NAME`「同级已存在同名文件或文件夹」（用户截图 toast 逐字一致）。此前会话的「不可复现」结论系**环境差异**（探针用全新库，跑的是新的部分唯一索引），已就地修订核验报告并留证。
+  - **修复（v3 迁移，`0003-vfs-path-partial-unique.ts`）**：SQLite 无法 `DROP` 列级约束，按官方范式重建表——判定旧库（`pragma_index_list('node')` 存在 `origin='u'` 表级约束自动索引；健康库直接返回不触数据）→ 读 `sqlite_sequence` 高水位（缺失按 0 兜底）→ `RENAME` 旧表 → 建新表（现行 0001 定义）→ **按 id 升序复制**（父节点 id 恒小于子节点，FK 即时校验下父先行）→ `DROP` 旧表 → 重建全部索引（0001 四条 + v2 的 `idx_node_parent_all`）→ 回填 AUTOINCREMENT 高水位（只升不降；purge 过最高 id 的库不回填会复用 id，破坏 FTS rowid 身份语义）。单迁移单事务、失败整体回滚并 fail-fast。
+  - **测试与验收**：集成测试 8 例（历史 v1 DDL 快照现场重建旧库夹具：旧库复现缺陷 → 迁移收敛 schema → 行/BLOB/FTS/高水位逐项保全 → 迁移后语义「让名可用、还原撞名仍拒」→ 健康库无操作快速路径 → 序列行缺失边界）；**用户库副本真机验收**：应用启动即迁移（`user_version=3`、列级 UNIQUE 消失、部分唯一索引到位、数据零丢失），用户操作序列「建档→删除→同名重建→选中/展开/建子级/重命名→彻底删除→再同名重建」全通且无失败 toast。既有 `user_version` 断言与注册表断言同步 2→3、[1,2]→[1,2,3]。
+  - **弹窗统一（用户实测「弹窗需要优化样式设计」；M5 打磨对照表 #13 挂账项立项落地）**：新建 `features/ui/ConfirmDialog.tsx`，4 处原生 `window.confirm`（彻底删除 / 清空回收站 / 大文件打开 / 未保存退出）统一换**应用内确认弹窗**——复用既有 AlertDialog 原语（焦点陷阱/Esc/`role="alertdialog"`）+ 设计系统标尺（p-4 / 标题 text-base / 钮 h-8 text-xs / duration-240），文案**逐字沿用**（语义锚零漂移），破坏性操作走破坏色分级、非破坏性走主色，取消项默认聚焦（安全默认）；Workspace 侧确认经 `askConfirm` Promise 化（`await` 语义与原生同步读值等价）。组件内以 `confirmedRef` 守卫 radix「确认后仍触发 onOpenChange(false)」的**双报**（无守卫会把确认二次上报为取消）；M4 spec §2.3/§5/D3 与 M5 spec §3.1/D4 同步修订（原「confirm 为 Playwright 可驱动选型」被反向满足：应用内浮层由 DOM 直接驱动，E2E 现可验收取消/确认双分支）。
+  - **行操作入口常态可见（用户实测「新建目录后完全无法操作、操作键都没有」）**：树行「⋯」触发钮由「常态 `opacity-0` 仅悬停显形」（M5 降噪裁决）改为**常态可见**（前景 `text-muted-foreground`，与 chevron/类型图标同档、对比度达标；悬停/焦点/展开态经表面与前景提亮）——发现性代价高于降噪收益，裁决推翻留证见设计系统 §十三。
+  - **文档回写**：设计系统新增 §十三（弹窗统一台账 + 行入口可见化 + 测试锚点）；存储 spec 新增 §3.4（v3 历史库修复全案 + 「迁移一经发布不可原地修改」教训固化）与迁移目录清单；M4/M5 spec 弹窗选型同步；M5 打磨对照表 #13 状态更新；核验报告修订 + 本批次报告落 `docs/progress/`。
+  - **测试同步**：单测新增 `confirm-dialog` 契约 5 例（含双报守卫，经鉴别力验证）+ v3 迁移集成 8 例 + 「⋯ 常态可见」类串断言；`trash-panel`/`panels-preview-workspace` 确认类用例改驱动应用内浮层（新增取消分支核验）；E2E `m5.spec` 彻底删除与 `editor.spec` unsaved-guard 改应用内浮层（guard 新增取消分支 + 触发器改窗口 close 事件）。
+
+## 2026-09-23
+
 - **四项历史前置修复项核验批次（用户点名 2026-09-17 进度文档时代登记的四项；核验结论：三项在 HEAD 已由后续里程碑闭环，一项定位真因并修复）**：
   - **核验方式**：真机探针（Playwright 驱动 Electron，每探针独立 userData 临时目录）逐项复现/证伪，证据链落 `docs/progress/2026-09-23-四项历史前置修复项核验报告.md`。
   - **① 回收站同名阻拦（trash 后建同名目录、导入与回收站同名文件被占名阻拦）**：**不可复现**——两条唯一索引 `idx_node_parent_name` / `idx_node_virtual_path` 均带 `WHERE deleted_at IS NULL`（软删让名，M2 前置裁决 e17da0f），服务层重名预查同样按 `deleted_at IS NULL` 过滤；探针走真实用户路径（`dialog.showOpenDialog` 打桩 → 树工具栏「导入 HTML 文件」→ 确认浮层）导入与回收站同名文件，toast「新增 1、跳过 0、失败 0」、活路径 `/同名文件.html` 解析成功。

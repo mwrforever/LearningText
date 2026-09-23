@@ -256,7 +256,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
   });
 
   // 大文件阈值三分支（spec §2.4 裁决 D7 计划缺口补齐）：size 前置判定早于任何 IPC；
-  // >50MB 拒开（不发起 readFile）、5–50MB 经 window.confirm 放行、≤5MB 直开（含边界）
+  // >50MB 拒开（不发起 readFile）、5–50MB 经应用内确认弹窗放行、≤5MB 直开（含边界）
   it('大文件硬上限（>50MB）前置拒开：toast 呈现且不发起 readFile、不开标签、不弹确认', async () => {
     const api = stubApi({
       listChildren: vi.fn(() =>
@@ -296,7 +296,7 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
     }
   });
 
-  it('大文件确认区间（5–50MB）：window.confirm 确认后照常读库开标签', async () => {
+  it('大文件确认区间（5–50MB）：应用内确认弹窗确认后照常读库开标签', async () => {
     const api = stubApi({
       listChildren: vi.fn(() =>
         Promise.resolve({
@@ -314,30 +314,32 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
         }),
       ),
     }) as unknown as { readFile: ReturnType<typeof vi.fn> };
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    try {
-      const tree = createRoot(container);
-      await act(async () => {
-        tree.render(<Workspace />);
-      });
-      await act(async () => {
-        Array.from(container.querySelectorAll('button'))
-          .find((b) => b.textContent === 'big.txt')
-          ?.click();
-      });
-      expect(confirmSpy).toHaveBeenCalledWith('大文件打开可能卡顿，是否继续？');
-      expect(api.readFile).toHaveBeenCalledWith({ nodeId: 3 });
-      expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
-      expect(container.querySelector('.cm-content')?.textContent).toBe('<p>大文</p>');
-      act(() => {
-        tree.unmount();
-      });
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === 'big.txt')
+        ?.click();
+    });
+    // 弹窗文案逐字（沿用原 window.confirm 文案）；确认前不发起读库
+    expect(document.querySelector('.lt-confirm')?.textContent).toContain(
+      '大文件打开可能卡顿，是否继续？',
+    );
+    expect(api.readFile).not.toHaveBeenCalled();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="确认操作"]')?.click();
+    });
+    expect(api.readFile).toHaveBeenCalledWith({ nodeId: 3 });
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    expect(container.querySelector('.cm-content')?.textContent).toBe('<p>大文</p>');
+    act(() => {
+      tree.unmount();
+    });
   });
 
-  it('大文件确认区间（5–50MB）：window.confirm 取消则不开标签不读库', async () => {
+  it('大文件确认区间（5–50MB）：应用内确认弹窗取消则不开标签不读库', async () => {
     const api = stubApi({
       listChildren: vi.fn(() =>
         Promise.resolve({
@@ -346,26 +348,27 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
         }),
       ),
     }) as unknown as { readFile: ReturnType<typeof vi.fn> };
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    try {
-      const tree = createRoot(container);
-      await act(async () => {
-        tree.render(<Workspace />);
-      });
-      await act(async () => {
-        Array.from(container.querySelectorAll('button'))
-          .find((b) => b.textContent === 'big.txt')
-          ?.click();
-      });
-      expect(confirmSpy).toHaveBeenCalledWith('大文件打开可能卡顿，是否继续？');
-      expect(api.readFile).not.toHaveBeenCalled();
-      expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
-      act(() => {
-        tree.unmount();
-      });
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === 'big.txt')
+        ?.click();
+    });
+    expect(document.querySelector('.lt-confirm')?.textContent).toContain(
+      '大文件打开可能卡顿，是否继续？',
+    );
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="取消操作"]')?.click();
+    });
+    expect(document.querySelector('.lt-confirm')).toBeNull();
+    expect(api.readFile).not.toHaveBeenCalled();
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    act(() => {
+      tree.unmount();
+    });
   });
 
   it('软阈值边界（恰 5MB）直开：不弹确认框、读库开标签（≤5MB 现行为不回归）', async () => {
@@ -386,27 +389,22 @@ describe('Workspace 多标签会话中枢（M4 Task 4）', () => {
         }),
       ),
     }) as unknown as { readFile: ReturnType<typeof vi.fn> };
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    try {
-      const tree = createRoot(container);
-      await act(async () => {
-        tree.render(<Workspace />);
-      });
-      await act(async () => {
-        Array.from(container.querySelectorAll('button'))
-          .find((b) => b.textContent === 'edge.txt')
-          ?.click();
-      });
-      // 软阈值含边界（<= 判定）：恰 5MB 不征询直接开
-      expect(confirmSpy).not.toHaveBeenCalled();
-      expect(api.readFile).toHaveBeenCalledWith({ nodeId: 3 });
-      expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
-      act(() => {
-        tree.unmount();
-      });
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll('button'))
+        .find((b) => b.textContent === 'edge.txt')
+        ?.click();
+    });
+    // 软阈值含边界（<= 判定）：恰 5MB 不征询直接开（无确认弹窗）
+    expect(document.querySelector('.lt-confirm')).toBeNull();
+    expect(api.readFile).toHaveBeenCalledWith({ nodeId: 3 });
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
+    act(() => {
+      tree.unmount();
+    });
   });
 
   it('点选 HTML 文件开画布标签：不读库直载 vfs://（所见即所得），TabBar 激活态与树选中联动', async () => {
@@ -766,72 +764,71 @@ describe('Workspace 外壳命令链（M4 Task 6）', () => {
   });
 
   it('confirm-close 无脏直接 forceClose，不弹确认框', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-    try {
-      const { api, handlers } = captureShell();
-      const tree = createRoot(container);
-      await act(async () => {
-        tree.render(<Workspace />);
-      });
-      await act(async () => {
-        handlers[0]?.({ type: 'confirm-close' });
-      });
-      expect(api.forceClose).toHaveBeenCalledTimes(1);
-      expect(confirmSpy).not.toHaveBeenCalled();
-      act(() => {
-        tree.unmount();
-      });
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    const { api, handlers } = captureShell();
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await act(async () => {
+      handlers[0]?.({ type: 'confirm-close' });
+    });
+    expect(api.forceClose).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('.lt-confirm')).toBeNull();
+    act(() => {
+      tree.unmount();
+    });
   });
 
-  it('confirm-close 有脏弹确认框：取消留在应用、确认后放行 forceClose', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    try {
-      const { api, handlers } = captureShell({
-        listChildren: vi.fn(() =>
-          Promise.resolve({
-            ok: true,
-            value: [{ ...meta(3, 'a.txt'), mimeType: 'text/plain' }],
-          }),
-        ),
-        readFile: vi.fn(() =>
-          Promise.resolve({
-            ok: true,
-            value: {
-              content: new TextEncoder().encode(''),
-              meta: { ...meta(3, 'a.txt'), mimeType: 'text/plain' },
-            },
-          }),
-        ),
-      });
-      const tree = createRoot(container);
-      await act(async () => {
-        tree.render(<Workspace />);
-      });
-      await clickButton('a.txt');
-      await act(async () => {
-        mountedView(container)?.dispatch({ changes: { from: 0, insert: '甲' } });
-      });
-      // 取消分支：确认框出现但拒绝 → 不放行
-      await act(async () => {
-        handlers[0]?.({ type: 'confirm-close' });
-      });
-      expect(confirmSpy).toHaveBeenCalledWith('有未保存的更改，确定退出？');
-      expect(api.forceClose).not.toHaveBeenCalled();
-      // 确认分支：再次 confirm-close，用户确认 → 放行
-      confirmSpy.mockReturnValue(true);
-      await act(async () => {
-        handlers[0]?.({ type: 'confirm-close' });
-      });
-      expect(api.forceClose).toHaveBeenCalledTimes(1);
-      act(() => {
-        tree.unmount();
-      });
-    } finally {
-      confirmSpy.mockRestore();
-    }
+  it('confirm-close 有脏弹应用内确认弹窗：取消留在应用、确认后放行 forceClose', async () => {
+    const { api, handlers } = captureShell({
+      listChildren: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: [{ ...meta(3, 'a.txt'), mimeType: 'text/plain' }],
+        }),
+      ),
+      readFile: vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          value: {
+            content: new TextEncoder().encode(''),
+            meta: { ...meta(3, 'a.txt'), mimeType: 'text/plain' },
+          },
+        }),
+      ),
+    });
+    const tree = createRoot(container);
+    await act(async () => {
+      tree.render(<Workspace />);
+    });
+    await clickButton('a.txt');
+    await act(async () => {
+      mountedView(container)?.dispatch({ changes: { from: 0, insert: '甲' } });
+    });
+    // 取消分支：确认弹窗出现但拒绝 → 不放行（文案逐字沿用原 window.confirm 文案）
+    await act(async () => {
+      handlers[0]?.({ type: 'confirm-close' });
+    });
+    expect(document.querySelector('.lt-confirm')?.textContent).toContain(
+      '有未保存的更改，确定退出？',
+    );
+    expect(api.forceClose).not.toHaveBeenCalled();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="取消操作"]')?.click();
+    });
+    expect(document.querySelector('.lt-confirm')).toBeNull();
+    expect(api.forceClose).not.toHaveBeenCalled();
+    // 确认分支：再次 confirm-close，用户确认 → 放行
+    await act(async () => {
+      handlers[0]?.({ type: 'confirm-close' });
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('button[aria-label="确认操作"]')?.click();
+    });
+    expect(api.forceClose).toHaveBeenCalledTimes(1);
+    act(() => {
+      tree.unmount();
+    });
   });
 
   it('new-dir 命令 → 行内命名流程：Enter 提交 createNode（M7 不再固定名直建）；import-html 命令 → pickHtmlFile + 确认浮层 + 导入即开标签', async () => {

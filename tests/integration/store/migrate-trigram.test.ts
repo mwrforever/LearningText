@@ -26,10 +26,10 @@ function openAtV1(): ReturnType<typeof openDatabase> {
 
 describe('v2 trigram 迁移', () => {
   it('注册表含 v1+v2 且版本严格递增', () => {
-    expect(ALL_MIGRATIONS.map((m) => m.version)).toEqual([1, 2]);
+    expect(ALL_MIGRATIONS.map((m) => m.version)).toEqual([1, 2, 3]);
   });
 
-  it('迁移后 user_version=2、node_fts 声明为 trigram、父指针全量索引在场', () => {
+  it('迁移后 user_version 推进到最新（v3）、node_fts 声明为 trigram、父指针全量索引在场', () => {
     const db = openAtV1();
     const restore = silence();
     try {
@@ -37,7 +37,7 @@ describe('v2 trigram 迁移', () => {
     } finally {
       restore();
     }
-    expect(db.pragma('user_version', { simple: true })).toBe(2);
+    expect(db.pragma('user_version', { simple: true })).toBe(3);
     const ftsSql = db
       .prepare<[], { sql: string }>(`SELECT sql FROM sqlite_master WHERE name = 'node_fts'`)
       .get()?.sql;
@@ -145,7 +145,7 @@ describe('v2 trigram 迁移', () => {
     db.close();
   });
 
-  it('重复执行幂等：v2 不重跑（user_version 不变、数据不受影响）', () => {
+  it('重复执行幂等：已应用迁移不重跑（user_version 稳定、数据不受影响）', () => {
     const db = openAtV1();
     const restore = silence();
     try {
@@ -154,7 +154,7 @@ describe('v2 trigram 迁移', () => {
     } finally {
       restore();
     }
-    expect(db.pragma('user_version', { simple: true })).toBe(2);
+    expect(db.pragma('user_version', { simple: true })).toBe(3);
     expect(db.prepare<[], { c: number }>(`SELECT COUNT(*) AS c FROM node`).get()?.c).toBe(1);
     db.close();
   });

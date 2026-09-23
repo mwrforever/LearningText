@@ -621,6 +621,11 @@ describe('TreePanel 行内「⋯」菜单（M5 批次④）', () => {
     expect(container.querySelector('button[data-node-id="2"]')?.getAttribute('aria-label')).toBe(
       '更多操作',
     );
+    // 行操作入口常态可见（M8 用户实测反馈：原「常态 opacity-0 仅悬停显形」使用户以为目录
+    // 无法操作）——类串不得再含 opacity-0；前景取 muted 档，悬停/焦点/展开态经表面提亮
+    const triggerClass = container.querySelector('button[data-node-id="2"]')?.getAttribute('class');
+    expect(triggerClass).not.toContain('opacity-0');
+    expect(triggerClass).toContain('text-muted-foreground');
     openRowMenu(2);
     expect(menuItems().map((el) => el.textContent)).toEqual(['重命名', '移动到…', '删除']);
     pickMenuItem('重命名');

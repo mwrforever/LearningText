@@ -68,8 +68,10 @@ M1 实施范围除本文领域设计外，还包含 M0 移交的工程修复与�
 
 ```text
 src/main/store/migrations/
-├── index.ts        # 注册表：按 version 升序导出 Migration[]
-└── 0001-initial.ts # v1：建表 + 索引 + FTS + 根节点种子
+├── index.ts                        # 注册表：按 version 升序导出 Migration[]
+├── 0001-initial.ts                 # v1：建表 + 索引 + FTS + 根节点种子
+├── 0002-search-trigram.ts          # v2：FTS 换 trigram 分词器（重建范式）+ 父指针全量索引
+└── 0003-vfs-path-partial-unique.ts # v3：历史库 schema 修复（列级 UNIQUE → 部分唯一索引）
 ```
 
 ```ts
@@ -99,6 +101,20 @@ export interface Migration {
 - 脚本须在捆绑编译选项下书写：`SQLITE_DQS=0`（字符串字面量一律单引号）、外键默认强制、FTS5 可用；
 - `PRAGMA foreign_keys` 等开关切换必须在事务外（事务内 no-op）——本 v1 不需要；
 - FTS5 表不可 `ALTER`，未来列集变更只能重建（新表 + 复制 + 换名 + 重建索引）。
+
+### 3.4 v3 历史库 schema 修复（2026-09-23，用户实测缺陷驱动）
+
+**背景（就地改迁移的代价）**：v1 初次落地时 `virtual_path` 为**列级 `UNIQUE`**（全量约束，回收站行同样占路径）；2026-09-17 软删除域批次把 v1 定义**就地**改为「列不带 UNIQUE + 部分唯一索引 `idx_node_virtual_path (WHERE deleted_at IS NULL)`」。就地修改对**已建库无效**（`user_version` 已为 1，迁移不再重放），于是该日之前创建的库长期停留在旧形态：软删行不让出路径 → 回收站让名语义（FR-VFS-06）整条失效，trash 后建同名目录/导入同名文件/重命名/移动/还原一律 `SQLITE_CONSTRAINT_UNIQUE` → `E_VFS_DUPLICATE_NAME`「同级已存在同名文件或文件夹」（用户实测：删除目录后无法再建同名目录）。**教训固化：迁移脚本一经发布即不可原地修改，表结构变更一律追加新迁移**（宪法 A.4-3）。
+
+**v3 落法**（SQLite 无法 `DROP` 列级约束，按官方范式重建表）：
+
+1. 判定旧库：`pragma_index_list('node')` 存在 `origin='u'` 的表级约束自动索引（现行 schema 的唯一性全部由显式 `CREATE [UNIQUE] INDEX` 承载，`origin='c'`）——健康库直接返回，不触数据；
+2. 读 `sqlite_sequence` 的 `node` 高水位（缺失按 0 兜底）；
+3. `ALTER TABLE node RENAME TO node_v1_legacy` → 建新表（现行 0001 定义）→ **按 `id` 升序**复制全部列（父节点 id 恒小于子节点，FK 即时校验下父先行）→ `DROP TABLE node_v1_legacy`；
+4. 重建全部索引（0001 四条 + v2 的 `idx_node_parent_all`）；
+5. 回填 `sqlite_sequence` 高水位（只升不降）——purge 过最高 id 的库 `max(id)` 低于历史高水位，不回填会复用 id，破坏 FTS rowid 身份语义。
+
+单迁移单事务：任一语句失败整体回滚、`user_version` 不推进，启动 fail-fast。集成测试以「历史 v1 DDL 快照」现场重建旧库夹具，逐项锁定：旧库复现缺陷 → 迁移收敛 schema → 数据（行/BLOB/FTS/高水位）保全 → 迁移后语义（让名可用、还原撞名仍拒）→ 健康库无操作。
 
 ## 4. 事务封装模板
 
